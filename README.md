@@ -1,3 +1,9 @@
+# The old kenium source code.
+
+- will be there, will not be deleted, and will still be updated some times, I loved developing on discord.js... So the javascript version is discountinnued from now. Check the main branch instead
+
+
+
 # Kenium 🎧  
 **Why pay or vote to play music? Hell nah.**  
 
