@@ -123,7 +123,7 @@ const gracefulShutdown = async (signal) => {
 };
 
 if (process.env.ANTI_DOCKER === 'true') {
-  const savePlayersInterval = setInterval(async () => {
+  setInterval(async () => {
     if (isShuttingDown) return;
     
     try {
@@ -132,8 +132,10 @@ if (process.env.ANTI_DOCKER === 'true') {
     } catch (error) {
       console.error("Error during periodic save:", error);
     }
-  }, 30000);
+  }, 8 * 60 * 1000) // 8 minutes
 }
+
+
 
 const channelCache = new Map();
 const lastUpdates = new Map();
@@ -360,6 +362,17 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
+process.on('unhandledRejection', (reason) => {
+  console.log(`Unhandled Rejection: ${reason}`, "error");
+});
+
+process.on('uncaughtException', (error) => {
+  console.log(`Uncaught Exception: ${error}`, "error");
+  if (!isShuttingDown) {
+    gracefulShutdown('uncaughtException');
+  }
+});
+
 const signals = ['SIGINT', 'SIGTERM', 'SIGUSR2', 'SIGHUP'];
 signals.forEach(signal => {
   process.on(signal, () => gracefulShutdown(signal));
@@ -374,14 +387,14 @@ process.on('message', (msg) => {
 });
 
 process.on('exit', () => {
-  clearInterval(savePlayersInterval);
+  clearInterval();
 });
 
 aqua.on('nodeError', (node, error) => console.error(`Node error: ${error.message}`));
 aqua.on('nodeConnect', node => console.log(`Node connected: ${node.name}`));
 aqua.on("debug", message => console.debug(`[Aqua/Debug] ${message}`));
 
-Promise.all([
+Promise.allSettled([
   import("./src/handlers/Command.mjs").then(({ CommandHandler }) => new CommandHandler(client, rootPath).refreshCommands()),
   import("./src/handlers/Events.mjs").then(({ EventHandler }) => new EventHandler(client, rootPath).loadEvents())
 ]).catch(err => console.error("Handler error:", err));
