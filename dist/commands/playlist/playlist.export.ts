@@ -94,20 +94,11 @@ function formatDuration(ms: number): string {
          return handlePlaylistAutocomplete(interaction, playlistsCollection);
       },
    }),
-   format: createStringOption({
-      description: 'Export format (json or txt)',
-      required: false,
-      choices: [
-         { name: 'JSON', value: 'json' },
-         { name: 'Text', value: 'txt' },
-      ],
-   }),
 })
 export class ExportCommand extends SubCommand {
    async run(ctx: CommandContext) {
       const { name } = ctx.options as { name: string };
       const playlistName = name;
-      const { format } = ctx.options as { format: string };
       const userId = ctx.author.id;
 
       const playlist = playlistsCollection.findOne({
@@ -127,34 +118,8 @@ export class ExportCommand extends SubCommand {
          });
       }
 
-      let content: string;
-      let fileName: string;
-      if (format === 'json') {
-         content = JSON.stringify(playlist, null, 2);
-         fileName = `${playlistName}.json`;
-      } else if (format === 'txt') {
-         content = `Playlist: ${playlist.name}\nDescription: ${
-            playlist.description || 'None'
-         }\n\nTracks:\n`;
-         playlist.tracks.forEach((track: any, index: number) => {
-            content += `${index + 1}. ${track.title} - ${
-               track.author || 'Unknown'
-            } - ${formatDuration(track.duration)}\n`;
-         });
-         fileName = `${playlistName}.txt`;
-      } else {
-         return await ctx.write({
-            embeds: [
-               createEmbed(
-                  'error',
-                  'Invalid Format',
-                  'Please choose a valid format: json or txt'
-               ),
-            ],
-            flags: 64,
-         });
-      }
-
+      const content = JSON.stringify(playlist, null, 2);
+      const fileName = `${playlistName}.json`;
       const buffer = Buffer.from(content, 'utf-8');
       const attachment = new AttachmentBuilder()
          .setFile('buffer', buffer)
@@ -163,3 +128,4 @@ export class ExportCommand extends SubCommand {
       await ctx.write({ files: [attachment], flags: 64 });
    }
 }
+

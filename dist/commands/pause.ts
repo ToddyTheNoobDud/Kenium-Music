@@ -12,6 +12,8 @@ export default class pauseCmds extends Command {
 
         const player = client.aqua.players.get(ctx.guildId!);
 
+        if (player.paused) return;
+
         player.pause(true);
 
         await ctx.editOrReply({ embeds: [new Embed().setDescription('Paused the song').setColor(0)], flags: 64 });

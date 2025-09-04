@@ -12,7 +12,6 @@ export default class skipCmds extends Command {
 
         const player = client.aqua.players.get(ctx.guildId!);
 
-
         player.stop();
 
         await ctx.editOrReply({ embeds: [new Embed().setDescription('Stopped the music').setColor(0)], flags: 64 });

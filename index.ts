@@ -15,6 +15,7 @@ const ERROR_LOG_THROTTLE = 5000
 
 const client = new Client({})
 
+
 const aqua = new Aqua(client, [{
   host: NODE_HOST,
   password: NODE_PASSWORD,
@@ -30,6 +31,7 @@ const aqua = new Aqua(client, [{
   loadBalancer: 'random',
   leaveOnEnd: false
 })
+
 
 aqua.init(process.env.CLIENT_ID)
 Object.assign(client, { aqua })
@@ -170,7 +172,7 @@ aqua.on('socketClosed', (player, payload) => {
 })
 
 aqua.on('nodeConnect', node => {
-  client.logger.debug(`Node [${node.name}] connected, IsNodeSecure: ${node.secure}`)
+  client.logger.debug(`Node [${node.name}] connected, IsNodeSecure: ${node.ssl}`)
 })
 
 aqua.on('nodeDisconnect', (_, reason) => {
@@ -183,12 +185,11 @@ process.once('SIGINT', _functions.shutdown)
 client.start()
   .then(async () => {
     await client.uploadCommands({ cachePath: './commands.json' }).catch(() => null)
+    client.cooldown = new CooldownManager(client)
   })
   .catch(error => {
     process.exit(1)
   })
-
-client.cooldown = new CooldownManager(client)
 
 declare module 'seyfert' {
   interface UsingClient extends ParseClient<Client<true>>, ParseClient<HttpClient> {

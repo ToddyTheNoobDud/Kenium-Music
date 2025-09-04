@@ -1,118 +1,135 @@
-import { type CommandContext, Declare, SubCommand, Options, createStringOption, createBooleanOption, Middlewares } from "seyfert";
-import { CooldownType, Cooldown } from "@slipher/cooldown";
-import { SimpleDB } from "../../utils/simpleDB";
-import { createEmbed, formatDuration, handlePlaylistAutocomplete, shuffleArray } from "../../shared/utils";
-import { ICONS } from "../../shared/constants";
+import { type CommandContext, Declare, SubCommand, Options, createStringOption, createBooleanOption, Middlewares } from 'seyfert'
+import { CooldownType, Cooldown } from '@slipher/cooldown'
+import { SimpleDB } from '../../utils/simpleDB'
+import { createEmbed, formatDuration, handlePlaylistAutocomplete, shuffleArray } from '../../shared/utils'
+import { ICONS } from '../../shared/constants'
 
-const db = new SimpleDB();
-const playlistsCollection = db.collection('playlists');
+const db = new SimpleDB()
+const playlistsCollection = db.collection('playlists')
+
+const MAX_RESOLVE_CONCURRENCY = 6
+
+async function _resolveTrack(aqua: any, uri: string, requester: any) {
+  if (!uri) return null
+  const res = await aqua.resolve({ query: uri, requester })
+  if (res && res.loadType !== 'LOAD_FAILED' && Array.isArray(res.tracks) && res.tracks.length > 0) return res.tracks[0]
+  return null
+}
+
+async function _mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R | null>) {
+  const results: R[] = []
+  let i = 0
+  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+    while (i < items.length) {
+      const idx = i++
+      const r = await fn(items[idx], idx)
+      if (r !== null) results.push(r)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+function _safeChannelName(vc: any) {
+  return vc?.channel?.name || vc?.channelId || 'Voice'
+}
 
 @Declare({
-  name: "play",
-  description: "▶️ Play a playlist"
+  name: 'play',
+  description: '▶️ Play a playlist'
 })
 @Options({
   playlist: createStringOption({
-    description: "Playlist name",
+    description: 'Playlist name',
     required: true,
-    autocomplete: async (interaction: any) => {
-      return handlePlaylistAutocomplete(interaction, playlistsCollection);
-    }
+    autocomplete: async (interaction: any) => handlePlaylistAutocomplete(interaction, playlistsCollection)
   }),
-  shuffle: createBooleanOption({ description: "Shuffle the playlist", required: false })
+  shuffle: createBooleanOption({ description: 'Shuffle the playlist', required: false })
 })
 @Cooldown({
-    type: CooldownType.User,
-    interval: 20000, // 20 seconds
-    uses: {
-        default: 2
-    },
+  type: CooldownType.User,
+  interval: 20000,
+  uses: { default: 2 }
 })
-
-@Middlewares(["checkVoice", "cooldown"])
+@Middlewares(['checkVoice'])
 export class PlayCommand extends SubCommand {
   async run(ctx: CommandContext) {
-    const { playlist: playlistName, shuffle = false } = ctx.options as { playlist: string; shuffle: boolean };
-    const userId = ctx.author.id;
+    const { playlist: playlistName, shuffle = false } = ctx.options as { playlist: string; shuffle?: boolean }
+    const userId = ctx.author.id
 
-    const playlistDb = playlistsCollection.findOne({ userId, name: playlistName });
-    if (!playlistDb || playlistDb.tracks.length === 0) {
-      const message = !playlistDb
-        ? `No playlist named "${playlistName}" exists!`
-        : 'This playlist has no tracks to play!';
-
+    const playlistDb = playlistsCollection.findOne({ userId, name: playlistName })
+    if (!playlistDb) {
       return ctx.write({
-        embeds: [createEmbed('error', !playlistDb ? 'Playlist Not Found' : 'Empty Playlist', message)],
+        embeds: [createEmbed('error', 'Playlist Not Found', `No playlist named "${playlistName}" exists!`)],
         flags: 64
-      });
+      })
+    }
+    if (!Array.isArray(playlistDb.tracks) || playlistDb.tracks.length === 0) {
+      return ctx.write({
+        embeds: [createEmbed('error', 'Empty Playlist', 'This playlist has no tracks to play!')],
+        flags: 64
+      })
     }
 
-    const member = ctx.member;
-    const voiceChannel = await member?.voice();
+    const member = ctx.member
+    const voiceState = await member?.voice()
+    if (!voiceState?.channelId) {
+      return ctx.write({
+        embeds: [createEmbed('error', 'No Voice Channel', 'Join a voice channel to play a playlist')],
+        flags: 64
+      })
+    }
 
-    await ctx.deferReply(true);
+    await ctx.deferReply(true)
 
     try {
       const player = ctx.client.aqua.createConnection({
         guildId: ctx.guildId!,
-        voiceChannel: voiceChannel.channelId,
+        voiceChannel: voiceState.channelId,
         textChannel: ctx.channelId!,
         defaultVolume: 65,
         deaf: true
-      });
+      })
 
-      const tracksToPlay = shuffle ? shuffleArray(playlistDb.tracks) : [...playlistDb.tracks];
-
-      // Batch load tracks with Promise.allSettled for better error handling
-      const loadResults = await Promise.allSettled(
-        tracksToPlay.map(async (track: any) => {
-          const res = await ctx.client.aqua.resolve({ query: track.uri, requester: ctx.author });
-          if (res.loadType !== "LOAD_FAILED" && res.tracks?.length) {
-            return res.tracks[0];
-          }
-          throw new Error(`Failed to load: ${track.title}`);
-        })
-      );
-
-      const loadedTracks = loadResults
-        .filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled')
-        .map(result => result.value);
+      const tracks = shuffle ? shuffleArray([...playlistDb.tracks]) : [...playlistDb.tracks]
+      const loadedTracks = await _mapLimit<any, any>(tracks, MAX_RESOLVE_CONCURRENCY, async t => {
+        const tr = await _resolveTrack(ctx.client.aqua, t.uri, ctx.author)
+        return tr
+      })
 
       if (loadedTracks.length === 0) {
         return ctx.editOrReply({
           embeds: [createEmbed('error', 'Load Failed', 'Could not load any tracks from this playlist')]
-        });
+        })
       }
 
-      // Add all tracks at once
-      for (const track of loadedTracks) {
-        player.queue.add(track);
-      }
+      for (const t of loadedTracks) player.queue.add(t)
 
-      // Update play count
       playlistsCollection.update(
         { _id: playlistDb._id },
-        { ...playlistDb, playCount: (playlistDb.playCount || 0) + 1 }
-      );
+        { ...playlistDb, playCount: (playlistDb.playCount || 0) + 1, lastPlayedAt: Date.now() }
+      )
 
-      if (!player.playing && !player.paused && player.queue.size) {
-        player.play();
-      }
+      if (!player.playing && !player.paused && player.queue.size) player.play()
 
-      const embed = createEmbed('success', shuffle ? 'Shuffling Playlist' : 'Playing Playlist', undefined, [
-        { name: `${ICONS.playlist} Playlist`, value: `**${playlistName}**`, inline: true },
-        { name: `${ICONS.tracks} Loaded`, value: `${loadedTracks.length}/${playlistDb.tracks.length} tracks`, inline: true },
-        { name: `${ICONS.duration} Duration`, value: formatDuration(playlistDb.totalDuration), inline: true },
-        { name: `${ICONS.volume} Channel`, value: voiceChannel.channel.name, inline: true },
-        { name: `${ICONS.shuffle} Mode`, value: shuffle ? 'Shuffled' : 'Sequential', inline: true }
-      ]);
+      const embed = createEmbed(
+        'success',
+        shuffle ? 'Shuffling Playlist' : 'Playing Playlist',
+        undefined,
+        [
+          { name: `${ICONS.playlist} Playlist`, value: `**${playlistName}**`, inline: true },
+          { name: `${ICONS.tracks} Loaded`, value: `${loadedTracks.length}/${playlistDb.tracks.length} tracks`, inline: true },
+          { name: `${ICONS.duration} Duration`, value: formatDuration(playlistDb.totalDuration || 0), inline: true },
+          { name: `${ICONS.music} Channel`, value: _safeChannelName(voiceState), inline: true },
+          { name: `${ICONS.shuffle} Mode`, value: shuffle ? 'Shuffled' : 'Sequential', inline: true }
+        ]
+      )
 
-      return ctx.editOrReply({ embeds: [embed], flags: 64 });
-    } catch (error) {
-      console.error("Play playlist error:", error);
+      return ctx.editOrReply({ embeds: [embed] })
+    } catch (err) {
       return ctx.editOrReply({
-        embeds: [createEmbed('error', 'Play Failed', `Could not play playlist: ${(error as Error).message}`)]
-      });
+        embeds: [createEmbed('error', 'Play Failed', 'Could not play playlist. Please try again later.')]
+      })
     }
   }
 }

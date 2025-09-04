@@ -1,7 +1,8 @@
-import { Embed, Declare, Command, type CommandContext } from 'seyfert'
-import { cpus, loadavg, freemem, totalmem, uptime } from 'node:os'
+import { Embed, Declare, Command, type CommandContext, Middlewares } from 'seyfert'
+import { CooldownType, Cooldown } from '@slipher/cooldown';
+import { cpus, loadavg, freemem, totalmem, CpuInfo } from 'node:os'
 const CPU_CACHE = {
-  model: cpus()[0]?.model.replace(/\(R\)|®|\(TM\)|™/g, '').trim().split('@')[0].trim() || 'Unknown',
+    model: cpus()[0]?.model.replace(/KATEX_INLINE_OPENRKATEX_INLINE_CLOSE|®|KATEX_INLINE_OPENTMKATEX_INLINE_CLOSE|™/g, '').trim().split('@') || [],
   cores: cpus().length,
   lastCheck: 0,
   loadAvg: [0, 0, 0]
@@ -84,6 +85,12 @@ function formatMemoryUsage(bytes: number): string {
   name: 'status',
   description: 'status of the bot',
 })
+@Cooldown({
+  type: CooldownType.User,
+  interval: 1000 * 60,
+  uses: { default: 2 },
+})
+@Middlewares(['cooldown'])
 export default class statusCmds extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const { client, interaction } = ctx
@@ -102,7 +109,6 @@ export default class statusCmds extends Command {
 
     const pingTime = Date.now() - interaction.createdTimestamp;
     const nodes = [...client.aqua.nodeMap.values()];
-    const isOnline = nodes.some(node => node.connected);
     const connectedNodes = nodes.filter(node => node.connected).length;
 
 
@@ -127,11 +133,12 @@ export default class statusCmds extends Command {
 
     const systemMemoryBar = createProgressBar(usedMemory, totalMemory, 20);
     const lavalinkMemoryBar = createProgressBar(memoryUsed, memoryTotal, 20);
-
     const embed = new Embed()
       .setColor(0)
-      .setDescription(`\`\`\`yaml
+      .setDescription(`\`\`\`yml
 System Uptime     :: ${formatters.uptime(process.uptime() * 1000)}
+System CPU Model  :: ${CPU_CACHE.model[0] || 'N/A'}, ${CPU_CACHE.cores} core(s)
+System CPU Load   :: ${cpus()[0]?.speed} MHz, ${loadavg()[0].toFixed(2)}%, ${loadavg()[1].toFixed(2)}%, ${loadavg()[2].toFixed(2)}%
 Lavalink Uptime   :: ${formatters.uptime(lavalinkUptime)}
 Lavalink Version  :: ${(ctx.client.aqua as any)?.version || 'N/A'}
 System Memory     :: ${formatters.memory(usedMemory, true)} / ${formatters.memory(totalMemory, true)} (${memoryPercentage}%)
@@ -144,10 +151,6 @@ Lavalink Nodes    :: ${connectedNodes} connected / ${nodes.length} total
 Ping              :: ${pingTime} ms
 Process Memory    :: ${formatMemoryUsage(process.memoryUsage().rss)}
 \`\`\``)
-      .setAuthor({
-        name: `System ${isOnline ? '●' : '○'} ${isOnline ? 'Online' : 'Offline'}`,
-        iconUrl: client.me.avatarURL(),
-      })
 
     await ctx.editOrReply({ embeds: [embed] });
   }

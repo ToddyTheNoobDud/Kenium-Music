@@ -123,7 +123,7 @@ export const createEmbed = (player, track, client) => {
         ]
       },
       { type: 14, divider: true, spacing: 2 },
-    ]
+    ],
   })
 }
 

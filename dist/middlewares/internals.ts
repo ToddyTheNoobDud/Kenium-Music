@@ -1,4 +1,4 @@
-import { createMiddleware, Formatter } from 'seyfert';
+import { createMiddleware, Embed } from 'seyfert';
 
 export const checkPlayer = createMiddleware<void>(async ({ context, pass, next }) => {
      if (!context.inGuild()) return next();
@@ -10,7 +10,7 @@ export const checkPlayer = createMiddleware<void>(async ({ context, pass, next }
     if (!player) {
         await context.editOrReply({
             flags: 64,
-            content: "❌ No active player found."
+            embeds: [new Embed().setColor(0).setDescription(`**[❌ | No active \`player\` found.](https://discord.com/oauth2/authorize?client_id=1202232935311495209)**`)]
         })
         return pass();
     }
@@ -39,7 +39,7 @@ export const checkTrack = createMiddleware<void>(async ({ context, pass, next })
     if (!player?.current) {
         await context.editOrReply({
             flags: 64,
-            content: "❌ No active track found."
+            embeds: [new Embed().setColor(0).setDescription(`**[❌ | No active \`track\` found.](https://discord.com/oauth2/authorize?client_id=1202232935311495209)**`)]
         })
         return pass();
     }

@@ -1,5 +1,4 @@
-import { Embed, ActionRow, Button, CommandContext, Declare, Command, Middlewares } from 'seyfert';
-import { ButtonStyle } from 'seyfert/lib/types';
+import { Embed, CommandContext, Declare, Command, Middlewares, Container } from 'seyfert';
 import { CooldownType, Cooldown } from "@slipher/cooldown";
 
 const CONFIG = {
@@ -12,11 +11,11 @@ const CONFIG = {
     BOT: {
         VERSION: '4.5.1',
         DEVELOPER: "mushroom0162",
-        CHANGELOG: `> Added an help command
-> Rewrited the voice performance (testing)
-> New player UI
-> A lot bug fixes in all commands.
-> Improved internal performance`   },
+        CHANGELOG: `[\`Added an help command\`](https://discord.com/oauth2/authorize?client_id=1202232935311495209)
+[\`Rewrited the voice performance\`](https://discord.com/oauth2/authorize?client_id=1202232935311495209)
+[\`New player UI\`](https://discord.com/oauth2/authorize?client_id=1202232935311495209)
+[\`A lot bug fixes in all commands.\`](https://discord.com/oauth2/authorize?client_id=1202232935311495209)
+[\`Improved internal performance\`](https://discord.com/oauth2/authorize?client_id=1202232935311495209)`   },
     COLORS: {
         PRIMARY: 0,
         ERROR: 0xFF5252
@@ -81,7 +80,7 @@ function formatCommitMessage(message: string): string {
     return typeMatch ? `\`${typeMatch[1].toUpperCase()}\` ${truncated}` : truncated;
 }
 
-function createChangelogEmbed(ctx: CommandContext, commits: any[]): Embed {
+function createChangelogEmbed(ctx: CommandContext, commits: any[]): Container {
     // Pre-calculate timestamp to avoid repeated calls
     const now = Math.floor(Date.now() / 1000);
 
@@ -95,43 +94,44 @@ function createChangelogEmbed(ctx: CommandContext, commits: any[]): Embed {
         return `> [\`${shortSha}\`](${commit.html_url}) ${message} by **${author}** <t:${timestamp}:R>`;
     }).join('\n');
 
-    // Single description build
-    const description = `## Latest Release
+    const description = `
 ${CONFIG.BOT.CHANGELOG}
 
 ## ${CONFIG.DISPLAY.EMOJIS.GITHUB} Recent Changes
 ${commitsText}`;
 
-    return new Embed()
-        .setColor(CONFIG.COLORS.PRIMARY)
-        .setTitle(`${CONFIG.DISPLAY.EMOJIS.RELEASE} Kenium Music v${CONFIG.BOT.VERSION}`)
-        .setDescription(description)
-        .setThumbnail(ctx.client.me.avatarURL({ size: 128 }))
-        .setFooter({
-            text: `Kenium Music v${CONFIG.BOT.VERSION} • Developed by ${CONFIG.BOT.DEVELOPER}`,
-            iconUrl: ctx.client.me.avatarURL()
-        })
-        .setTimestamp();
-}
+     return new Container({
+        components: [
+            {
+                type: 10,
+                content: `### ${CONFIG.DISPLAY.EMOJIS.RELEASE} Kenium Music v${CONFIG.BOT.VERSION}`
+            },
+            { type: 14, divider: true, spacing: 2 },
+            {
+                type: 9,
+                components: [
+                    {
+                        type: 10,
+                        content: `${description}`
+                    }],
+                accessory: {
+                    type: 11,
+                    media: { url: ctx.client.me.avatarURL({ extension: 'webp' }) || '' }
+                }
+            },
+            { type: 14, divider: true, spacing: 2 },
+            {
+                type: 1,
+                components: [
+                    { type: 2, label: "Repository" + CONFIG.DISPLAY.EMOJIS.REPO, style: 5, url: CONFIG.GITHUB.REPO_URL },
+                    { type: 2, label: "Commit History" + CONFIG.DISPLAY.EMOJIS.COMMITS, style: 5, url: CONFIG.GITHUB.COMMITS_URL },
+                    { type: 2, label: "Report Issue" + CONFIG.DISPLAY.EMOJIS.ISSUE, style: 5, url: CONFIG.GITHUB.ISSUES_URL }
+                ]
+            }
 
-function createActionRow(): ActionRow {
-    return new ActionRow().addComponents(
-        new Button()
-            .setLabel('Repository')
-            .setEmoji(CONFIG.DISPLAY.EMOJIS.REPO)
-            .setURL(CONFIG.GITHUB.REPO_URL)
-            .setStyle(ButtonStyle.Link),
-        new Button()
-            .setLabel('Commit History')
-            .setEmoji(CONFIG.DISPLAY.EMOJIS.COMMITS)
-            .setURL(CONFIG.GITHUB.COMMITS_URL)
-            .setStyle(ButtonStyle.Link),
-        new Button()
-            .setLabel('Report Issue')
-            .setEmoji(CONFIG.DISPLAY.EMOJIS.ISSUE)
-            .setURL(CONFIG.GITHUB.ISSUES_URL)
-            .setStyle(ButtonStyle.Link)
-    );
+        ]
+
+    })
 }
 
 @Declare({
@@ -153,11 +153,10 @@ export default class Changelog extends Command {
 
             const commits = await fetchCommits();
             const embed = createChangelogEmbed(ctx, commits);
-            const buttons = createActionRow();
 
             await ctx.editOrReply({
-                embeds: [embed],
-                components: [buttons]
+                components: [embed],
+                flags: 32768
             });
 
         } catch (error) {

@@ -26,6 +26,8 @@ export default class Volume extends Command {
 
         let player = ctx.client.aqua.players.get(ctx.guildId!);
 
+
+
         if (volume < 0 || volume > 200) {
             return ctx.write({
                 embeds: [

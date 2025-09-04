@@ -22,17 +22,12 @@ const isUrl = (s?: string): boolean => {
   return x.startsWith('http://') || x.startsWith('https://')
 }
 
-const MD_CHARS = new Set(['\\', '`', '*', '_', '[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '!', '.'])
 const esc = (s?: string): string => {
   if (!s) return ''
   const out: string[] = []
   for (let i = 0, len = s.length; i < len; i++) {
     const c = s[i]
-    if (MD_CHARS.has(c)) {
-      out.push('\\', c)
-    } else {
-      out.push(c)
-    }
+    out.push(c)
   }
   return out.join('')
 }

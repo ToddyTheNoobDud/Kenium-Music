@@ -13,6 +13,8 @@ export default class resumecmds extends Command {
 
         const player = client.aqua.players.get(ctx.guildId!);
 
+        if (!player.paused) return;
+
         player.pause(false);
 
         await ctx.editOrReply({ embeds: [new Embed().setDescription('Paused the song').setColor(0)], flags: 64 });
