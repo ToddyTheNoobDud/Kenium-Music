@@ -291,7 +291,7 @@ export default class Play extends Command {
         for (let i = 0; i < tracks.length; i++) player.queue.add(tracks[i])
         const first = tracks[0]
         if (first?.info?.uri) recentTracks.add(ctx.interaction.user.id, first.info.title || first.info.uri, first.info.uri)
-        embed.setDescription(`Added **${esc(playlistInfo.name)}** playlist (${tracks.length} tracks) to the queue.`)
+        embed.setDescription(`Added **[\`${esc(playlistInfo.name)}\`](${first?.info?.uri})** playlist (${tracks.length} tracks) to the queue.`)
         if (playlistInfo.thumbnail) embed.setThumbnail(playlistInfo.thumbnail)
       } else {
         await ctx.editResponse({ content: 'Unsupported content type.' })
