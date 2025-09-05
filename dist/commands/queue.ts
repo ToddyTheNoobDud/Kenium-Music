@@ -4,12 +4,14 @@ import {
     type CommandContext,
     Embed,
     Middlewares,
+    Container,
+    ActionRow
 } from 'seyfert';
 import { CooldownType, Cooldown } from '@slipher/cooldown';
 
 const TRACKS_PER_PAGE = 5;
 const MAX_DURATION_CACHE = 1000;
-const EPHEMERAL_FLAG = 64 as const;
+const EPHEMERAL_FLAG = 64 | 32768 as const;
 
 const durationCache: Map<number, string> = new Map();
 const queueViewState = new Map<
@@ -55,24 +57,6 @@ function calcPagination(queueLength: number, page: number) {
     return { validPage, maxPages, startIndex, endIndex };
 }
 
-function volumeEmoji(volume = 100) {
-    if (volume <= 0) return '🔇';
-    if (volume <= 33) return '🔈';
-    if (volume <= 66) return '🔉';
-    return '🔊';
-}
-
-function statusEmoji(paused: boolean) {
-    return paused ? '⏸️' : '▶️';
-}
-
-function loopBadge(loop: boolean) {
-    return loop ? '🔁 Loop On' : '✖️ Loop Off';
-}
-
-function shuffleBadge(shuffle: boolean) {
-    return shuffle ? '🔀 Shuffle On' : '↔️ Shuffle Off';
-}
 
 function createProgressBar(current: number, total: number, size = 18): string {
     if (!total || total <= 0) return '🔴 LIVE';
@@ -84,7 +68,7 @@ function createProgressBar(current: number, total: number, size = 18): string {
 }
 
 // ---------- UI Components ----------
-const createButtons = (
+const createButtonRows = (
     page: number,
     maxPages: number,
     opts: { paused: boolean; loop: boolean; shuffle: boolean }
@@ -169,12 +153,12 @@ const createButtons = (
     ];
 };
 
-// ---------- Embed Builder ----------
-function createQueueEmbed(
+// ---------- Container Builder ----------
+function createQueueContainer(
     player: any,
     page: number,
     precomputedTotalMs?: number
-): Embed {
+): Container {
     const queueLength = player.queue.length;
     const { validPage, maxPages, startIndex, endIndex } = calcPagination(
         queueLength,
@@ -184,18 +168,11 @@ function createQueueEmbed(
     const currentTrack = player.current;
     const queueSlice = player.queue.slice(startIndex, endIndex);
 
-    const totalMs =
-        precomputedTotalMs ??
-        player.queue.reduce(
-            (total: number, track: any) => total + (track?.info?.length ?? 0),
-            0
-        );
+    const components: any[] = [
+        { type: 10, content: `**Queue • Page ${validPage}/${maxPages}**` },
+        { type: 14, divider: true, spacing: 1 }
+    ];
 
-    const embed = new Embed()
-        .setColor(0x000000)
-        .setAuthor({ name: `Queue • Page ${validPage}/${maxPages}` });
-
-    // Now Playing
     if (currentTrack) {
         const title = truncate(currentTrack.info?.title ?? 'Unknown title', 60);
         const artist = truncate(
@@ -211,22 +188,27 @@ function createQueueEmbed(
             ? ` • 👤 <@${currentTrack.requester.id}>`
             : '';
 
-        embed.addFields({
-            name: '🎵 Now Playing',
-            value: [
-                `**[${title}](${currentTrack.info?.uri ?? '#'})**`,
-                `by ${artist}${requester}`,
-                '',
-                `${bar}  **${pct}%**`,
-                `\`${formatDuration(posMs)}\` / \`${formatDuration(
-                    lengthMs
-                )}\``,
-            ].join('\n'),
-            inline: false,
+        const nowPlayingContent = [
+            `## 🎵 Now Playing`,
+            `**[${title}](${currentTrack.info?.uri ?? '#'})**`,
+            `by ${artist}${requester}`,
+            '',
+            `${bar}  **${pct}%**`,
+            `\`${formatDuration(posMs)}\` / \`${formatDuration(lengthMs)}\``
+        ].join('\n');
+
+        components.push({
+            type: 9,
+            components: [
+                { type: 10, content: nowPlayingContent }
+            ],
+            accessory: currentTrack?.info?.artworkUrl || currentTrack?.thumbnail ? {
+                type: 11,
+                media: { url: currentTrack.info?.artworkUrl ?? currentTrack.thumbnail }
+            } : undefined
         });
     }
 
-    // Coming Up
     if (queueLength > 0) {
         const lines: string[] = [];
         for (let i = 0; i < queueSlice.length; i++) {
@@ -238,45 +220,32 @@ function createQueueEmbed(
             lines.push(`• \`${num}.\` [\`${title}\`](${uri})`);
         }
 
-        embed.addFields({
-            name: `📋 Coming Up${
-                queueLength > TRACKS_PER_PAGE
-                    ? ` (${startIndex + 1}-${endIndex} of ${queueLength})`
-                    : ''
-            }`,
-            value: lines.join('\n') || '*No tracks queued*',
-            inline: false,
-        });
-    }
+        const comingUpTitle = `📋 Coming Up${
+            queueLength > TRACKS_PER_PAGE
+                ? ` (${startIndex + 1}-${endIndex} of ${queueLength})`
+                : ''
+        }`;
 
-    // Stats bar
-    const vol = player.volume ?? 100;
-    const lengthMs = currentTrack?.info?.length ?? 0;
-    const posMs = player.position ?? 0;
-    const remainingCurrent = Math.max(0, lengthMs - posMs);
-    const etaMs = remainingCurrent + totalMs;
-
-    const stats = [
-        `🎶 ${queueLength} in queue`,
-        `⏱️ ${formatDuration(totalMs)} total`,
-        `🕒 ETA ${formatDuration(etaMs)}`,
-        `${volumeEmoji(vol)} ${vol}%`,
-        loopBadge(!!player.loop),
-        shuffleBadge(!!player.shuffle),
-        statusEmoji(!!player.paused),
-    ];
-
-    embed.setFooter({
-        text: stats.join(' • '),
-    });
-
-    if (currentTrack?.info?.artworkUrl || currentTrack?.thumbnail) {
-        embed.setThumbnail(
-            currentTrack.info?.artworkUrl ?? currentTrack.thumbnail
+        components.push(
+            { type: 14, divider: true, spacing: 1 },
+            { type: 10, content: `**${comingUpTitle}**` },
+            { type: 10, content: lines.join('\n') || '*No tracks queued*' }
         );
     }
 
-    return embed;
+    // Add buttons to the container
+    const buttonRows = createButtonRows(page, maxPages, {
+        paused: !!player.paused,
+        loop: !!player.loop,
+        shuffle: !!player.shuffle,
+    });
+
+    components.push(
+        { type: 14, divider: true, spacing: 2 },
+        ...buttonRows
+    );
+
+    return new Container({ components });
 }
 
 // ---------- Interaction Handlers ----------
@@ -358,16 +327,10 @@ async function handleQueueNavigation(
 
         queueViewState.set(messageId!, { page: newPage, maxPages, totalMs });
 
-        const embed = createQueueEmbed(player, newPage, totalMs);
-        const components = createButtons(newPage, maxPages, {
-            paused: !!player.paused,
-            loop: player.loop > 0, // Check if loop is enabled (not NONE)
-            shuffle: false, // Player class doesn't track shuffle state
-        });
+        const container = createQueueContainer(player, newPage, totalMs);
 
         await interaction.editOrReply({
-            embeds: [embed],
-            components,
+            components: [container],
             flags: EPHEMERAL_FLAG,
         });
     } catch (err) {
@@ -383,18 +346,17 @@ async function handleShowQueue(
     const queueLength = player.queue.length;
 
     if (queueLength === 0 && !player.current) {
-        const emptyEmbed = new Embed()
-            .setColor(0x000000)
-            .setAuthor({
-                name: 'Queue Empty',
-                iconUrl: (await ctx.me()).avatarURL(),
-            })
-            .setDescription(
-                '📭 **No tracks in queue**\n\nUse `/play` to add some music!'
-            )
-            .setFooter({ text: 'Tip: You can search or use URLs' });
+        const emptyContainer = new Container({
+            components: [
+                { type: 10, content: '**Queue Empty**' },
+                { type: 14, divider: true, spacing: 1 },
+                { type: 10, content: '📭 **No tracks in queue**\n\nUse `/play` to add some music!' },
+                { type: 14, divider: true, spacing: 1 },
+                { type: 10, content: '*Tip: You can search or use URLs*' }
+            ]
+        });
 
-        await ctx.write({ embeds: [emptyEmbed], flags: EPHEMERAL_FLAG });
+        await ctx.write({ components: [emptyContainer], flags: EPHEMERAL_FLAG });
         return;
     }
 
@@ -402,16 +364,11 @@ async function handleShowQueue(
         (total: number, track: any) => total + (track?.info?.length ?? 0),
         0
     );
-    const embed = createQueueEmbed(player, 1, totalMs);
+    const container = createQueueContainer(player, 1, totalMs);
     const { maxPages } = calcPagination(queueLength, 1);
-    const components = createButtons(1, maxPages, {
-        paused: !!player.paused,
-        loop: !!player.loop,
-        shuffle: !!player.shuffle,
-    });
 
     const message = await ctx.write(
-        { embeds: [embed], components, flags: EPHEMERAL_FLAG },
+        { components: [container], flags: EPHEMERAL_FLAG },
         true
     );
     if (!message?.id) return;
