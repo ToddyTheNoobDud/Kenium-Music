@@ -35,14 +35,15 @@ export default class playfile extends Command {
                 defaultVolume: 65,
             });
 
-            const { file } = ctx.options as { file: { url: string } }
+            const { file } = ctx.options as { file: { url: string, filename: string } }
+
+            console.log(file);
 
             try {
                 const result = await client.aqua.resolve({
                     query: file.url,
                     requester: ctx.interaction.user
                 })
-
                 const track = result.tracks[0];
                 if (!track) {
                     await ctx.editOrReply({ embeds: [new Embed().setDescription('No track found').setColor(0)], flags: 64 });
@@ -50,17 +51,14 @@ export default class playfile extends Command {
                 }
 
                 player.queue.add(track);
-                await ctx.write({ embeds: [new Embed().setDescription('Added to queue').setColor(0)], flags: 64 });
 
                 if (!player.playing && !player.paused && player.queue.size > 0) {
                     player.play();
                 }
-
+            await ctx.write({ embeds: [new Embed().setDescription('Added to queue').setColor(0)], flags: 64 });
             } catch (error) {
                 console.log(error);
             }
-
-            await ctx.editOrReply({ embeds: [new Embed().setDescription('Added to queue').setColor(0)], flags: 64 });
         } catch (error) {
             if (error.code === 10065) return;
         }
