@@ -12,29 +12,23 @@ importers:
         specifier: ^0.0.6
         version: 0.0.6
       aqualink:
-        specifier: 2.11.10
-        version: 2.11.10
+        specifier: 2.11.11
+        version: 2.11.11
       better-sqlite3:
         specifier: ^12.2.0
         version: 12.2.0
       dotenv:
-        specifier: ^17.2.1
-        version: 17.2.1
+        specifier: ^17.2.2
+        version: 17.2.2
       fetch-cookie:
         specifier: ^3.1.0
         version: 3.1.0
-      p-limit:
-        specifier: ^7.1.1
-        version: 7.1.1
       quick-lru:
         specifier: ^7.1.0
         version: 7.1.0
       seyfert:
         specifier: 3.2.6
         version: 3.2.6
-      tseep:
-        specifier: ^1.3.1
-        version: 1.3.1
       typescript:
         specifier: ^5.9.2
         version: 5.9.2
@@ -43,8 +37,8 @@ importers:
         specifier: ^7.6.13
         version: 7.6.13
       '@types/node':
-        specifier: ^24.3.0
-        version: 24.3.0
+        specifier: ^24.3.1
+        version: 24.3.1
       tsx:
         specifier: ^4.20.5
         version: 4.20.5
@@ -213,11 +207,11 @@ packages:
   '@types/better-sqlite3@7.6.13':
     resolution: {integrity: sha512-NMv9ASNARoKksWtsq/SHakpYAYnhBrQgGD8zkLYk/jaK8jUGn08CfEdTRgYhMypUQAfzSP8W6gNLe0q19/t4VA==}
 
-  '@types/node@24.3.0':
-    resolution: {integrity: sha512-aPTXCrfwnDLj4VvXrm+UUCQjNEvJgNA8s5F1cvwQU+3KNltTOkBm1j30uNLyqqPNe7gE3KFzImYoZEfLhp4Yow==}
+  '@types/node@24.3.1':
+    resolution: {integrity: sha512-3vXmQDXy+woz+gnrTvuvNrPzekOi+Ds0ReMxw0LzBiK3a+1k0kQn9f2NWk+lgD4rJehFUmYy2gMhJ2ZI+7YP9g==}
 
-  aqualink@2.11.10:
-    resolution: {integrity: sha512-kXzJkIApOnFs6jylMGiMsfaV9DUzMTM+rxFv3BZXX7L61s7tmdinJmUt6Elw/vzU82i0u5nbaBjtwBd45c+rNg==}
+  aqualink@2.11.11:
+    resolution: {integrity: sha512-/I2MPjg2DaM+/1g8SEsCzZlDiTvwULbYLvCxAjMb83aWfAufUyYKZMkIBPwJEAE2F1Wg8fNbtr1sm9GNzWhE1A==}
 
   base64-js@1.5.1:
     resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
@@ -250,8 +244,8 @@ packages:
     resolution: {integrity: sha512-3UDv+G9CsCKO1WKMGw9fwq/SWJYbI0c5Y7LU1AXYoDdbhE2AHQ6N6Nb34sG8Fj7T5APy8qXDCKuuIHd1BR0tVA==}
     engines: {node: '>=8'}
 
-  dotenv@17.2.1:
-    resolution: {integrity: sha512-kQhDYKZecqnM0fCnzI5eIv5L4cAe/iRI+HqMbO/hbRdTAeXDG+M9FjipUxNfbARuEg4iHIbhnhs78BCHNbSxEQ==}
+  dotenv@17.2.2:
+    resolution: {integrity: sha512-Sf2LSQP+bOlhKWWyhFsn0UsfdK/kCWRv1iuA2gXAwt3dyNabr6QSj00I2V10pidqz69soatm9ZwZvpQMTIOd5Q==}
     engines: {node: '>=12'}
 
   end-of-stream@1.4.5:
@@ -308,16 +302,12 @@ packages:
   napi-build-utils@2.0.0:
     resolution: {integrity: sha512-GEbrYkbfF7MoNaoh2iGG84Mnf/WZfB0GdGEsM8wz7Expx/LlWf5U8t9nvJKXSp3qr5IsEbK04cBGhol/KwOsWA==}
 
-  node-abi@3.75.0:
-    resolution: {integrity: sha512-OhYaY5sDsIka7H7AtijtI9jwGYLyl29eQn/W623DiN/MIv5sUqc4g7BIDThX+gb7di9f6xK02nkp8sdfFWZLTg==}
+  node-abi@3.77.0:
+    resolution: {integrity: sha512-DSmt0OEcLoK4i3NuscSbGjOf3bqiDEutejqENSplMSFA/gmB8mkED9G4pKWnPl7MDU4rSHebKPHeitpDfyH0cQ==}
     engines: {node: '>=10'}
 
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
-
-  p-limit@7.1.1:
-    resolution: {integrity: sha512-i8PyM2JnsNChVSYWLr2BAjNoLi0BAYC+wecOnZnVV+YSNJkzP7cWmvI34dk0WArWfH9KwBHNoZI3P3MppImlIA==}
-    engines: {node: '>=20'}
 
   prebuild-install@7.1.3:
     resolution: {integrity: sha512-8Mf2cbV7x1cXPUILADGI3wuhfqWvtiLA1iclTDbFRZkgRQS0NqsPZphna9V+HyTEadheuPmjaJMsbzKQFOzLug==}
@@ -424,10 +414,6 @@ packages:
       utf-8-validate:
         optional: true
 
-  yocto-queue@1.2.1:
-    resolution: {integrity: sha512-AyeEbWOu/TAXdxlV9wmGcR0+yh2j3vYPGOECcIj2S7MkrLyC7ne+oye2BKTItt0ii2PHk4cDy+95+LshzbXnGg==}
-    engines: {node: '>=12.20'}
-
 snapshots:
 
   '@esbuild/aix-ppc64@0.25.9':
@@ -514,13 +500,13 @@ snapshots:
 
   '@types/better-sqlite3@7.6.13':
     dependencies:
-      '@types/node': 24.3.0
+      '@types/node': 24.3.1
 
-  '@types/node@24.3.0':
+  '@types/node@24.3.1':
     dependencies:
       undici-types: 7.10.0
 
-  aqualink@2.11.10:
+  aqualink@2.11.11:
     dependencies:
       tseep: 1.3.1
       ws: 8.18.3
@@ -560,7 +546,7 @@ snapshots:
 
   detect-libc@2.0.4: {}
 
-  dotenv@17.2.1: {}
+  dotenv@17.2.2: {}
 
   end-of-stream@1.4.5:
     dependencies:
@@ -629,17 +615,13 @@ snapshots:
 
   napi-build-utils@2.0.0: {}
 
-  node-abi@3.75.0:
+  node-abi@3.77.0:
     dependencies:
       semver: 7.7.2
 
   once@1.4.0:
     dependencies:
       wrappy: 1.0.2
-
-  p-limit@7.1.1:
-    dependencies:
-      yocto-queue: 1.2.1
 
   prebuild-install@7.1.3:
     dependencies:
@@ -649,7 +631,7 @@ snapshots:
       minimist: 1.2.8
       mkdirp-classic: 0.5.3
       napi-build-utils: 2.0.0
-      node-abi: 3.75.0
+      node-abi: 3.77.0
       pump: 3.0.3
       rc: 1.2.8
       simple-get: 4.0.1
@@ -747,5 +729,3 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.18.3: {}
-
-  yocto-queue@1.2.1: {}

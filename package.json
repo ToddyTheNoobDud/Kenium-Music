@@ -1,7 +1,7 @@
 {
 	"dependencies": {
 		"@slipher/cooldown": "^0.0.6",
-		"aqualink": "2.11.10",
+		"aqualink": "2.11.11",
 		"better-sqlite3": "^12.2.0",
 		"dotenv": "^17.2.2",
 		"fetch-cookie": "^3.1.0",

@@ -72,7 +72,7 @@ export const updatePresence = async clientInstance => {
     const userCount = guilds.reduce((total, guild) => total + (guild.memberCount || 0), 0)
 
     const activities = [
-      { name: '⚡ Kenium 4.5.1 ⚡', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
+      { name: '⚡ Kenium 4.6.0 ⚡', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
       { name: `${userCount} users`, type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
       { name: `${guilds.length} servers`, type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
       { name: 'Sponsor: https://links.triniumhost.com/', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' }
@@ -135,7 +135,7 @@ aqua.on('trackStart', async (player, track) => {
     const now = Date.now()
     if (now - lastVoiceStatusUpdate > VOICE_STATUS_THROTTLE) {
       lastVoiceStatusUpdate = now
-      const status = `⭐ ${truncateText(track.info?.title || track.title, VOICE_STATUS_LENGTH)} - Kenium 4.5.1`
+      const status = `⭐ ${truncateText(track.info?.title || track.title, VOICE_STATUS_LENGTH)} - Kenium 4.6.0`
       client.channels.setVoiceStatus(player.voiceChannel, status).catch(() => null)
     }
   } catch (error) {
@@ -169,6 +169,9 @@ aqua.on('nodeError', (node, error) => {
 
 aqua.on('socketClosed', (player, payload) => {
   client.logger.debug(`Socket closed [${player.guildId}], code: ${payload.code}`)
+})
+aqua.on("debug", (message) => {
+  client.logger.debug(message)
 })
 
 aqua.on('nodeConnect', node => {
