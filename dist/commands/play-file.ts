@@ -37,8 +37,6 @@ export default class playfile extends Command {
 
             const { file } = ctx.options as { file: { url: string, filename: string } }
 
-            console.log(file);
-
             try {
                 const result = await client.aqua.resolve({
                     query: file.url,
