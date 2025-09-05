@@ -188,7 +188,7 @@ async function fetchMusixmatchLyrics(query: string, currentTrack: any) {
     name: 'lyrics',
     description: 'Get lyrics for the current song or search',
 })
-@Middlewares(['cooldown', 'checkPlayer', 'checkVoice'])
+@Middlewares(['cooldown', 'checkPlayer', 'checkVoice', 'checkTrack'])
 export default class LyricsCommand extends Command {
     public override async run(ctx: CommandContext): Promise<void> {
         await ctx.deferReply();
