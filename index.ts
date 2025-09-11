@@ -1,10 +1,11 @@
 import process from 'node:process'
 import 'dotenv/config'
-import { Client, HttpClient, ParseClient, Container, LimitedMemoryAdapter, ParseMiddlewares } from 'seyfert'
+import { Client, HttpClient, ParseClient, Container, LimitedMemoryAdapter, ParseMiddlewares, ParseLocales } from 'seyfert'
 import { CooldownManager } from '@slipher/cooldown'
 import { middlewares } from './dist/middlewares/middlewares'
 import { Aqua } from 'aqualink'
 import { createEmbed, truncateText } from './dist/events/interactionCreate'
+import English from './dist/languages/en'
 
 const { NODE_HOST, NODE_PASSWORD, NODE_PORT, NODE_NAME } = process.env
 
@@ -18,9 +19,9 @@ const client = new Client({})
 
 const aqua = new Aqua(client, [{
   host: NODE_HOST,
-  password: NODE_PASSWORD,
+  auth: NODE_PASSWORD,
   port: NODE_PORT,
-  secure: false,
+  ssl: false,
   name: NODE_NAME
 }], {
   defaultSearchPlatform: 'ytsearch',
@@ -29,9 +30,9 @@ const aqua = new Aqua(client, [{
   infiniteReconnects: true,
   autoResume: true,
   loadBalancer: 'random',
+  useHttp2: true,
   leaveOnEnd: false
 })
-
 
 aqua.init(process.env.CLIENT_ID)
 Object.assign(client, { aqua })
@@ -88,6 +89,7 @@ export const updatePresence = async clientInstance => {
 }
 
 client.setServices({
+  langs: { default: 'en' },
   middlewares: middlewares,
   cache: {
     disabledCache: {
@@ -99,7 +101,7 @@ client.setServices({
       stageInstances: true
     },
     adapter: new LimitedMemoryAdapter({
-      message: { expire: 3 * 60 * 1000, limit: 5 }
+      message: { expire: 5 * 60 * 1000, limit: 10 }
     })
   }
 })
@@ -202,4 +204,5 @@ declare module 'seyfert' {
     cooldown: CooldownManager
   }
   interface RegisteredMiddlewares extends ParseMiddlewares<typeof middlewares> { }
+  interface DefaultLocale extends ParseLocales<typeof English> { }
 }

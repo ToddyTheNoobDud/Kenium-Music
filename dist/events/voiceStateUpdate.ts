@@ -95,6 +95,7 @@ class CircuitBreaker {
   }
 }
 
+// Optimized Timeout Heap with unref support
 class TimeoutHeap {
   private heap: Array<{ guildId: string; expiry: number; callback: () => void }> = [];
   private positions = new Map<string, number>();

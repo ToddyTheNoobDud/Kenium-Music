@@ -1,12 +1,13 @@
 import { config } from "seyfert";
-import'dotenv/config';
+import "dotenv/config";
 
 export default config.bot({
-    token: process.env.token ?? "",
-    locations: {
-        base: "dist",
-        commands: "commands",
-        events: "events",
-    },
-    intents: ["Guilds", "GuildMessages", "DirectMessages", "GuildVoiceStates"],
+	token: process.env.token ?? "",
+	locations: {
+		base: "dist",
+		commands: "commands",
+		events: "events",
+		langs: "languages",
+	},
+	intents: ["Guilds", "GuildMessages", "DirectMessages", "GuildVoiceStates"],
 });

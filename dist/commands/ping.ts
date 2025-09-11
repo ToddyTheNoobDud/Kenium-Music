@@ -1,34 +1,57 @@
-import { Embed, Declare, Command, type CommandContext } from "seyfert";
+import { Command, type CommandContext, Declare, Embed, LocalesT } from 'seyfert';
+import { getContextLanguage } from '../utils/i18n';
+
+const _functions = {
+  createPingEmbed: (t: any, wsPing: number, shardPing: number, playerPing: number, shardId: number, avatarURL?: string): Embed =>
+    new Embed()
+      .setColor(0)
+      .setTitle(t.ping.title)
+      .setDescription(t.ping.description
+        .replace('{wsPing}', wsPing.toString())
+        .replace('{shardPing}', shardPing.toString())
+        .replace('{playerPing}', playerPing.toString()))
+      .setTimestamp()
+      .setFooter({ text: `Shard ${shardId}`, iconUrl: avatarURL }),
+
+  getPlayerPing: (client: any, guildId: string): number => {
+    const player = client.aqua.players.get(guildId);
+    return player ? Math.floor(player.ping) : 0;
+  }
+};
 
 @Declare({
   name: 'ping',
-  description: 'ping the bot',
+  description: 'ping the bot'
 })
-export default class pingCmds extends Command {
+@LocalesT('commands.ping.name', 'commands.ping.description')
+export default class PingCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
+    if (!ctx.guildId) return;
+
     try {
+      const lang = getContextLanguage(ctx);
+      const t = ctx.t.get(lang);
       const { client } = ctx;
 
-      const embed = new Embed()
-
-      const shardId = ctx.shardId;
-
       const wsPing = Math.floor(client.gateway.latency);
-      const shardPing = Math.floor((await ctx.client.gateway.get(shardId)?.ping()) ?? 0);
+      const shardPing = Math.floor((await client.gateway.get(ctx.shardId)?.ping()) ?? 0);
+      const playerPing = _functions.getPlayerPing(client, ctx.guildId);
 
-      let playerping = 0;
-      const player = client.aqua.players.get(ctx.guildId);
-      if (player) {
-        playerping = Math.floor(player.ping);
-      }
-
-      embed
-        .setColor(0)
-        .setDescription(`**Gateway**: ${wsPing}ms\n**Shard**: ${shardPing}ms\n**Player**: ${playerping}ms`);
+      const embed = _functions.createPingEmbed(
+        t,
+        wsPing,
+        shardPing,
+        playerPing,
+        ctx.shardId,
+        client.me?.avatarURL()
+      );
 
       await ctx.write({ embeds: [embed] });
-    } catch (error) {
-      if (error.code === 10065) return;
+    } catch (error: any) {
+      if (error.code !== 10065) {
+        const t = ctx.t.get('en');
+        await ctx.write({ content: t.errors?.general || 'An error occurred', flags: 64 });
+      }
     }
   }
 }

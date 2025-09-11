@@ -1,77 +1,129 @@
 import { SimpleDB } from './simpleDB';
 
-let dbInstance = null;
-let settingsCollectionInstance = null;
+interface GuildSettings {
+  guildId: string;
+  twentyFourSevenEnabled: boolean;
+  voiceChannelId: string | null;
+  textChannelId: string | null;
+}
 
-export function getDB() {
-    if (!dbInstance) {
-        dbInstance = new SimpleDB();
-    }
+interface GuildLanguage {
+  guildId: string;
+  lang: string;
+}
+
+const VALID_LANGS = /^(en|br)$/;
+const GUILD_ID_REGEX = /^\d{17,20}$/;
+
+let dbInstance: SimpleDB | null = null;
+let settingsCollection: any = null;
+let languagesCollection: any = null;
+
+const _functions = {
+  initDb: (): SimpleDB => {
+    if (!dbInstance) dbInstance = new SimpleDB();
     return dbInstance;
-}
+  },
 
+  getSettingsCollection: () => {
+    if (!settingsCollection) settingsCollection = _functions.initDb().collection('guildSettings');
+    return settingsCollection;
+  },
 
-export function getSettingsCollection() {
-    if (!settingsCollectionInstance) {
-        const db = getDB();
-        settingsCollectionInstance = db.collection('guildSettings');
-    }
-    return settingsCollectionInstance;
-}
+  getLanguagesCollection: () => {
+    if (!languagesCollection) languagesCollection = _functions.initDb().collection('guildLanguages');
+    return languagesCollection;
+  },
 
-export function getGuildSettings(guildId) {
-    if (!guildId) return null;
+  validateGuildId: (guildId: string): boolean => GUILD_ID_REGEX.test(guildId),
 
-    const settingsCollection = getSettingsCollection();
-    let settings = settingsCollection.findOne({ guildId: guildId });
+  validateLang: (lang: string): boolean => VALID_LANGS.test(lang)
+};
+
+export const getGuildSettings = (guildId: string): GuildSettings | null => {
+  if (!_functions.validateGuildId(guildId)) return null;
+
+  try {
+    const collection = _functions.getSettingsCollection();
+    let settings = collection.findOne({ guildId });
 
     if (!settings) {
-        settings = {
-            guildId: guildId,
-            twentyFourSevenEnabled: false,
-            voiceChannelId: null,
-            textChannelId: null
-        };
-        settingsCollection.insert(settings);
+      settings = {
+        guildId,
+        twentyFourSevenEnabled: false,
+        voiceChannelId: null,
+        textChannelId: null
+      };
+      collection.insert(settings);
     }
 
     return settings;
-}
-
-export function updateGuildSettings(guildId, updates) {
-    if (!guildId) return 0;
-
-    const settingsCollection = getSettingsCollection();
-    return settingsCollection.update({ guildId: guildId }, updates);
-}
-
-export function isTwentyFourSevenEnabled(guildId) {
-    if (!guildId) return false;
-
-    const settings = getGuildSettings(guildId);
-    return settings?.twentyFourSevenEnabled === true;
-}
-
-export function getChannelIds(guildId) {
-    if (!guildId) return null;
-
-    const settings = getGuildSettings(guildId);
-    if (settings?.twentyFourSevenEnabled === true) {
-        return {
-            voiceChannelId: settings.voiceChannelId,
-            textChannelId: settings.textChannelId
-        };
-    }
+  } catch {
     return null;
-}
+  }
+};
 
-export function setChannelIds(guildId: string, voiceChannelId: string, textChannelId: string): boolean {
-    if (!guildId || !voiceChannelId || !textChannelId) return false;
+export const updateGuildSettings = (guildId: string, updates: Partial<GuildSettings>): number => {
+  if (!_functions.validateGuildId(guildId)) return 0;
 
-    const result = updateGuildSettings(guildId, {
-        voiceChannelId: voiceChannelId,
-        textChannelId: textChannelId
-    });
+  try {
+    return _functions.getSettingsCollection().update({ guildId }, updates);
+  } catch {
+    return 0;
+  }
+};
 
-    return result > 0;
-}
+export const isTwentyFourSevenEnabled = (guildId: string): boolean => {
+  const settings = getGuildSettings(guildId);
+  return settings?.twentyFourSevenEnabled === true;
+};
+
+export const getChannelIds = (guildId: string): { voiceChannelId: string; textChannelId: string } | null => {
+  const settings = getGuildSettings(guildId);
+  return (settings?.twentyFourSevenEnabled && settings.voiceChannelId && settings.textChannelId)
+    ? { voiceChannelId: settings.voiceChannelId, textChannelId: settings.textChannelId }
+    : null;
+};
+
+export const setChannelIds = (guildId: string, voiceChannelId: string, textChannelId: string): boolean => {
+  if (!_functions.validateGuildId(guildId) || !voiceChannelId || !textChannelId) return false;
+  return updateGuildSettings(guildId, { voiceChannelId, textChannelId }) > 0;
+};
+
+export const getGuildLang = (guildId: string): string | null => {
+  if (!_functions.validateGuildId(guildId)) return null;
+
+  try {
+    const doc = _functions.getLanguagesCollection().findOne({ guildId });
+    return doc?.lang || null;
+  } catch {
+    return null;
+  }
+};
+
+export const setGuildLang = (guildId: string, lang: string): boolean => {
+  if (!_functions.validateGuildId(guildId) || !_functions.validateLang(lang)) return false;
+
+  try {
+    const collection = _functions.getLanguagesCollection();
+    const existing = collection.findOne({ guildId });
+
+    const result = existing
+      ? collection.update({ guildId }, { lang })
+      : collection.insert({ guildId, lang });
+
+    return result !== null && result !== undefined;
+  } catch {
+    return false;
+  }
+};
+
+export const deleteGuildLang = (guildId: string): boolean => {
+  if (!_functions.validateGuildId(guildId)) return false;
+
+  try {
+    return _functions.getLanguagesCollection().remove({ guildId }) > 0;
+  } catch {
+    return false;
+  }
+};
