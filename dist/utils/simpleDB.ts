@@ -5,140 +5,186 @@ import Database from 'better-sqlite3'
 
 interface SimpleDBOptions {
   dbPath?: string
+  cacheSize?: number
 }
 
-function ensureDir(dir: string) {
+const VALID_IDENTIFIER = /^[A-Za-z0-9_]+$/
+const JSON_PATH_COMPONENT = /^[A-Za-z0-9_]+$/
+const ID_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz'
+
+const ensureDir = (dir: string): void => {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 
-function validateIdentifier(name: string) {
-  if (!/^[A-Za-z0-9_]+$/.test(name)) {
-    throw new Error('Invalid identifier (allowed: A-Za-z0-9_): ' + String(name))
+const validateIdentifier = (name: string): void => {
+  if (!VALID_IDENTIFIER.test(name)) {
+    throw new Error(`Invalid identifier: ${name}`)
   }
-  return name
 }
 
-function qualifyIdentifier(name: string) {
-
-  return `"${name}"`
+const buildJsonPath = (key: string): string => {
+  const parts = key.split('.')
+  for (const part of parts) {
+    if (!JSON_PATH_COMPONENT.test(part)) {
+      throw new Error(`Invalid key: ${part}`)
+    }
+  }
+  return `$.${parts.map(p => `"${p}"`).join('.')}`
 }
 
-function jsonPathForKey(key: string) {
-  const parts = String(key).split('.')
-  if (parts.length === 0) throw new Error('Invalid JSON path')
-  for (const p of parts) {
-    if (!/^[A-Za-z0-9_]+$/.test(p)) throw new Error('Invalid JSON key component: ' + p)
+const generateId = (): string => {
+  const timestamp = Date.now().toString(36)
+  let random = ''
+  for (let i = 0; i < 6; i++) {
+    random += ID_CHARS[Math.floor(Math.random() * ID_CHARS.length)]
   }
-
-  return '$.' + parts.map(p => `"${p}"`).join('.')
+  return `${timestamp}_${random}`
 }
 
 class SQLiteCollection extends EventEmitter {
-  private db: any
-  private tableName: string
-  private qualifiedTable: string
+  private readonly _db: Database.Database
+  private readonly _tableName: string
+  private readonly _quotedTable: string
+  private readonly _insertStmt: Database.Statement
+  private readonly _selectAllStmt: Database.Statement
+  private readonly _selectByIdStmt: Database.Statement
+  private readonly _updateStmt: Database.Statement
+  private readonly _deleteByIdStmt: Database.Statement
+  private readonly _countAllStmt: Database.Statement
+  private readonly _stmtCache = new Map<string, Database.Statement>()
+  private readonly _cacheSize: number
 
-  constructor(db: any, name: string) {
-    validateIdentifier(name)
+  constructor(db: Database.Database, name: string, cacheSize = 50) {
     super()
-    this.db = db
-    this.tableName = `col_${name}`
-    validateIdentifier(this.tableName)
-    this.qualifiedTable = qualifyIdentifier(this.tableName)
+    validateIdentifier(name)
+    this._db = db
+    this._tableName = `col_${name}`
+    validateIdentifier(this._tableName)
+    this._quotedTable = `"${this._tableName}"`
+    this._cacheSize = Math.max(0, cacheSize)
 
-    this.db
-      .prepare(
-        `CREATE TABLE IF NOT EXISTS ${this.qualifiedTable} ( _id TEXT PRIMARY KEY, doc TEXT NOT NULL, createdAt TEXT, updatedAt TEXT )`
-      )
-      .run()
+    this._db.prepare(
+      `CREATE TABLE IF NOT EXISTS ${this._quotedTable} (
+        _id TEXT PRIMARY KEY,
+        doc TEXT NOT NULL,
+        createdAt TEXT,
+        updatedAt TEXT
+      )`
+    ).run()
 
     try {
-      const idx = `"${this.tableName}_updated_idx"`
-      this.db
-        .prepare(`CREATE INDEX IF NOT EXISTS ${idx} ON ${this.qualifiedTable}(updatedAt)`)
-        .run()
-    } catch (e) {
+      this._db.prepare(`CREATE INDEX IF NOT EXISTS "${this._tableName}_updated_idx" ON ${this._quotedTable}(updatedAt)`).run()
+    } catch {}
 
-    }
+    this._insertStmt = this._db.prepare(
+      `INSERT INTO ${this._quotedTable} (_id, doc, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(_id) DO UPDATE SET
+         doc = excluded.doc,
+         updatedAt = excluded.updatedAt,
+         createdAt = COALESCE((SELECT createdAt FROM ${this._quotedTable} WHERE _id = excluded._id), excluded.createdAt)`
+    )
+
+    this._selectAllStmt = this._db.prepare(`SELECT _id, doc FROM ${this._quotedTable}`)
+    this._selectByIdStmt = this._db.prepare(`SELECT _id, doc FROM ${this._quotedTable} WHERE _id = ?`)
+    this._updateStmt = this._db.prepare(`UPDATE ${this._quotedTable} SET doc = ?, updatedAt = ? WHERE _id = ?`)
+    this._deleteByIdStmt = this._db.prepare(`DELETE FROM ${this._quotedTable} WHERE _id = ?`)
+    this._countAllStmt = this._db.prepare(`SELECT COUNT(*) as c FROM ${this._quotedTable}`)
   }
 
-  private normalizeDoc(doc: any) {
+  private normalizeDoc(doc: any): any {
     if (!doc || typeof doc !== 'object') doc = {}
-    if (!doc._id) doc._id = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+    if (!doc._id) doc._id = generateId()
     return doc
   }
 
-  private rowToDoc(row: any) {
-    if (!row || typeof row.doc !== 'string') return null
+  private parseRow(row: any): any | null {
     try {
-      return JSON.parse(row.doc)
-    } catch (err) {
-
-      try {
-        console.error('[SimpleDB] Failed to parse JSON doc for _id=', row._id, 'error=', err)
-      } catch (e) {
-        console.error('[SimpleDB] Failed to parse JSON doc (unknown id)', err)
+      const parsed = JSON.parse(row.doc)
+      if (typeof parsed === 'object' && parsed !== null) {
+        if (!parsed._id) parsed._id = row._id
       }
+      return parsed
+    } catch (err) {
+      try {
+        console.error('[SimpleDB] Failed to parse JSON doc for id=', row && row._id, 'error=', err)
+      } catch {}
       return null
     }
   }
 
-  private buildWhereAndParams(query: any) {
+  private getSelectStmt(query: any): Database.Statement | null {
+    const keys = Object.keys(query)
+    if (keys.length === 0) return this._selectAllStmt
+
+    keys.sort()
+    const cacheKey = keys.join('|')
+    if (this._cacheSize > 0 && this._stmtCache.has(cacheKey)) {
+      return this._stmtCache.get(cacheKey)!
+    }
+
     const where: string[] = []
-    const params: any = {}
-    let i = 0
+    for (const key of keys) {
+      const path = buildJsonPath(key)
+      const val = query[key]
 
-    for (const k of Object.keys(query)) {
-      i++
-      const val = query[k]
-      const path = jsonPathForKey(k)
-
-      if (typeof val === 'boolean') {
-        where.push(`CAST(json_extract(doc, '${path}') AS INTEGER) = @v${i}`)
-        params[`v${i}`] = val ? 1 : 0
-      } else if (val === null || val === undefined) {
+      if (val === null || val === undefined) {
         where.push(`json_extract(doc, '${path}') IS NULL`)
+      } else if (typeof val === 'boolean') {
+        where.push(`CAST(json_extract(doc, '${path}') AS INTEGER) = ?`)
       } else if (typeof val === 'number' || typeof val === 'string' || typeof val === 'bigint') {
-        where.push(`json_extract(doc, '${path}') = @v${i}`)
-        params[`v${i}`] = val
+        where.push(`json_extract(doc, '${path}') = ?`)
       } else {
-
-        where.push(`json_extract(doc, '${path}') = json(@v${i})`)
-        params[`v${i}`] = JSON.stringify(val)
+        where.push(`json_extract(doc, '${path}') = json(?)`)
       }
     }
 
-    return { where, params }
+    const stmt = this._db.prepare(`SELECT _id, doc FROM ${this._quotedTable} WHERE ${where.join(' AND ')}`)
+
+    if (this._cacheSize > 0) {
+      if (this._stmtCache.size >= this._cacheSize) {
+        const firstKey = this._stmtCache.keys().next().value
+        if (firstKey) this._stmtCache.delete(firstKey)
+      }
+      this._stmtCache.set(cacheKey, stmt)
+    }
+
+    return stmt
   }
 
-  insert(docs: any | any[]) {
+  private buildParams(query: any): any[] {
+    const keys = Object.keys(query)
+    keys.sort()
+    const params: any[] = []
+
+    for (const key of keys) {
+      const val = query[key]
+      if (val === null || val === undefined) continue
+
+      if (typeof val === 'boolean') {
+        params.push(val ? 1 : 0)
+      } else if (typeof val === 'number' || typeof val === 'string' || typeof val === 'bigint') {
+        params.push(val)
+      } else {
+        params.push(JSON.stringify(val))
+      }
+    }
+    return params
+  }
+
+  insert(docs: any | any[]): any {
     const arr = Array.isArray(docs) ? docs : [docs]
     const now = new Date().toISOString()
 
-    const stmt = this.db.prepare(
-      `INSERT INTO ${this.qualifiedTable} (_id, doc, createdAt, updatedAt)
-       VALUES (@_id, @doc, @createdAt, @updatedAt)
-       ON CONFLICT(_id) DO UPDATE SET
-         doc = excluded.doc,
-         updatedAt = excluded.updatedAt,
-         createdAt = COALESCE((SELECT createdAt FROM ${this.qualifiedTable} WHERE _id = excluded._id), excluded.createdAt)`
-    )
-
-    const tx = this.db.transaction((items: any[]) => {
-      for (const it of items) {
-        const doc = this.normalizeDoc(it)
-        const payload = JSON.stringify(doc)
-        stmt.run({
-          _id: doc._id,
-          doc: payload,
-          createdAt: doc.createdAt || now,
-          updatedAt: now,
-        })
+    const tx = this._db.transaction(() => {
+      for (const item of arr) {
+        const doc = this.normalizeDoc(item)
+        this._insertStmt.run(doc._id, JSON.stringify(doc), doc.createdAt || now, now)
       }
     })
 
     try {
-      tx(arr)
+      tx()
     } catch (err) {
       console.error('[SimpleDB] Insert transaction failed', err)
       throw err
@@ -148,100 +194,90 @@ class SQLiteCollection extends EventEmitter {
     return arr.length === 1 ? arr[0] : arr
   }
 
-  find(query: any = {}) {
-    if (!query || Object.keys(query).length === 0) {
-      const rows = this.db
-        .prepare(`SELECT _id, doc FROM ${this.qualifiedTable}`)
-        .all()
-      return rows.map((r: any) => this.rowToDoc(r)).filter(Boolean)
+  find(query: any = {}): any[] {
+    const stmt = this.getSelectStmt(query)
+    if (!stmt) return []
+
+    const params = this.buildParams(query)
+    const rows = stmt.all(...params)
+
+    const results: any[] = []
+    for (const row of rows) {
+      const doc = this.parseRow(row)
+      if (doc) results.push(doc)
+    }
+    return results
+  }
+
+  findOne(query: any = {}): any {
+    const stmt = this.getSelectStmt(query)
+    if (!stmt) return null
+
+    const params = this.buildParams(query)
+    const row = stmt.get(...params)
+
+    return row ? this.parseRow(row) : null
+  }
+
+  findById(id: string): any {
+    if (!id) return null
+    const row = this._selectByIdStmt.get(id) as any
+    return row ? this.parseRow(row) : null
+  }
+
+  update(query: any, updates: any): number {
+    if (query?._id) {
+      const existing = this.findById(query._id)
+      if (!existing) return 0
+
+      const merged = { ...existing, ...updates, _id: existing._id, updatedAt: new Date().toISOString() }
+      this._updateStmt.run(JSON.stringify(merged), merged.updatedAt, merged._id)
+      this.emit('change', 'update', merged)
+      return 1
     }
 
-    const { where, params } = this.buildWhereAndParams(query)
-    if (!where.length) return []
+    const matches = this.find(query)
+    if (matches.length === 0) return 0
 
-    const sql = `SELECT _id, doc FROM ${this.qualifiedTable} WHERE ${where.join(' AND ')}`
-    const rows = this.db.prepare(sql).all(params)
-    return rows.map((r: any) => this.rowToDoc(r)).filter(Boolean)
-  }
-
-  findOne(query: any = {}) {
-    const res = this.find(query)
-    return res.length ? res[0] : null
-  }
-
-  findById(id: string) {
-    if (!id) return null
-    const row = this.db
-      .prepare(`SELECT _id, doc FROM ${this.qualifiedTable} WHERE _id = ?`)
-      .get(id)
-    return this.rowToDoc(row)
-  }
-
-  update(query: any, updates: any) {
-    const t = this.qualifiedTable
-
-    const tx = this.db.transaction(() => {
-      if (query?._id) {
-        const existing = this.findById(query._id)
-        if (!existing) return 0
-
-        const merged = Object.assign({}, existing, updates)
-        merged._id = existing._id
-        merged.updatedAt = new Date().toISOString()
-
-        this.db
-          .prepare(`UPDATE ${t} SET doc = @doc, updatedAt = @updatedAt WHERE _id = @id`)
-          .run({ doc: JSON.stringify(merged), updatedAt: merged.updatedAt, id: merged._id })
-
-        this.emit('change', 'update', merged)
-        return 1
-      }
-
-      const matches = this.find(query)
-      if (!matches.length) return 0
-
+    const tx = this._db.transaction(() => {
       const now = new Date().toISOString()
-      const stmt = this.db.prepare(`UPDATE ${t} SET doc = @doc, updatedAt = @updatedAt WHERE _id = @id`)
-
-      for (const ex of matches) {
-        const merged = Object.assign({}, ex, updates)
-        merged._id = ex._id
-        merged.updatedAt = now
-        stmt.run({ doc: JSON.stringify(merged), updatedAt: now, id: merged._id })
+      for (const doc of matches) {
+        const merged = { ...doc, ...updates, _id: doc._id, updatedAt: now }
+        this._updateStmt.run(JSON.stringify(merged), now, doc._id)
       }
-
-      this.emit('change', 'update', { query, updates })
-      return matches.length
     })
 
     try {
-      return tx()
+      tx()
     } catch (err) {
       console.error('[SimpleDB] Update transaction failed', err)
       throw err
     }
+
+    this.emit('change', 'update', { query, updates })
+    return matches.length
   }
 
-  delete(query: any) {
+  delete(query: any): number {
     if (!query || Object.keys(query).length === 0) return 0
+
     if (query._id) {
-      const res = this.db
-        .prepare(`DELETE FROM ${this.qualifiedTable} WHERE _id = ?`)
-        .run(query._id)
+      const result = this._deleteByIdStmt.run(query._id)
       this.emit('change', 'delete', { _id: query._id })
-      return res.changes
+      return result.changes
     }
 
     const matches = this.find(query)
-    if (!matches.length) return 0
+    if (matches.length === 0) return 0
 
-    const stmt = this.db.prepare(`DELETE FROM ${this.qualifiedTable} WHERE _id = ?`)
-    const tx = this.db.transaction((items: any[]) => {
-      for (const m of items) stmt.run(m._id)
+    const tx = this._db.transaction(() => {
+      for (const doc of matches) {
+        this._deleteByIdStmt.run(doc._id)
+      }
     })
 
     try {
-      tx(matches)
+      tx()
     } catch (err) {
       console.error('[SimpleDB] Delete transaction failed', err)
       throw err
@@ -251,57 +287,66 @@ class SQLiteCollection extends EventEmitter {
     return matches.length
   }
 
-  count(query: any = {}) {
+  count(query: any = {}): number {
     if (!query || Object.keys(query).length === 0) {
-      const row = this.db.prepare(`SELECT COUNT(*) as c FROM ${this.qualifiedTable}`).get()
-      return row.c
+      const row = this._countAllStmt.get() as any
+      return row?.c || 0
     }
-
-    const { where, params } = this.buildWhereAndParams(query)
-    if (!where.length) return 0
-    const sql = `SELECT COUNT(*) as c FROM ${this.qualifiedTable} WHERE ${where.join(' AND ')}`
-    const row = this.db.prepare(sql).get(params)
-    return row.c
+    return this.find(query).length
   }
 
-  getStats() {
-    const row = this.db.prepare(`SELECT COUNT(*) as c FROM ${this.qualifiedTable}`).get()
-    return { documentCount: row.c }
+  getStats(): { documentCount: number } {
+    const row = this._countAllStmt.get() as any
+    return { documentCount: row?.c || 0 }
+  }
+
+  destroy(): void {
+    this._stmtCache.clear()
+    this.removeAllListeners()
   }
 }
 
 class SimpleDB extends EventEmitter {
-  private db: any
-  private dbPath: string
-  private collections = new Map<string, SQLiteCollection>()
+  private readonly _db: Database.Database
+  private readonly _dbPath: string
+  private readonly _collections = new Map<string, SQLiteCollection>()
+  private readonly _cacheSize: number
 
   constructor(options: SimpleDBOptions = {}) {
     super()
-    this.dbPath = options.dbPath || join(process.cwd(), 'db', 'sey.sqlite')
+    this._dbPath = options.dbPath || join(process.cwd(), 'db', 'sey.sqlite')
     ensureDir(join(process.cwd(), 'db'))
-    this.db = new Database(this.dbPath)
+    this._cacheSize = typeof options.cacheSize === 'number' ? Math.max(0, options.cacheSize) : 50
+
+    this._db = new Database(this._dbPath)
+
     try {
-
-      this.db.pragma('journal_mode = WAL')
-    } catch (e) {
-
-    }
+      this._db.pragma('journal_mode = WAL')
+      this._db.pragma('synchronous = NORMAL')
+      this._db.pragma('cache_size = 10000')
+      this._db.pragma('temp_store = MEMORY')
+      this._db.pragma('mmap_size = 268435456') // 256MB
+    } catch {}
   }
 
-  collection(name: string) {
-    if (this.collections.has(name)) return this.collections.get(name)!
-    const col = new SQLiteCollection(this.db, name)
+  collection(name: string): SQLiteCollection {
+    let col = this._collections.get(name)
+    if (col) return col
 
-    col.on('change', (t: any, d: any) => this.emit('change', t, d))
-
-    this.collections.set(name, col)
+    col = new SQLiteCollection(this._db, name, this._cacheSize)
+    col.on('change', (type: string, data: any) => this.emit('change', type, data))
+    this._collections.set(name, col)
     return col
   }
 
-  close() {
-    for (const c of this.collections.values()) c.removeAllListeners()
+  close(): void {
+    for (const col of this._collections.values()) {
+      col.destroy()
+    }
+    this._collections.clear()
+
     try {
-      this.db.close()
+      this._db.close()
     } catch {}
   }
 }
