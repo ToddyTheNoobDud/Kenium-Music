@@ -161,7 +161,7 @@ export default class statusCmds extends Command {
 
 		const systemMemoryBar = createProgressBar(usedMemory, totalMemory, 20);
 		const lavalinkMemoryBar = createProgressBar(memoryUsed, memoryTotal, 20);
-		const embed = new Embed().setColor(0).setDescription(`\`\`\`yml
+		const embed = new Embed().setColor(0).setDescription(`\`\`\`ansi
 System Uptime     :: ${formatters.uptime(process.uptime() * 1000)}
 System CPU Model  :: ${CPU_CACHE.model[0] || "N/A"}, ${CPU_CACHE.cores} core(s)
 System CPU Load   :: ${cpus()[0]?.speed} MHz, ${loadavg()[0].toFixed(2)}%, ${loadavg()[1].toFixed(2)}%, ${loadavg()[2].toFixed(2)}%

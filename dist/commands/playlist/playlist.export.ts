@@ -9,6 +9,7 @@ import {
 } from "seyfert";
 import { handlePlaylistAutocomplete } from "../../shared/utils";
 import { SimpleDB } from "../../utils/simpleDB";
+import { getContextTranslations } from "../../utils/i18n";
 
 // Modern Emoji Set
 const ICONS = {
@@ -101,6 +102,7 @@ export class ExportCommand extends SubCommand {
 		const { name } = ctx.options as { name: string };
 		const playlistName = name;
 		const userId = ctx.author.id;
+		const t = getContextTranslations(ctx);
 
 		const playlist = playlistsCollection.findOne({
 			userId,
@@ -111,8 +113,8 @@ export class ExportCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"error",
-						"Playlist Not Found",
-						`No playlist named "${playlistName}" exists!`,
+						t.playlist?.view?.notFound || "Playlist Not Found",
+						(t.playlist?.view?.notFoundDesc || "No playlist named \"{name}\" exists!").replace("{name}", playlistName),
 					),
 				],
 				flags: 64,

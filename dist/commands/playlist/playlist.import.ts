@@ -8,6 +8,7 @@ import {
 	SubCommand,
 } from "seyfert";
 import { SimpleDB } from "../../utils/simpleDB";
+import { getContextTranslations } from "../../utils/i18n";
 
 // Modern Emoji Set
 const ICONS = {
@@ -108,6 +109,7 @@ export class ImportCommand extends SubCommand {
 		const { file: attachment } = ctx.options as { file: any };
 		const { name: providedName } = ctx.options as { name: string };
 		const userId = ctx.author.id;
+		const t = getContextTranslations(ctx);
 
 		try {
 			const response = await fetch(attachment.url);
@@ -119,8 +121,8 @@ export class ImportCommand extends SubCommand {
 					embeds: [
 						createEmbed(
 							"error",
-							"Invalid File",
-							"The file must contain a valid playlist with name and tracks array.",
+							t.playlist?.import?.invalidFile || "Invalid File",
+							t.playlist?.import?.invalidFileDesc || "The file must contain a valid playlist with name and tracks array.",
 						),
 					],
 					flags: 64,
@@ -140,8 +142,8 @@ export class ImportCommand extends SubCommand {
 					embeds: [
 						createEmbed(
 							"error",
-							"Name Conflict",
-							`A playlist named "${playlistName}" already exists!`,
+							t.playlist?.import?.nameConflict || "Name Conflict",
+							(t.playlist?.import?.nameConflictDesc || "A playlist named \"{name}\" already exists!").replace("{name}", playlistName),
 						),
 					],
 					flags: 64,
@@ -173,23 +175,28 @@ export class ImportCommand extends SubCommand {
 
 			playlistsCollection.insert(newPlaylist);
 
-			const embed = createEmbed("success", "Playlist Imported", null, [
-				{
-					name: `${ICONS.playlist} Name`,
-					value: `**${playlistName}**`,
-					inline: true,
-				},
-				{
-					name: `${ICONS.tracks} Tracks`,
-					value: `${newPlaylist.tracks.length}`,
-					inline: true,
-				},
-				{
-					name: `${ICONS.duration} Duration`,
-					value: formatDuration(newPlaylist.totalDuration),
-					inline: true,
-				},
-			]);
+			const embed = createEmbed(
+				"success",
+				t.playlist?.import?.imported || "Playlist Imported",
+				null,
+				[
+					{
+						name: `${ICONS.playlist} ${t.playlist?.import?.name || "Name"}`,
+						value: `**${playlistName}**`,
+						inline: true,
+					},
+					{
+						name: `${ICONS.tracks} ${t.playlist?.import?.tracks || "Tracks"}`,
+						value: `${newPlaylist.tracks.length}`,
+						inline: true,
+					},
+					{
+						name: `${ICONS.duration} ${t.playlist?.import?.duration || "Duration"}`,
+						value: formatDuration(newPlaylist.totalDuration),
+						inline: true,
+					},
+				],
+			);
 
 			await ctx.write({ embeds: [embed], flags: 64 });
 		} catch (error) {
@@ -198,8 +205,8 @@ export class ImportCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"error",
-						"Import Failed",
-						`Could not import playlist: ${(error as Error).message}`,
+						t.playlist?.import?.importFailed || "Import Failed",
+						(t.playlist?.import?.importFailedDesc || "Could not import playlist: {error}").replace("{error}", (error as Error).message),
 					),
 				],
 				flags: 64,

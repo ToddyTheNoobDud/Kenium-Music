@@ -18,32 +18,27 @@ const CONFIG = {
 		ISSUES_URL: "https://github.com/ToddyTheNoobDud/Kenium-Music/issues/new",
 	},
 	BOT: {
-		VERSION: "4.6.0",
+		VERSION: "4.7.0",
 		DEVELOPER: "mushroom0162",
 		CHANGELOG: `
 ### Added
-- Previous now starts playing if added again
-- Added more info on status
-- Added more messages into commands like pause, resume, etc
+- Translations ! (tradução)
+- Support BR / EN
 
 ### Changed
-- Rewrote changelog into components v2
-- Reformatted the middlewares embed
-- Rewrote playlists play, add and view: fixed many performance bugs, improved error handling, way faster resolving
-- Improved the AD into /invite command
-- Improved the grab command
-- Rewrote the queue command with a new UI and components v2
-- Formatted the texts on playlists into play
+- Rewrited the bot caching system with tiny-lru
+- Rewrited the voice handling
+- Rewrited the Database, patched security issues, improved the speed by a lot.
+- Recompiled all the code using @biomejs/biome
+- Improved the interaction handling system
+- Improved /play command caching and performance
 
 ### Removed
-- Removed txt support on playlists export
-- Removed some stuff from status
+- Nothing
 
 ### Fixed
-- Fixed some bugs into cmds like pause, resume, etc
-- Fixed/removed some random typos on autocomplete in play
-- Fixed some issues in the help command, reformatted
-- Fixed a misc bug into play-file command`,
+- Nothing
+`,
 	},
 	COLORS: {
 		PRIMARY: 0,

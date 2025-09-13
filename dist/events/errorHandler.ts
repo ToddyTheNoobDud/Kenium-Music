@@ -2,21 +2,28 @@ const handleEvent = (type, fn) => {
 	process.on(type, fn);
 };
 
-const logEvent = (eventType, message) => {
-	console.log(`${eventType}: ${message}`);
+const logEvent = (eventType, message, origin) => {
+	console.log(`${eventType}: ${message} ${origin}`);
 };
-handleEvent("unhandledRejection", (reason) => {
-	logEvent("Unhandled Rejection", reason);
+handleEvent("unhandledRejection", (reason, origin) => {
+	logEvent("Unhandled Rejection", reason, origin);
 });
-handleEvent("uncaughtException", (error) =>
-	logEvent("Uncaught Exception", error),
+handleEvent("uncaughtException", (error, origin) =>
+	logEvent("Uncaught Exception", error, origin),
 );
-handleEvent("warning", (warning) => logEvent("Warning", warning));
-handleEvent("rejectionHandled", (promise) =>
-	logEvent("Rejection Handled", `Promise: ${promise}`),
+handleEvent("warning", (warning, origin) =>
+	logEvent("Warning", warning, origin),
 );
-handleEvent("beforeExit", (code) => logEvent("Before Exit", `Code: ${code}`));
-handleEvent("exit", (code) => logEvent("Exit", `Code: ${code}`));
-handleEvent("uncaughtExceptionMonitor", (error) =>
-	logEvent("Uncaught Exception Monitor", error),
+handleEvent("rejectionHandled", (promise, origin) =>
+	logEvent("Rejection Handled", `Promise: ${promise}`, origin),
 );
+handleEvent("beforeExit", (code, origin) =>
+	logEvent("Before Exit", `Code: ${code}`, origin),
+);
+handleEvent("exit", (code, origin) =>
+	logEvent("Exit", `Code: ${code}`, origin),
+);
+handleEvent("uncaughtExceptionMonitor", (error, origin) =>
+	logEvent("Uncaught Exception Monitor", error, origin),
+);
+

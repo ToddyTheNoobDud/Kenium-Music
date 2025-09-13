@@ -3,7 +3,6 @@ import { TimestampStyle } from "seyfert/lib/common";
 
 export const cooldownMiddleware = createMiddleware<void>(
 	async ({ context, next, stop }) => {
-		// @ts-expect-error
 		const inCooldown = context.client.cooldown.context(context);
 
 		typeof inCooldown === "number"

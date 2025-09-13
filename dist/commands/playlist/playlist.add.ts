@@ -17,6 +17,7 @@ import {
 	handleTrackAutocomplete,
 } from "../../shared/utils";
 import { SimpleDB } from "../../utils/simpleDB";
+import { getContextTranslations } from "../../utils/i18n";
 
 const db = new SimpleDB();
 const playlistsCollection = db.collection("playlists");
@@ -94,6 +95,7 @@ export class AddCommand extends SubCommand {
 			tracks: string;
 		};
 		const userId = ctx.author.id;
+		const t = getContextTranslations(ctx);
 
 		const playlistDb = playlistsCollection.findOne({
 			userId,
@@ -104,8 +106,8 @@ export class AddCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"error",
-						"Playlist Not Found",
-						`No playlist named "${playlistName}" exists!`,
+						t.playlist?.add?.notFound || "Playlist Not Found",
+						(t.playlist?.add?.notFoundDesc || "No playlist named \"{name}\" exists!").replace("{name}", playlistName),
 					),
 				],
 				flags: 64,
@@ -121,8 +123,8 @@ export class AddCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"warning",
-						"Playlist Full",
-						`This playlist has reached the ${LIMITS.MAX_TRACKS}-track limit!`,
+						t.playlist?.add?.full || "Playlist Full",
+						(t.playlist?.add?.fullDesc || "This playlist has reached the {max}-track limit!").replace("{max}", String(LIMITS.MAX_TRACKS)),
 					),
 				],
 				flags: 64,
@@ -213,8 +215,8 @@ export class AddCommand extends SubCommand {
 					embeds: [
 						createEmbed(
 							"warning",
-							"Nothing Added",
-							"No new tracks were added. They may already exist in the playlist or no matches were found.",
+							t.playlist?.add?.nothingAdded || "Nothing Added",
+							t.playlist?.add?.nothingAddedDesc || "No new tracks were added. They may already exist in the playlist or no matches were found.",
 						),
 					],
 				});
@@ -236,11 +238,11 @@ export class AddCommand extends SubCommand {
 			const primary = toAdd[0];
 			const embed = createEmbed(
 				"success",
-				toAdd.length > 1 ? "Tracks Added" : "Track Added",
+				toAdd.length > 1 ? (t.playlist?.add?.tracksAdded || "Tracks Added") : (t.playlist?.add?.trackAdded || "Track Added"),
 				undefined,
 				[
 					{
-						name: `${ICONS.music} ${toAdd.length > 1 ? "Tracks" : "Track"}`,
+						name: `${ICONS.music} ${toAdd.length > 1 ? (t.playlist?.add?.tracks || "Tracks") : (t.playlist?.add?.track || "Track")}`,
 						value:
 							toAdd.length > 1
 								? `**${primary.title}** (+${toAdd.length - 1} more)`
@@ -248,27 +250,27 @@ export class AddCommand extends SubCommand {
 						inline: false,
 					},
 					{
-						name: `${ICONS.artist} Artist`,
+						name: `${ICONS.artist} ${t.playlist?.add?.artist || "Artist"}`,
 						value: primary.author,
 						inline: true,
 					},
 					{
-						name: `${ICONS.source} Source`,
+						name: `${ICONS.source} ${t.playlist?.add?.source || "Source"}`,
 						value: primary.source,
 						inline: true,
 					},
 					{
-						name: `${ICONS.tracks} Added`,
+						name: `${ICONS.tracks} ${t.playlist?.add?.added || "Added"}`,
 						value: `${toAdd.length} track${toAdd.length !== 1 ? "s" : ""}`,
 						inline: true,
 					},
 					{
-						name: `${ICONS.playlist} Total`,
+						name: `${ICONS.playlist} ${t.playlist?.add?.total || "Total"}`,
 						value: `${playlistDb.tracks.length}/${LIMITS.MAX_TRACKS} tracks`,
 						inline: true,
 					},
 					{
-						name: `${ICONS.duration} Duration`,
+						name: `${ICONS.duration} ${t.playlist?.add?.duration || "Duration"}`,
 						value: formatDuration(playlistDb.totalDuration),
 						inline: true,
 					},
@@ -278,20 +280,20 @@ export class AddCommand extends SubCommand {
 			const buttons = createButtons([
 				{
 					id: `add_more_${playlistName}_${userId}`,
-					label: "Add More",
+					label: t.playlist?.add?.addMore || "Add More",
 					emoji: ICONS.add,
 					style: ButtonStyle.Secondary,
 					disabled: playlistDb.tracks.length >= LIMITS.MAX_TRACKS,
 				},
 				{
 					id: `play_playlist_${playlistName}_${userId}`,
-					label: "Play Now",
+					label: t.playlist?.add?.playNow || "Play Now",
 					emoji: ICONS.play,
 					style: ButtonStyle.Success,
 				},
 				{
 					id: `view_playlist_${playlistName}_${userId}`,
-					label: "View All",
+					label: t.playlist?.add?.viewAll || "View All",
 					emoji: ICONS.playlist,
 					style: ButtonStyle.Primary,
 				},
@@ -303,8 +305,8 @@ export class AddCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"error",
-						"Add Failed",
-						`Could not add tracks: ${err instanceof Error ? err.message : "Unknown error"}`,
+						t.playlist?.add?.addFailed || "Add Failed",
+						(t.playlist?.add?.addFailedDesc || "Could not add tracks: {error}").replace("{error}", err instanceof Error ? err.message : "Unknown error"),
 					),
 				],
 			});

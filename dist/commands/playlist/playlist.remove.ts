@@ -14,6 +14,7 @@ import {
 	handleTrackIndexAutocomplete,
 } from "../../shared/utils";
 import { SimpleDB } from "../../utils/simpleDB";
+import { getContextTranslations } from "../../utils/i18n";
 
 const db = new SimpleDB();
 const playlistsCollection = db.collection("playlists");
@@ -46,6 +47,7 @@ export class RemoveCommand extends SubCommand {
 			index: number;
 		};
 		const userId = ctx.author.id;
+		const t = getContextTranslations(ctx);
 
 		const playlist = playlistsCollection.findOne({
 			userId,
@@ -56,8 +58,8 @@ export class RemoveCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"error",
-						"Playlist Not Found",
-						`No playlist named "${playlistName}" exists!`,
+						t.playlist?.remove?.notFound || "Playlist Not Found",
+						(t.playlist?.remove?.notFoundDesc || "No playlist named \"{name}\" exists!").replace("{name}", playlistName),
 					),
 				],
 				flags: 64,
@@ -69,8 +71,8 @@ export class RemoveCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"error",
-						"Invalid Index",
-						`Track index must be between 1 and ${playlist.tracks.length}`,
+						t.playlist?.remove?.invalidIndex || "Invalid Index",
+						(t.playlist?.remove?.invalidIndexDesc || "Track index must be between 1 and {max}").replace("{max}", String(playlist.tracks.length)),
 					),
 				],
 				flags: 64,
@@ -92,28 +94,33 @@ export class RemoveCommand extends SubCommand {
 
 		playlistsCollection.update({ _id: playlist._id }, updatedPlaylist);
 
-		const embed = createEmbed("success", "Track Removed", undefined, [
-			{
-				name: `${ICONS.remove} Removed`,
-				value: `**${removedTrack.title}**`,
-				inline: false,
-			},
-			{
-				name: `${ICONS.artist} Artist`,
-				value: removedTrack.author || "Unknown",
-				inline: true,
-			},
-			{
-				name: `${ICONS.source} Source`,
-				value: removedTrack.source || "Unknown",
-				inline: true,
-			},
-			{
-				name: `${ICONS.tracks} Remaining`,
-				value: `${playlist.tracks.length} tracks`,
-				inline: true,
-			},
-		]);
+		const embed = createEmbed(
+			"success",
+			t.playlist?.remove?.removed || "Track Removed",
+			undefined,
+			[
+				{
+					name: `${ICONS.remove} ${t.playlist?.remove?.removedTrack || "Removed"}`,
+					value: `**${removedTrack.title}**`,
+					inline: false,
+				},
+				{
+					name: `${ICONS.artist} ${t.playlist?.remove?.artist || "Artist"}`,
+					value: removedTrack.author || "Unknown",
+					inline: true,
+				},
+				{
+					name: `${ICONS.source} ${t.playlist?.remove?.source || "Source"}`,
+					value: removedTrack.source || "Unknown",
+					inline: true,
+				},
+				{
+					name: `${ICONS.tracks} ${t.playlist?.remove?.remaining || "Remaining"}`,
+					value: `${playlist.tracks.length} tracks`,
+					inline: true,
+				},
+			],
+		);
 
 		const videoId = extractYouTubeId(removedTrack.uri);
 		if (videoId) {

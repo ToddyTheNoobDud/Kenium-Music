@@ -28,7 +28,7 @@ export default class previoiusCmds extends Command {
 			await ctx.editOrReply({
 				embeds: [
 					new Embed()
-						.setDescription(t.player?.previousAdded || "Added the previous song to the queue")
+						.setDescription(player.playing ? t.player.previousPlayed : t.player.previousAdded || "Playing/added the previous track")
 						.setColor(0),
 				],
 				flags: 64,

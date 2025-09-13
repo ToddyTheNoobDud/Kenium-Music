@@ -17,6 +17,7 @@ import {
 	handlePlaylistAutocomplete,
 } from "../../shared/utils";
 import { SimpleDB } from "../../utils/simpleDB";
+import { getContextTranslations } from "../../utils/i18n";
 
 const db = new SimpleDB();
 const playlistsCollection = db.collection("playlists");
@@ -31,20 +32,21 @@ function createSelectMenu(
 		emoji?: string;
 	}[],
 ) {
-	return new ActionRow().addComponents(
-		new StringSelectMenu()
-			.setCustomId(customId)
-			.setPlaceholder(placeholder)
-			// @ts-expect-error
-			.addOption(
-				opts.map((o) => ({
-					label: o.label,
-					value: o.value,
-					description: o.description,
-					emoji: o.emoji,
-				})),
-			),
-	);
+	const menu = new StringSelectMenu()
+		.setCustomId(customId)
+		.setPlaceholder(placeholder);
+
+	for (const opt of opts) {
+		menu.addOption({
+			// @ts-ignore
+			label: opt.label,
+			value: opt.value,
+			description: opt.description,
+			emoji: opt.emoji,
+		});
+	}
+
+	return new ActionRow().addComponents(menu);
 }
 
 function getSourceIcon(uri: string): string {

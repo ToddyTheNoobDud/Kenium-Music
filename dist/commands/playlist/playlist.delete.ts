@@ -7,6 +7,7 @@ import {
 } from "seyfert";
 import { createEmbed, handlePlaylistAutocomplete } from "../../shared/utils";
 import { SimpleDB } from "../../utils/simpleDB";
+import { getContextTranslations } from "../../utils/i18n";
 
 const db = new SimpleDB();
 const playlistsCollection = db.collection("playlists");
@@ -28,6 +29,7 @@ export class DeleteCommand extends SubCommand {
 	async run(ctx: CommandContext) {
 		const { name: playlistName } = ctx.options as { name: string };
 		const userId = ctx.author.id;
+		const t = getContextTranslations(ctx);
 
 		const playlist = playlistsCollection.findOne({
 			userId,
@@ -38,8 +40,8 @@ export class DeleteCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"error",
-						"Playlist Not Found",
-						`No playlist named "${playlistName}" exists!`,
+						t.playlist?.delete?.notFound || "Playlist Not Found",
+						(t.playlist?.delete?.notFoundDesc || "No playlist named \"{name}\" exists!").replace("{name}", playlistName),
 					),
 				],
 				flags: 64,
@@ -50,8 +52,8 @@ export class DeleteCommand extends SubCommand {
 
 		const embed = createEmbed(
 			"success",
-			"Playlist Deleted",
-			`Successfully deleted playlist "${playlistName}"`,
+			t.playlist?.delete?.deleted || "Playlist Deleted",
+			(t.playlist?.delete?.deletedDesc || "Successfully deleted playlist \"{name}\"").replace("{name}", playlistName),
 		);
 		return ctx.write({ embeds: [embed], flags: 64 });
 	}

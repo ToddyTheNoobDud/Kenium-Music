@@ -16,6 +16,7 @@ import {
 	shuffleArray,
 } from "../../shared/utils";
 import { SimpleDB } from "../../utils/simpleDB";
+import { getContextTranslations } from "../../utils/i18n";
 
 const db = new SimpleDB();
 const playlistsCollection = db.collection("playlists");
@@ -88,6 +89,7 @@ export class PlayCommand extends SubCommand {
 			shuffle?: boolean;
 		};
 		const userId = ctx.author.id;
+		const t = getContextTranslations(ctx);
 
 		const playlistDb = playlistsCollection.findOne({
 			userId,
@@ -98,8 +100,8 @@ export class PlayCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"error",
-						"Playlist Not Found",
-						`No playlist named "${playlistName}" exists!`,
+						t.playlist?.play?.notFound || "Playlist Not Found",
+						(t.playlist?.play?.notFoundDesc || "No playlist named \"{name}\" exists!").replace("{name}", playlistName),
 					),
 				],
 				flags: 64,
@@ -110,8 +112,8 @@ export class PlayCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"error",
-						"Empty Playlist",
-						"This playlist has no tracks to play!",
+						t.playlist?.play?.empty || "Empty Playlist",
+						t.playlist?.play?.emptyDesc || "This playlist has no tracks to play!",
 					),
 				],
 				flags: 64,
@@ -125,8 +127,8 @@ export class PlayCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"error",
-						"No Voice Channel",
-						"Join a voice channel to play a playlist",
+						t.playlist?.play?.noVoiceChannel || "No Voice Channel",
+						t.playlist?.play?.noVoiceChannelDesc || "Join a voice channel to play a playlist",
 					),
 				],
 				flags: 64,
@@ -161,8 +163,8 @@ export class PlayCommand extends SubCommand {
 					embeds: [
 						createEmbed(
 							"error",
-							"Load Failed",
-							"Could not load any tracks from this playlist",
+							t.playlist?.play?.loadFailed || "Load Failed",
+							t.playlist?.play?.loadFailedDesc || "Could not load any tracks from this playlist",
 						),
 					],
 				});
@@ -183,32 +185,32 @@ export class PlayCommand extends SubCommand {
 
 			const embed = createEmbed(
 				"success",
-				shuffle ? "Shuffling Playlist" : "Playing Playlist",
+				shuffle ? (t.playlist?.play?.shuffling || "Shuffling Playlist") : (t.playlist?.play?.playing || "Playing Playlist"),
 				undefined,
 				[
 					{
-						name: `${ICONS.playlist} Playlist`,
+						name: `${ICONS.playlist} ${t.playlist?.play?.playlist || "Playlist"}`,
 						value: `**${playlistName}**`,
 						inline: true,
 					},
 					{
-						name: `${ICONS.tracks} Loaded`,
+						name: `${ICONS.tracks} ${t.playlist?.play?.loaded || "Loaded"}`,
 						value: `${loadedTracks.length}/${playlistDb.tracks.length} tracks`,
 						inline: true,
 					},
 					{
-						name: `${ICONS.duration} Duration`,
+						name: `${ICONS.duration} ${t.playlist?.play?.duration || "Duration"}`,
 						value: formatDuration(playlistDb.totalDuration || 0),
 						inline: true,
 					},
 					{
-						name: `${ICONS.music} Channel`,
+						name: `${ICONS.music} ${t.playlist?.play?.channel || "Channel"}`,
 						value: _safeChannelName(voiceState),
 						inline: true,
 					},
 					{
-						name: `${ICONS.shuffle} Mode`,
-						value: shuffle ? "Shuffled" : "Sequential",
+						name: `${ICONS.shuffle} ${t.playlist?.play?.mode || "Mode"}`,
+						value: shuffle ? (t.playlist?.play?.shuffled || "Shuffled") : (t.playlist?.play?.sequential || "Sequential"),
 						inline: true,
 					},
 				],
@@ -220,8 +222,8 @@ export class PlayCommand extends SubCommand {
 				embeds: [
 					createEmbed(
 						"error",
-						"Play Failed",
-						"Could not play playlist. Please try again later.",
+						t.playlist?.play?.playFailed || "Play Failed",
+						t.playlist?.play?.playFailedDesc || "Could not play playlist. Please try again later.",
 					),
 				],
 			});
