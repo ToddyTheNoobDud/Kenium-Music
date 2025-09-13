@@ -67,11 +67,11 @@ export default class twentcmds extends Command {
 			}
 
 			const action = newEnabled ? t.common?.enabled : t.common?.disabled;
-			const description = newEnabled ? t.commands?.["mode247"]?.enabled : t.commands?.["mode247"]?.disabled;
+			const description = newEnabled ? t.mode247?.enabled : t.mode247?.disabled;
 			const color = newEnabled ? 0x00ff00 : 0xff0000;
 
 			const embed = new Embed()
-				.setTitle(t.commands?.["mode247"]?.title || "24/7 Mode")
+				.setTitle(t.mode247?.title || "24/7 Mode")
 				.setDescription(description || `24/7 mode has been ${action}`)
 				.setColor(color)
 				.setTimestamp();
