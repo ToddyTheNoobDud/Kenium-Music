@@ -162,18 +162,31 @@ export default createEvent({
     if (!interaction.isButton?.() || !interaction.customId || !interaction.guildId) return;
     if (EXCLUDED_PREFIX_REGEX.test(interaction.customId)) return;
 
+    try {
+      await interaction.deferReply?.(64);
+    } catch {
+      return;
+    }
+
     const player = client.aqua?.players?.get?.(interaction.guildId);
     if (!player?.current) {
-      return interaction.write?.({
+      return interaction.editOrReply?.({
         content: '❌ There is no music playing right now.',
         flags: 64
       }).catch(() => null);
     }
 
-    try {
-      await interaction.deferReply?.(64);
-    } catch {
-      return;
+    const memberVoice = await interaction.member?.voice().catch(() => null);
+    if (!memberVoice) {
+      return interaction.editOrReply?.({
+        content: '❌ You must be in a voice channel to use this button.'
+      }).catch(() => null);
+    }
+
+    if (interaction.user.id !== player.current.requester?.id) {
+      return interaction.editOrReply?.({
+        content: '❌ You are not allowed to use this button.'
+      }).catch(() => null);
     }
 
     const handler = actionHandlers[interaction.customId];
