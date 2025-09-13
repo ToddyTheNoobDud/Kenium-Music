@@ -1,5 +1,5 @@
 import process from 'node:process'
-import QuickLRU from 'quick-lru'
+import { LRU } from 'tiny-lru'
 import { createEvent, Embed } from 'seyfert'
 import { getChannelIds, isTwentyFourSevenEnabled } from '../utils/db_helper'
 
@@ -140,7 +140,7 @@ class VoiceManager {
   states: Map<string, number>
   pending: Map<string, PendingEntry>
   breaker: CircuitBreaker
-  guildCache: QuickLRU<string, any>
+  guildCache: any
   registered: WeakSet<any>
   cleanupTimer: NodeJS.Timeout | null
 
@@ -149,7 +149,7 @@ class VoiceManager {
     this.states = new Map()
     this.pending = new Map()
     this.breaker = new CircuitBreaker()
-    this.guildCache = new QuickLRU({ maxSize: CACHE_SIZE, maxAge: 60_000 })
+    this.guildCache = new LRU(CACHE_SIZE, 60_000)
     this.registered = new WeakSet()
     this.cleanupTimer = null
     this._setupCleanup()
