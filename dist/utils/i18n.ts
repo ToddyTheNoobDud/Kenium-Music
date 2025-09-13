@@ -6,16 +6,16 @@ const AVAILABLE_LANGUAGES = {
   br: 'Português (Brasil)'
 } as const;
 
-const LANG_REGEX = /^(en|br)$/;
 const REPLACEMENT_REGEX = /\{(\w+)\}/g;
 
 const _functions = {
-  isValidLang: (lang: string): lang is keyof typeof AVAILABLE_LANGUAGES => LANG_REGEX.test(lang),
+  isValidLang: (lang: string): lang is keyof typeof AVAILABLE_LANGUAGES =>
+    lang === 'en' || lang === 'br',
 
   getContextLang: (guildId?: string): string => {
     if (!guildId) return 'en';
     const guildLang = getGuildLang(guildId);
-    return (guildLang && _functions.isValidLang(guildLang)) ? guildLang : 'en';
+    return (_functions.isValidLang(guildLang)) ? guildLang : 'en';
   }
 };
 
