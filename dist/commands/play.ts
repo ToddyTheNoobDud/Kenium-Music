@@ -1,367 +1,315 @@
 import {
-	Command,
-	type CommandContext,
-	createStringOption,
-	Declare,
-	Embed,
-	Middlewares,
-	Options,
-} from "seyfert";
-import { getContextLanguage } from "../utils/i18n";
+  Command,
+  type CommandContext,
+  createStringOption,
+  Declare,
+  Embed,
+  Middlewares,
+  Options,
+} from 'seyfert'
+import { LRU } from 'tiny-lru'
+import { getContextLanguage } from '../utils/i18n'
 
-const CACHE_SIZE = 10;
-const MAX_USER_CACHE = 200;
-const MAX_SEARCH_CACHE = 128;
-const MAX_RESULTS = 4;
-const THROTTLE_MS = 300;
-const SEARCH_TTL_MS = 30_000;
-const SWEEP_INTERVAL_MS = 5_000;
-const EMBED_COLOR = 0x000000;
+const RECENT_CACHE_SIZE = 8
+const USER_CACHE_LIMIT = 150
+const SEARCH_CACHE_SIZE = 96
+const MAX_AUTOCOMPLETE_RESULTS = 4
+const THROTTLE_INTERVAL_MS = 250
+const SEARCH_TTL_MS = 25_000
+const EMBED_COLOR = 0x000000
+const URL_REGEX = /^https?:\/\//i
+const MIN_QUERY_LENGTH = 2
+const MAX_TITLE_LENGTH = 70
+const MAX_AUTHOR_LENGTH = 18
+const MAX_CHOICE_LENGTH = 98
+const MAX_URI_LENGTH = 98
 
-const isUrl = (s?: string): boolean => {
-	const x = (s || "").trim().toLowerCase();
-	return x.startsWith("http://") || x.startsWith("https://");
-};
+const _isUrl = (query = ''): boolean => URL_REGEX.test(String(query).trim())
 
-const esc = (s?: string): string => {
-	if (!s) return "";
-	const out: string[] = [];
-	for (let i = 0, len = s.length; i < len; i++) {
-		const c = s[i];
-		out.push(c);
-	}
-	return out.join("");
-};
-
-const trunc = (s?: string, n = 80): string => {
-	const str = String(s ?? "");
-	return str.length <= n ? str : `${str.slice(0, n - 3)}...`;
-};
-
-type CacheEntry<T> = { value: T; expires: number };
-
-class CacheManager<T> {
-	private map = new Map<string, CacheEntry<T>>();
-
-	constructor(
-		private readonly maxSize = 128,
-		private readonly ttl = 30_000,
-	) {}
-
-	get(key: string): T | undefined {
-		const e = this.map.get(key);
-		if (!e) return undefined;
-		const now = Date.now();
-		if (now > e.expires) {
-			this.map.delete(key);
-			return undefined;
-		}
-		this.map.delete(key);
-		this.map.set(key, e);
-		return e.value;
-	}
-
-	set(key: string, value: T): void {
-		if (!this.map.has(key) && this.map.size >= this.maxSize) {
-			const oldest = this.map.keys().next().value;
-			if (oldest !== undefined) this.map.delete(oldest);
-		}
-		this.map.set(key, { value, expires: Date.now() + this.ttl });
-	}
-
-	delete(key: string): void {
-		this.map.delete(key);
-	}
-
-	sweep(): void {
-		if (this.map.size === 0) return;
-		const now = Date.now();
-		const toDelete: string[] = [];
-		for (const [k, v] of this.map) if (now > v.expires) toDelete.push(k);
-		for (const k of toDelete) this.map.delete(k);
-	}
+const _escapeMarkdown = (text = ''): string => {
+  if (!text) return ''
+  return String(text).replace(/[\\`*_{}\[\]()#+\-.!|]/g, '\\$&')
 }
 
-type RecentItem = { title: string; uri: string };
-
-class RecentTracks {
-	private userTracks = new Map<string, Map<string, RecentItem>>();
-
-	constructor(
-		private readonly maxUsers = MAX_USER_CACHE,
-		private readonly maxTracks = CACHE_SIZE,
-	) {}
-
-	add(
-		userId: string,
-		title: string | undefined,
-		uri: string | undefined,
-	): void {
-		if (!uri) return;
-		let tracks = this.userTracks.get(userId);
-		if (!tracks) {
-			if (this.userTracks.size >= this.maxUsers) {
-				const oldestUser = this.userTracks.keys().next().value;
-				if (oldestUser) this.userTracks.delete(oldestUser);
-			}
-			tracks = new Map<string, RecentItem>();
-			this.userTracks.set(userId, tracks);
-		}
-
-		if (tracks.has(uri)) tracks.delete(uri);
-		tracks.set(uri, { title: title || uri, uri });
-
-		while (tracks.size > this.maxTracks) {
-			const oldest = tracks.keys().next().value;
-			if (!oldest) break;
-			tracks.delete(oldest);
-		}
-	}
-
-	getLatestLimited(userId: string, limit: number): RecentItem[] | undefined {
-		const tracks = this.userTracks.get(userId);
-		if (!tracks) return undefined;
-
-		const sz = tracks.size;
-		if (sz <= limit) {
-			const arr = Array.from(tracks.values());
-			arr.reverse();
-			return arr;
-		}
-
-		const cap = limit;
-		const buf: (RecentItem | undefined)[] = new Array(cap);
-		let idx = 0;
-		for (const v of tracks.values()) {
-			buf[idx] = v;
-			idx = (idx + 1) % cap;
-		}
-		const out: RecentItem[] = new Array(cap);
-		let outIndex = 0;
-		let cur = (idx - 1 + cap) % cap;
-		for (let i = 0; i < cap; i++) {
-			out[outIndex++] = buf[cur] as RecentItem;
-			cur = (cur - 1 + cap) % cap;
-		}
-		return out;
-	}
+const _truncate = (text = '', maxLength: number): string => {
+  const s = String(text)
+  if (s.length <= maxLength) return s
+  return s.slice(0, maxLength - 1) + '…'
 }
 
-class ThrottleManager {
-	private lastAccess = new Map<string, number>();
-	private counter = 0;
-
-	constructor(
-		private readonly retentionMs = 60_000,
-		private readonly cleanupInterval = 256,
-	) {}
-
-	shouldThrottle(userId: string, ms = THROTTLE_MS): boolean {
-		const now = Date.now();
-		const last = this.lastAccess.get(userId) || 0;
-		if (now - last < ms) return true;
-		this.lastAccess.set(userId, now);
-		if (++this.counter >= this.cleanupInterval) {
-			this.counter = 0;
-			const threshold = now - this.retentionMs;
-			for (const [k, v] of this.lastAccess)
-				if (v < threshold) this.lastAccess.delete(k);
-		}
-		return false;
-	}
+const _formatChoice = (title: string, author?: string): string => {
+  const escapedTitle = _escapeMarkdown(_truncate(title, MAX_TITLE_LENGTH))
+  const authorSuffix = author ? ` - ${_truncate(_escapeMarkdown(author), MAX_AUTHOR_LENGTH)}` : ''
+  return _truncate(escapedTitle + authorSuffix, MAX_CHOICE_LENGTH)
 }
 
-const searchCache = new CacheManager<any[]>(MAX_SEARCH_CACHE, SEARCH_TTL_MS);
-const recentTracks = new RecentTracks();
-const throttleManager = new ThrottleManager();
+type TrackInfo = { title: string; uri: string }
+type SearchResult = { info?: TrackInfo; [key: string]: any }
 
-const sweepTimer = setInterval(() => searchCache.sweep(), SWEEP_INTERVAL_MS);
-if (typeof (sweepTimer as any)?.unref === "function")
-	(sweepTimer as any).unref();
+class OptimizedRecentTracks {
+  private userCaches = new Map<string, LRU<TrackInfo>>()
+  private readonly maxUsers: number
+  private readonly cacheSize: number
 
-const debounceTimers = new Map<string, NodeJS.Timeout>();
+  constructor(maxUsers = USER_CACHE_LIMIT, cacheSize = RECENT_CACHE_SIZE) {
+    this.maxUsers = maxUsers
+    this.cacheSize = cacheSize
+  }
+
+  add(userId: string, title: string, uri: string): void {
+    if (!uri) return
+
+    let userCache = this.userCaches.get(userId)
+    if (!userCache) {
+      if (this.userCaches.size >= this.maxUsers) {
+        const firstKey = this.userCaches.keys().next().value
+        if (firstKey) this.userCaches.delete(firstKey)
+      }
+      userCache = new LRU<TrackInfo>(this.cacheSize)
+      this.userCaches.set(userId, userCache)
+    }
+
+    userCache.set(uri, { title, uri })
+  }
+
+  getRecent(userId: string, limit: number): TrackInfo[] {
+    const userCache = this.userCaches.get(userId)
+    if (!userCache) return []
+
+    const entries = [...userCache.entries()].slice(0, Math.max(0, Math.min(limit, userCache.size)))
+    return entries.map(([, value]) => value)
+  }
+}
+
+class ThrottleMap {
+  private timestamps = new Map<string, number>()
+  private cleanupCounter = 0
+  private readonly cleanupThreshold = 200
+  private readonly retentionMs = 45_000
+
+  shouldThrottle(userId: string, intervalMs = THROTTLE_INTERVAL_MS): boolean {
+    const now = Date.now()
+    const lastAccess = this.timestamps.get(userId) ?? 0
+
+    if (now - lastAccess < intervalMs) return true
+
+    this.timestamps.set(userId, now)
+
+    if (++this.cleanupCounter >= this.cleanupThreshold) {
+      this.cleanupCounter = 0
+      this._cleanup(now - this.retentionMs)
+    }
+
+    return false
+  }
+
+  private _cleanup(threshold: number): void {
+    for (const [key, timestamp] of this.timestamps) {
+      if (timestamp < threshold) this.timestamps.delete(key)
+    }
+  }
+}
+
+const searchCache = new LRU<SearchResult[]>(SEARCH_CACHE_SIZE, SEARCH_TTL_MS)
+const recentTracks = new OptimizedRecentTracks()
+const throttleMap = new ThrottleMap()
+const debounceTimers = new Map<string, NodeJS.Timeout>()
+
+const _cleanupTimers = (): void => {
+  for (const timer of debounceTimers.values()) clearTimeout(timer)
+  debounceTimers.clear()
+}
+
+process.once('exit', _cleanupTimers)
+process.once('SIGINT', _cleanupTimers)
+process.once('SIGTERM', _cleanupTimers)
+
+const _processAutocomplete = async (
+  interaction: any,
+  userId: string,
+  query: string,
+  resolve: (value: any) => void,
+): Promise<void> => {
+  if (!query || query.length < MIN_QUERY_LENGTH) {
+    const recent = recentTracks.getRecent(userId, MAX_AUTOCOMPLETE_RESULTS)
+    if (!recent.length) return resolve(interaction.respond([]))
+
+    const choices = recent.map((track, index) => ({
+      name: `🕘 Recent ${index + 1}: ${_truncate(track.title, 79)}`,
+      value: track.uri.slice(0, MAX_URI_LENGTH),
+    }))
+
+    return resolve(interaction.respond(choices))
+  }
+
+  if (_isUrl(query)) return resolve(interaction.respond([]))
+
+  const cacheKey = query.toLowerCase().slice(0, 60)
+  let results = searchCache.get(cacheKey)
+
+  if (!results) {
+    const searchResponse = await interaction.client.aqua.resolve({
+      query,
+      requester: interaction.user,
+    })
+
+    results = Array.isArray(searchResponse) ? searchResponse : searchResponse?.tracks || []
+
+    if (results.length) searchCache.set(cacheKey, results)
+  }
+
+  if (!results.length) return resolve(interaction.respond([]))
+
+  const choices = results
+    .slice(0, MAX_AUTOCOMPLETE_RESULTS)
+    .map((item: SearchResult) => {
+      const info = item.info || item
+      if (!info?.uri) return null
+
+      return {
+        name: _formatChoice(info.title || 'Unknown', (info as any).author),
+        value: info.uri.slice(0, MAX_URI_LENGTH),
+      }
+    })
+    .filter(Boolean)
+
+  resolve(interaction.respond(choices))
+}
+
+const _handleAutocomplete = async (interaction: any): Promise<void> => {
+  const userId = interaction.user.id
+
+  if (throttleMap.shouldThrottle(userId)) return interaction.respond([])
+
+  const query = String(interaction.getInput() || '').trim()
+
+  const existingTimer = debounceTimers.get(userId)
+  if (existingTimer) {
+    clearTimeout(existingTimer)
+    debounceTimers.delete(userId)
+  }
+
+  return new Promise(resolve => {
+    const timer = setTimeout(async () => {
+      debounceTimers.delete(userId)
+      try {
+        await _processAutocomplete(interaction, userId, query, resolve)
+      } catch (e) {
+        console.error('autocomplete process error', e)
+        resolve(interaction.respond([]))
+      }
+    }, 200)
+
+    debounceTimers.set(userId, timer)
+  })
+}
 
 const options = {
-	query: createStringOption({
-		description: "The song you want to search for",
-		required: true,
-		autocomplete: async (interaction: any) => {
-			const uid = interaction.user.id;
-			if (throttleManager.shouldThrottle(uid)) return interaction.respond([]);
+  query: createStringOption({
+    description: 'The song you want to search for',
+    required: true,
+    autocomplete: _handleAutocomplete,
+  }),
+}
 
-			const raw = interaction.getInput();
-			const input = String(raw || "").trim();
-
-			if (debounceTimers.has(uid)) {
-				clearTimeout(debounceTimers.get(uid)!);
-			}
-
-			return new Promise((resolve) => {
-				debounceTimers.set(
-					uid,
-					setTimeout(async () => {
-						try {
-							if (!input || input.length < 2) {
-								const recent = recentTracks.getLatestLimited(uid, MAX_RESULTS);
-								if (!recent?.length) return resolve(interaction.respond([]));
-								const choices = new Array(recent.length);
-								for (let i = 0; i < recent.length; i++) {
-									const it = recent[i];
-									choices[i] = {
-										name: `🕘 Recent ${i + 1}: ${trunc(it.title, 79)}`,
-										value: it.uri.slice(0, 100),
-									};
-								}
-								return resolve(interaction.respond(choices));
-							}
-
-							if (isUrl(input)) return resolve(interaction.respond([]));
-
-							const key = input.toLowerCase().slice(0, 80);
-							let results = searchCache.get(key);
-							if (!results) {
-								const raw = await interaction.client.aqua.resolve({
-									query: input,
-									requester: interaction.user,
-								});
-
-								let arr: any[] = [];
-								if (Array.isArray(raw)) arr = raw;
-								else if (raw && Array.isArray((raw as any).tracks))
-									arr = (raw as any).tracks;
-								results = arr;
-								if (results.length) searchCache.set(key, results);
-							}
-
-							if (!results?.length) return resolve(interaction.respond([]));
-
-							const len = Math.min(results.length, MAX_RESULTS);
-							const choices: any[] = [];
-							for (let i = 0; i < len; i++) {
-								const item = results[i];
-								const info = item?.info ?? item ?? {};
-								if (!info?.uri) continue;
-								const title = esc(info.title || "Unknown");
-								const author = info.author
-									? ` - ${trunc(esc(info.author), 20)}`
-									: "";
-								choices.push({
-									name: `${trunc(title, 70)}${author}`.slice(0, 100),
-									value: String(info.uri).slice(0, 100),
-								});
-							}
-							return resolve(interaction.respond(choices));
-						} catch (e) {
-							console.error("autocomplete resolve error", e);
-							return resolve(interaction.respond([]));
-						}
-					}, 300),
-				);
-			});
-		},
-	}),
-};
-
-@Declare({ name: "play", description: "Play a song by search query or URL." })
+@Declare({ name: 'play', description: 'Play a song by search query or URL.' })
 @Options(options)
-@Middlewares(["checkVoice"])
+@Middlewares(['checkVoice'])
 export default class Play extends Command {
-	async run(ctx: CommandContext): Promise<void> {
-		const { query } = ctx.options as { query: string };
-		const lang = getContextLanguage(ctx);
-		const t = ctx.t.get(lang);
+  async run(ctx: CommandContext): Promise<void> {
+    const { query } = ctx.options as { query: string }
+    const lang = getContextLanguage(ctx)
+    const t = ctx.t.get(lang)
 
-		try {
-			await ctx.deferReply(true);
-			const voice = await ctx.member.voice();
-			if (!voice?.channelId) {
-				await ctx.editResponse({
-					content: t.player?.noVoiceChannel || "You must be in a voice channel to use this command."
-				});
-				return;
-			}
+    try {
+      await ctx.deferReply(true)
 
-			const player = ctx.client.aqua.createConnection({
-				guildId: ctx.guildId,
-				voiceChannel: voice.channelId,
-				textChannel: ctx.channelId,
-				deaf: true,
-				defaultVolume: 65,
-			});
+      const voice = await ctx.member.voice()
+      if (!voice?.channelId) {
+        await ctx.editResponse({
+          content: t.player?.noVoiceChannel || 'You must be in a voice channel to use this command.',
+        })
+        return
+      }
 
-			const result = await ctx.client.aqua.resolve({
-				query,
-				requester: ctx.interaction.user,
-			});
-			if (!result?.tracks?.length) {
-				await ctx.editResponse({
-					content: t.player?.noTracksFound || "No tracks found for the given query."
-				});
-				return;
-			}
+      const player = ctx.client.aqua.createConnection({
+        guildId: ctx.guildId,
+        voiceChannel: voice.channelId,
+        textChannel: ctx.channelId,
+        deaf: true,
+        defaultVolume: 65,
+      })
 
-			const { loadType, tracks, playlistInfo } = result;
-			const embed = new Embed().setColor(EMBED_COLOR).setTimestamp();
+      const result = await ctx.client.aqua.resolve({
+        query,
+        requester: ctx.interaction.user,
+      })
 
-			if (loadType === "track" || loadType === "search") {
-				const track = tracks[0];
-				const info = track?.info || {};
-				player.queue.add(track);
-				// @ts-ignore
-				recentTracks.add(
-					ctx.interaction.user.id,
-					info.title || query,
-					info.uri || query,
-				);
-						// @ts-ignore
-				const addedText = t?.player?.trackAdded
-					?.replace('{title}', esc(info.title || "Track"))
-					?.replace('{uri}', info.uri || "#")
-					|| `Added [**${esc(info.title || "Track")}**](${info.uri || "#"}) to the queue.`;
+      if (!result?.tracks?.length) {
+        await ctx.editResponse({
+          content: t.player?.noTracksFound || 'No tracks found for the given query.',
+        })
+        return
+      }
 
-				embed.setDescription(addedText);
-			} else if (loadType === "playlist" && playlistInfo?.name) {
-				for (let i = 0; i < tracks.length; i++) player.queue.add(tracks[i]);
-				const first = tracks[0];
-				if (first?.info?.uri)
-					recentTracks.add(
-						ctx.interaction.user.id,
-						first.info.title || first.info.uri,
-						first.info.uri,
-					);
+      const { loadType, tracks, playlistInfo } = result
+      const embed = new Embed().setColor(EMBED_COLOR).setTimestamp()
+      const userId = ctx.interaction.user.id
 
-				const playlistText = t.player?.playlistAdded
-					?.replace('{name}', esc(playlistInfo.name))
-					?.replace('{count}', tracks.length.toString())
-					?.replace('{uri}', first?.info?.uri || "#")
-					|| `Added **[\`${esc(playlistInfo.name)}\`](${first?.info?.uri})** playlist (${tracks.length} tracks) to the queue.`;
+      if (loadType === 'track' || loadType === 'search') {
+        const track = tracks[0]
+        const info = track?.info || {}
+        player.queue.add(track)
 
-				embed.setDescription(playlistText);
-				if (playlistInfo.thumbnail) embed.setThumbnail(playlistInfo.thumbnail);
-			} else {
-				await ctx.editResponse({
-					content: t?.errors?.unsupportedContentType || "Unsupported content type."
-				});
-				return;
-			}
+        if (info.uri) recentTracks.add(userId, info.title || query, info.uri)
 
-			await ctx.editResponse({ embeds: [embed] });
+        const title = _escapeMarkdown(info.title || 'Track')
+        const addedText = t?.player?.trackAdded
+          ?.replace('{title}', title)
+          ?.replace('{uri}', info.uri || '#') ||
+          `Added [**${title}**](${info.uri || '#'}) to the queue.`
 
-			if (!player.playing && !player.paused && player.queue.size > 0) {
-				try {
-					player.play();
-				} catch (e) {
-					console.error("play start error", e);
-				}
-			}
-		} catch (err: any) {
-			if (err?.code === 10065) return;
-			console.error("Play error:", err);
-			try {
-				await ctx.editResponse({
-					content: t.errors?.general || "An error occurred. Please try again."
-				});
-			} catch {}
-		}
-	}
+        embed.setDescription(addedText)
+      } else if (loadType === 'playlist' && playlistInfo?.name) {
+        tracks.forEach((tr: any) => player.queue.add(tr))
+
+        const firstTrack = tracks[0]
+        if (firstTrack?.info?.uri) {
+          recentTracks.add(userId, firstTrack.info.title || firstTrack.info.uri, firstTrack.info.uri)
+        }
+
+        const playlistName = _escapeMarkdown(playlistInfo.name)
+        const playlistText = t.player?.playlistAdded
+          ?.replace('{name}', playlistName)
+          ?.replace('{count}', tracks.length.toString())
+          ?.replace('{uri}', firstTrack?.info?.uri || '#') ||
+          `Added **[\`${playlistName}\`](${firstTrack?.info?.uri || '#'})** playlist (${tracks.length} tracks) to the queue.`
+
+        embed.setDescription(playlistText)
+        if (playlistInfo.thumbnail) embed.setThumbnail(playlistInfo.thumbnail)
+      } else {
+        await ctx.editResponse({
+          content: t?.errors?.unsupportedContentType || 'Unsupported content type.',
+        })
+        return
+      }
+
+      await ctx.editResponse({ embeds: [embed] })
+
+      if (!player.playing && !player.paused && player.queue.size > 0) {
+        try {
+          player.play()
+        } catch (e) {
+          console.error('play start error', e)
+        }
+      }
+    } catch (err: any) {
+      if (err?.code === 10065) return
+
+      console.error('Play error:', err)
+      try {
+        await ctx.editResponse({ content: t.errors?.general || 'An error occurred. Please try again.' })
+      } catch {}
+    }
+  }
 }
