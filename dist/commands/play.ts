@@ -76,7 +76,8 @@ class OptimizedRecentTracks {
     const userCache = this.userCaches.get(userId)
     if (!userCache) return []
 
-    const entries = [...userCache.entries()].slice(0, Math.max(0, Math.min(limit, userCache.size)))
+    // Get entries and reverse to show most recent first
+    const entries = [...userCache.entries()].reverse().slice(0, Math.max(0, Math.min(limit, userCache.size)))
     return entries.map(([, value]) => value)
   }
 }
@@ -260,8 +261,9 @@ export default class Play extends Command {
         const track = tracks[0]
         const info = track?.info || {}
         player.queue.add(track)
-
-        if (info.uri) recentTracks.add(userId, info.title || query, info.uri)
+        if (info.uri && info.title) {
+          recentTracks.add(userId, info.title, info.uri)
+        }
 
         const title = _escapeMarkdown(info.title || 'Track')
         const addedText = t?.player?.trackAdded
@@ -271,14 +273,20 @@ export default class Play extends Command {
 
         embed.setDescription(addedText)
       } else if (loadType === 'playlist' && playlistInfo?.name) {
-        tracks.forEach((tr: any) => player.queue.add(tr))
-
-        const firstTrack = tracks[0]
-        if (firstTrack?.info?.uri) {
-          recentTracks.add(userId, firstTrack.info.title || firstTrack.info.uri, firstTrack.info.uri)
+        for (const track of tracks) {
+          player.queue.add(track)
         }
 
+        const tracksToCache = tracks.slice(0, 3)
+        tracksToCache.forEach((track: any) => {
+          const info = track?.info || {}
+          if (info.uri && info.title) {
+            recentTracks.add(userId, info.title, info.uri)
+          }
+        })
+
         const playlistName = _escapeMarkdown(playlistInfo.name)
+        const firstTrack = tracks[0]
         const playlistText = t.player?.playlistAdded
           ?.replace('{name}', playlistName)
           ?.replace('{count}', tracks.length.toString())
