@@ -5,7 +5,10 @@
 		"downlevelIteration": true,
 		"esModuleInterop": true,
 		"module": "nodenext",
-		"strict": false
+		"strict": false,
+		"incremental": true,
+		"skipLibCheck": true,
+
 	},
 	"exclude": ["node_modules"]
 }
