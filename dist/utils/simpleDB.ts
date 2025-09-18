@@ -6,6 +6,8 @@ import Database from 'better-sqlite3'
 interface SimpleDBOptions {
   dbPath?: string
   cacheSize?: number
+  maxCacheSize?: number
+  enableWAL?: boolean
 }
 
 const VALID_IDENTIFIER = /^[A-Za-z0-9_]+$/
@@ -311,12 +313,14 @@ class SimpleDB extends EventEmitter {
   private readonly _dbPath: string
   private readonly _collections = new Map<string, SQLiteCollection>()
   private readonly _cacheSize: number
+  private readonly _maxCacheSize: number
 
   constructor(options: SimpleDBOptions = {}) {
     super()
     this._dbPath = options.dbPath || join(process.cwd(), 'db', 'sey.sqlite')
     ensureDir(join(process.cwd(), 'db'))
     this._cacheSize = typeof options.cacheSize === 'number' ? Math.max(0, options.cacheSize) : 50
+    this._maxCacheSize = typeof options.maxCacheSize === 'number' ? Math.max(0, options.maxCacheSize) : 100
 
     this._db = new Database(this._dbPath)
 
@@ -326,6 +330,8 @@ class SimpleDB extends EventEmitter {
       this._db.pragma('cache_size = 10000')
       this._db.pragma('temp_store = MEMORY')
       this._db.pragma('mmap_size = 268435456') // 256MB
+      this._db.pragma('foreign_keys = ON')
+      this._db.pragma('busy_timeout = 30000') // 30 seconds
     } catch {}
   }
 

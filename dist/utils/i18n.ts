@@ -3,14 +3,21 @@ import { getGuildLang } from './db_helper';
 
 const AVAILABLE_LANGUAGES = {
   en: 'English',
-  br: 'Português (Brasil)'
+  br: 'Português (Brasil)',
+  es: 'Espanhol (ES)',
+  hi: 'Hindi (IN)',
+  fr: 'French (FR)',
+  ar: 'Arabic (AR)',
+  bn: 'Bengali (BD)',
+  ru: 'Russian (RU)',
+  ja: 'Japanese (JP)'
 } as const;
 
 const REPLACEMENT_REGEX = /\{(\w+)\}/g;
 
 const _functions = {
   isValidLang: (lang: string): lang is keyof typeof AVAILABLE_LANGUAGES =>
-    lang === 'en' || lang === 'br',
+    lang === 'en' || lang === 'br' || lang === 'es' || lang === 'hi' || lang === 'fr' || lang === 'ar' || lang === 'bn' || lang === 'ru' || lang === 'ja',
 
   getContextLang: (guildId?: string): string => {
     if (!guildId) return 'en';

@@ -32,12 +32,15 @@ const CONFIG = {
 - Recompiled all the code using @biomejs/biome
 - Improved the interaction handling system
 - Improved /play command caching and performance
+- Status color to white
+- Added origin in error handler
 
 ### Removed
 - Nothing
 
 ### Fixed
-- Nothing
+- Fixed an long standing bug (users can use buttons when not on VC)
+- Fixed some memory leaks.
 `,
 	},
 	COLORS: {

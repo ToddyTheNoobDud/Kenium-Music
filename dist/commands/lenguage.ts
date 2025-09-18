@@ -13,7 +13,14 @@ const options = {
     required: true,
     choices: [
       { name: 'English', value: 'en' },
-      { name: 'Português (Brasil)', value: 'br' }
+      { name: 'Português (Brasil)', value: 'br' },
+      { name: 'Espanhol (ES)', value: 'es' },
+      { name: 'Hindi (IN)', value: 'hi' },
+      { name: 'French (FR)', value: 'fr' },
+      { name: 'Arabic (AR)', value: 'ar' },
+      { name: 'Bengali (BD)', value: 'bn' },
+      { name: 'Russian (RU)', value: 'ru' },
+      { name: 'Japanese (JP)', value: 'ja' },
     ],
   })
 };
