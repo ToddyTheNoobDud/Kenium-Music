@@ -1,3 +1,4 @@
+
 import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { Cooldown, CooldownType } from "@slipher/cooldown";
 import {
