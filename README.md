@@ -1,80 +1,143 @@
-# Kenium: Your 2025 Music Bot BFF 🎧🔥  
 
-Yo, done with bots that want your 💸 or votes to play a song? Kenium’s here to keep it **100% free** and **100% awesome**. It’s the ultimate Discord music bot for 2025—simple, fast, and no drama. Let’s dive into why Kenium’s the **real deal**! 😎
+# Kenium 🎧 Your 2025 Music Bot BFF
 
-## Why Kenium’s the Best? 🚀  
+<p align="center">
+  <a href="https://github.com/ToddyTheNoobDud/Kenium-Music">
+    <img src="https://img.shields.io/github/stars/ToddyTheNoobDud/Kenium-Music?style=social" alt="GitHub Stars">
+  </a>
+  <a href="https://github.com/ToddyTheNoobDud/Kenium-Music/fork">
+    <img src="https://img.shields.io/github/forks/ToddyTheNoobDud/Kenium-Music?style=social" alt="GitHub Forks">
+  </a>
+  <a href="https://github.com/ToddyTheNoobDud/Kenium-Music/issues">
+    <img src="https://img.shields.io/github/issues/ToddyTheNoobDud/Kenium-Music" alt="Open Issues">
+  </a>
+  <a href="https://github.com/ToddyTheNoobDud/Kenium-Music/graphs/contributors">
+    <img src="https://img.shields.io/github/contributors/ToddyTheNoobDud/Kenium-Music" alt="Contributors">
+  </a>
+</p>
 
-### Free Vibes Only 🎉  
-- **No Cash Needed** 🚫: Play from YouTube, Spotify, SoundCloud, Vimeo, or your own files—**zero cost**. No “premium” nonsense, no ads.  
-- **No Vote Begging** 🙅: Other bots make you jump through hoops. Kenium? Just play and vibe.  
 
-### Always Ready ⏰  
-- **24/7 Jams**: Hosted on **Galact Hosting**, Kenium’s online all day, every day. No crashes, no downtime.  
-- **Super Stable**: Your music keeps going, whether you’re gaming or chilling.  
 
-### Easy as 1-2-3 🤖  
-- **One Command, Done**: Type `/play [song]` and **BOOM**—music’s on. No confusing menus.  
-- **Smart Search**: Autocomplete finds your tracks in a snap.  
 
-### Clear & Trusty 🔍  
-- **Open-Source**: Check the code on [GitHub](https://github.com/ToddyTheNoobDud/Kenium-Music). No shady stuff, just pure vibes.  
-- **Community Love**: Got feedback? Submit ideas or tweaks—Kenium’s all about you.  
+<div style="padding: 16px; margin: 16px 0; background-color: #FFFBE5; border-left: 6px solid #FFC107; border-radius: 4px;">
 
-## Features That Slay 🎵  
-Kenium’s loaded with dope features, and they’re all **free**. Here’s the rundown:  
+## What Is Kenium?
 
-| **Feature**              | **Why It’s Awesome** 🎯                                             |  
-|--------------------------|--------------------------------------------------------------------|  
-| **Fast Jams** ⚡         | Queues load quick, audio’s smooth, uses just **~0.5–1 MB RAM**. Works with YouTube, Spotify, SoundCloud, Vimeo, and local files. |  
-| **Queue Control** 🔎    | Run `/clear`, `/remove`, or `/shuffle` to own your playlist. Autocomplete makes searching easy. |  
-| **Playlist Power** 📂   | Save/share playlists as `.txt` or `.pdf`. Auto-named, no stress.   |  
-| **Lyrics On Tap** 🎤    | Pull lyrics from **Genius** or **LyricFind**, even for obscure tracks. |  
-| **Tune It Up** 🎛️      | Crank bass, slow tracks, add filters—**all free**, no upsells.     |  
-| **Smart Build** 💻      | Built with **TypeScript** & **Seyfert** for speed and low memory use. |  
+Kenium is a **free**, **fast**, and **open-source** Discord music bot for 2025. No paywalls. No vote spam. Just pure music vibes. Whether you want to queue up songs, drop lyrics, or throw on filters — Kenium handles it all with smoothness.
 
-### Powered by Aqualink ⚡  
-Kenium runs on **Aqualink**, a slick Lavalink client that’s:  
-- **Super Light**: Uses just **~0.5–1 MB RAM** per player.  
-- **Fast & Stable**: Keeps your music flowing without hiccups.  
-- **Hacker-Friendly**: Fully documented for those who love to tinker.  
+<div style="padding: 16px; margin: 16px 0; background-color: #FFFBE5; border-left: 6px solid #FFC107; border-radius: 4px;">
 
-## Why Kenium Beats the Rest 🏆  
-In 2025, music bots are a mess—some got shut down, others went pay-to-play or make you vote like it’s an election. Kenium? It’s **free**, **reliable**, and **open-source**. No YouTube restrictions slowing it down, and **Galact Hosting** keeps it running smooth. Plus, you can check the code to know it’s legit—no sneaky stuff here.
+## Why Kenium Stands Out 🚀
 
-## Set It Up in Minutes 🛠️  
-Getting Kenium on your server is a breeze:  
-1. **Grab Lavalink**: Follow the setup [here](https://github.com/lavalink-devs/Lavalink).  
-2. **Get Node.js**: Version 20+ is the move.  
-3. **Clone the Repo**:  
-   ```bash  
-   git clone https://github.com/ToddyTheNoobDud/Kenium-Music.git  
-   ```  
-4. **Install Stuff**:  
-   ```bash  
-   pnpm install  
-   ```  
-5. **Set Up Config**: Copy `.env.example` to `.env` and add your details.  
-6. **Start the Party**:  
-   ```bash  
-   npm start  
-   ```  
-   Or `pnpm start`.  
-7. **Need Help?**: Watch the setup vid [here](https://www.youtube.com/watch?v=5etqxAG9tVg).  
+| Feature | What It Means for You |
+|--------|-----------------------|
+| **Free Vibes Only** | Play from YouTube, Spotify, SoundCloud, Vimeo, or local files. No premium paywalls, no ads. |
+| **Always On, Always Stable** | Hosted 24/7, designed to handle crashes gracefully. Built for uptime & reliability. |
+| **Commands That Work for You** | `/play [song]`, `/shuffle`, `/clear`, etc. Easy controls + smart autocomplete. |
+| **More Than Just Playing Songs** | Lyrics on demand, playlist exports, audio filters (bass, slow, etc.), etc. |
+| **Code You Can Trust** | Open-source (TypeScript & Seyfert), light on resources, built with modern tools. |
 
-## Join the Kenium Crew 🌟  
-- **Star It** ✨: Show love on [GitHub](https://github.com/ToddyTheNoobDud/Kenium-Music).  
-- **Fork & Play**: Tweak it, make it yours, or add new features.  
-- **Speak Up**: Got ideas or bugs? Drop issues or PRs on GitHub.  
+<div style="padding: 16px; margin: 16px 0; background-color: #FFFBE5; border-left: 6px solid #FFC107; border-radius: 4px;">
 
-## Why You Need Kenium in 2025 🎉  
-Kenium’s the music bot you’ve been waiting for—**free**, **fast**, and **fun**. No paywalls, no vote scams, just pure music vibes for your Discord server. Whether you’re gaming, chilling, or throwing a virtual party, Kenium’s got you covered with smooth tunes and killer features. Try it out and see why it’s the **last music bot you’ll ever need**! 😎  
+## Live Growth
 
-## Star History
+<div style="padding: 16px; margin: 16px 0; background-color: #FFFBE5; border-left: 6px solid #FFC107; border-radius: 4px;">
 
-<a href="https://www.star-history.com/#ToddyTheNoobDud/Kenium-Music&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ToddyTheNoobDud/Kenium-Music&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ToddyTheNoobDud/Kenium-Music&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ToddyTheNoobDud/Kenium-Music&type=Date" />
- </picture>
-</a>
+<p align="center">
+  <a href="https://star-history.com/#ToddyTheNoobDud/Kenium-Music&Date">
+    <img src="https://api.star-history.com/svg?repos=ToddyTheNoobDud/Kenium-Music&type=Dat&theme=dark" alt="Star History Chart">
+  </a>
+</p>
+
+See how the project has been growing over time in stars — a good sign we're heading somewhere cool!
+
+<div style="padding: 16px; margin: 16px 0; background-color: #FFFBE5; border-left: 6px solid #FFC107; border-radius: 4px;">
+
+## Setup (Get Jammin’ in Minutes)
+
+1. Ensure **Node.js** v20+ is installed.  
+2. Clone the repo:
+   ```bash
+   git clone https://github.com/ToddyTheNoobDud/Kenium-Music.git
+   ```
+
+
+3. Move into the project folder:
+
+   ```bash
+   cd Kenium-Music
+   ```
+
+4. Install dependencies:
+
+   ```bash
+   pnpm install
+   ```
+
+5. Copy config example and fill your environment variables:
+
+   ```bash
+   cp .env.example .env
+   # then edit .env
+   ```
+
+6. Run the bot:
+
+   ```bash
+   pnpm start
+   ```
+
+   Or alternatively `npm start` if you prefer.
+
+7. Optional: check YouTube setup tutorial if you get stuck. *(Add link here)*
+
+<div style="padding: 16px; margin: 16px 0; background-color: #FFFBE5; border-left: 6px solid #FFC107; border-radius: 4px;">
+
+## Community & Roadmap
+
+* Zero open issues so far — lots of clean-ups and feature work in motion.
+* Maintained by **ToddyTheNoobDud/toddynnn**, and contributors are welcome.
+* Upcoming features: better error/crash handling, more filters, more platforms support. Some already in progress.
+
+<div style="padding: 16px; margin: 16px 0; background-color: #FFFBE5; border-left: 6px solid #FFC107; border-radius: 4px;">
+
+## How You Can Help
+
+* ⭐ Star the repo if you like what you see
+* 🍴 Fork & customize
+* 🔧 Submit issues or pull requests — feedback makes Kenium better for *everyone*
+
+<div style="padding: 16px; margin: 16px 0; background-color: #FFFBE5; border-left: 6px solid #FFC107; border-radius: 4px;">
+
+## 🌐 Translations
+
+<p align="center">
+
+<table align="center">
+<tr><th>Language</th><th>Flag</th><th>Status</th></tr>
+
+<tr><td><b>English (EN)</b></td><td>🇺🇸</td><td><img src="https://img.shields.io/badge/100%25-brightgreen" /></td></tr>
+<tr><td><b>Brazilian Portuguese (BR)</b></td><td>🇧🇷</td><td><img src="https://img.shields.io/badge/100%25-brightgreen" /></td></tr>
+<tr><td><b>Japanese (JA)</b></td><td>🇯🇵</td><td><img src="https://img.shields.io/badge/100%25-brightgreen" /></td></tr>
+<tr><td><b>Russian (RU)</b></td><td>🇷🇺</td><td><img src="https://img.shields.io/badge/100%25-brightgreen" /></td></tr>
+<tr><td><b>Arabic (AR)</b></td><td>🇸🇦</td><td><img src="https://img.shields.io/badge/100%25-brightgreen" /></td></tr>
+<tr><td><b>Bengali (BN)</b></td><td>🇧🇩</td><td><img src="https://img.shields.io/badge/100%25-brightgreen" /></td></tr>
+<tr><td><b>Spanish (ES)</b></td><td>🇪🇸</td><td><img src="https://img.shields.io/badge/100%25-brightgreen" /></td></tr>
+<tr><td><b>French (FR)</b></td><td>🇫🇷</td><td><img src="https://img.shields.io/badge/100%25-brightgreen" /></td></tr>
+<tr><td><b>Hindi (HI)</b></td><td>🇮🇳</td><td><img src="https://img.shields.io/badge/100%25-brightgreen" /></td></tr>
+
+</table>
+
+</p>
+
+## License
+
+Kenium is released under the **[MIT License](LICENSE)** — do what you want with it (just keep the credits ❤️).
+
+<div style="padding: 16px; margin: 16px 0; background-color: #FFFBE5; border-left: 6px solid #FFC107; border-radius: 4px;">
+
+<p align="center">
+Made with passion, code, and a love for music. Thanks for being part of the journey! 🎵
+</p>
+
+
