@@ -4,7 +4,14 @@ import { getContextLanguage } from '../utils/i18n';
 
 const LANGUAGE_NAMES = {
   en: 'English',
-  br: 'Português (Brasil)'
+  br: 'Português (Brasil)',
+  es: 'Espanhol (ES)',
+  hi: 'Hindi (IN)',
+  fr: 'French (FR)',
+  ar: 'Arabic (AR)',
+  bn: 'Bengali (BD)',
+  ru: 'Russian (RU)',
+  ja: 'Japanese (JP)'
 } as const;
 
 const options = {
@@ -38,8 +45,8 @@ const _functions = {
     const success = setGuildLang(ctx.guildId!, lang);
     const t = ctx.t.get(lang);
     const displayName = _functions.getLangDisplayName(lang);
-
-    const content = success
+    const successBool = success !== undefined && success !== null;
+    const content = successBool
       ? t.success?.languageSet?.replace('{lang}', displayName) || `Language set to ${displayName}`
       : t.errors?.databaseError || 'Failed to save settings';
 
@@ -63,7 +70,8 @@ export default class LanguageCommand extends Command {
 
     try {
       await _functions.handleLanguageSet(ctx, ctx.options.language);
-    } catch {
+    } catch(error) {
+      console.error('Error in language command:', error);
       const currentLang = getContextLanguage(ctx);
       const t = ctx.t.get(currentLang);
       await ctx.editOrReply({ content: t.errors?.general || 'An error occurred', flags: 64 });
