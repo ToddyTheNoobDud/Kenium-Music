@@ -36,14 +36,13 @@ const formatters = {
 			const minutes = Math.floor((seconds % 3600) / 60);
 			const secs = seconds % 60;
 
-			const result = [
-				days > 0 && `${days}d`,
-				hours > 0 && `${hours}h`,
-				minutes > 0 && `${minutes}m`,
-				`${secs}s`,
-			]
-				.filter(Boolean)
-				.join(" ");
+			const parts = [];
+			if (days > 0) parts.push(`**${days}** day${days !== 1 ? 's' : ''}`);
+			if (hours > 0) parts.push(`**${hours}** hour${hours !== 1 ? 's' : ''}`);
+			if (minutes > 0) parts.push(`**${minutes}** min${minutes !== 1 ? 's' : ''}`);
+			if (secs > 0 || parts.length === 0) parts.push(`**${secs}** sec${secs !== 1 ? 's' : ''}`);
+
+			const result = parts.join(', ');
 
 			cache.set(cacheKey, result);
 			if (cache.size > 100) {
@@ -86,10 +85,30 @@ const createProgressBar = (
 	total: number,
 	length = 10,
 ): string => {
-	if (total <= 0) return "▱".repeat(length);
+	if (total <= 0) return "⬜".repeat(length);
+	const percentage = (used / total) * 100;
 	const progress = Math.min(Math.round((used / total) * length), length);
-	return `${"▰".repeat(progress)}${"▱".repeat(length - progress)}`;
+
+	// Color-coded bars based on usage
+	let filled = "🟩";
+	if (percentage > 50) filled = "🟨";
+	if (percentage > 75) filled = "🟧";
+	if (percentage > 90) filled = "🟥";
+
+	return filled.repeat(progress) + "⬜".repeat(length - progress);
 };
+
+const getStatusEmoji = (percentage: number): string => {
+	if (percentage < 50) return "🟢";
+	if (percentage < 75) return "🟡";
+	if (percentage < 90) return "🟠";
+	return "🔴";
+};
+
+const getConnectionEmoji = (connected: boolean): string => {
+	return connected ? "✅" : "❌";
+};
+
 function formatMemoryUsage(bytes: number): string {
 	const units = ["B", "KB", "MB", "GB", "TB"];
 	let i = 0;
@@ -101,6 +120,7 @@ function formatMemoryUsage(bytes: number): string {
 
 	return `${bytes.toFixed(2)} ${units[i]}`;
 }
+
 @Declare({
 	name: "status",
 	description: "status of the bot",
@@ -125,7 +145,7 @@ export default class statusCmds extends Command {
 		const totalMemory = totalmem();
 		const freeMemory = freemem();
 		const usedMemory = totalMemory - freeMemory;
-		const memoryPercentage = ((usedMemory / totalMemory) * 100).toFixed(1);
+		const memoryPercentage = ((usedMemory / totalMemory) * 100);
 
 		const pingTime = Date.now() - interaction.createdTimestamp;
 		const nodes = [...client.aqua.nodeMap.values()];
@@ -133,15 +153,13 @@ export default class statusCmds extends Command {
 
 		const sortedNodes = [...nodes].sort((a, b) => {
 			if (a.connected !== b.connected) return a.connected ? -1 : 1;
-			// @ts-expect-error
-			return (a.options?.identifier || "").localeCompare(
-				b.options?.identifier || "",
+			return (a.options?.name || "").localeCompare(
+				b.options?.name || "",
 			);
 		});
 
 		const activeNode = sortedNodes.find((node) => node.connected);
 		const { stats = {} } = activeNode || {};
-		// @ts-expect-error
 		const {
 			memory = {},
 			cpu = {},
@@ -150,34 +168,87 @@ export default class statusCmds extends Command {
 			uptime: lavalinkUptime = 0,
 		} = stats;
 
-		const cpuLoad = cpu?.lavalinkLoadPercentage
-			? `${(cpu.lavalinkLoadPercentage * 100).toFixed(1)}%`
-			: "N/A";
-
+		const cpuLoadPercent = cpu?.lavalinkLoadPercentage ? cpu.lavalinkLoadPercentage * 100 : 0;
 		const memoryUsed = memory?.used || 0;
 		const memoryTotal = memory?.reservable || 0;
-		const lavalinkMemoryPercentage =
-			memoryTotal > 0 ? ((memoryUsed / memoryTotal) * 100).toFixed(1) : "0.0";
+		const lavalinkMemoryPercentage = memoryTotal > 0 ? ((memoryUsed / memoryTotal) * 100) : 0;
+		// Determine ping status
+		const pingStatus = (() => {
+			if (pingTime < 100) return "🟢 Excellent";
+			if (pingTime < 200) return "🟡 Good";
+			if (pingTime < 500) return "🟠 Fair";
+			return "🔴 Poor";
+		})();
 
-		const systemMemoryBar = createProgressBar(usedMemory, totalMemory, 20);
-		const lavalinkMemoryBar = createProgressBar(memoryUsed, memoryTotal, 20);
-		const embed = new Embed().setColor(0).setDescription(`\`\`\`ansi
-System Uptime     :: ${formatters.uptime(process.uptime() * 1000)}
-System CPU Model  :: ${CPU_CACHE.model[0] || "N/A"}, ${CPU_CACHE.cores} core(s)
-System CPU Load   :: ${cpus()[0]?.speed} MHz, ${loadavg()[0].toFixed(2)}%, ${loadavg()[1].toFixed(2)}%, ${loadavg()[2].toFixed(2)}%
-Lavalink Uptime   :: ${formatters.uptime(lavalinkUptime)}
-Lavalink Version  :: ${(ctx.client.aqua as any)?.version || "N/A"}
-System Memory     :: ${formatters.memory(usedMemory, true)} / ${formatters.memory(totalMemory, true)} (${memoryPercentage}%)
-System Mem Bar    :: ${systemMemoryBar}
-Lavalink Memory   :: ${formatters.memory(memoryUsed, true)} / ${formatters.memory(memoryTotal, true)} (${lavalinkMemoryPercentage}%)
-Lavalink Mem Bar  :: ${lavalinkMemoryBar}
-Lavalink CPU Load :: ${cpuLoad} (${CPU_CACHE.loadAvg[0].toFixed(2)}, ${CPU_CACHE.loadAvg[1].toFixed(2)}, ${CPU_CACHE.loadAvg[2].toFixed(2)}) avg
-Lavalink Players  :: ${playingPlayers} playing / ${players} total
-Lavalink Nodes    :: ${connectedNodes} connected / ${nodes.length} total
-Ping              :: ${pingTime} ms
-Process Memory    :: ${formatMemoryUsage(process.memoryUsage().rss)}
-\`\`\``);
+		const embed = new Embed()
+			.setColor(0x000000)
+			.addFields([
+				{
+					name: "⏱️ **Uptime**",
+					value: [
+						`> **System:** ${formatters.uptime(process.uptime() * 1000)}`,
+						`> **Lavalink:** ${formatters.uptime(lavalinkUptime)}`
+					].join('\n'),
+					inline: true
+				},
+				{
+					name: "🎵 **Music Status**",
+					value: [
+						`> **Playing:** \`${playingPlayers}\` tracks`,
+						`> **Total Players:** \`${players}\``,
+						`> **Nodes:** ${getConnectionEmoji(connectedNodes > 0)} \`${connectedNodes}/${nodes.length}\``
+					].join('\n'),
+					inline: true
+				},
+				{
+					name: "🌐 **Network**",
+					value: [
+						`> **Latency:** ${pingStatus}`,
+						`> **Response:** \`${pingTime}ms\``,
+						`> **Version:** \`${(ctx.client.aqua as any)?.version || "N/A"}\``
+					].join('\n'),
+					inline: true
+				},
+				{
+					name: `💻 **System CPU** ${getStatusEmoji(cpuLoadPercent)}`,
+					value: [
+						`> **Model:** \`${CPU_CACHE.model[0] || "Unknown"}\``,
+						`> **Cores:** \`${CPU_CACHE.cores}\` @ \`${cpus()[0]?.speed}MHz\``,
+						`> **Load Average:** \`${loadavg().map(l => l.toFixed(2)).join('%, ')}%\``,
+					].join('\n'),
+					inline: false
+				},
+				{
+					name: `💾 **System Memory** ${getStatusEmoji(memoryPercentage)}`,
+					value: [
+						`> ${createProgressBar(usedMemory, totalMemory, 15)} **${memoryPercentage.toFixed(1)}%**`,
+						`> **Used:** \`${formatters.memory(usedMemory, true)}\` / \`${formatters.memory(totalMemory, true)}\``,
+						`> **Process:** \`${formatMemoryUsage(process.memoryUsage().rss)}\``
+					].join('\n'),
+					inline: false
+				}
+			]);
+		if (activeNode && connectedNodes > 0) {
+			embed.addFields([
+				{
+					name: `**Lavalink Resources**`,
+					value: [
+						`> **CPU Load:** ${getStatusEmoji(cpuLoadPercent)} \`${cpuLoadPercent.toFixed(1)}%\``,
+						`> **Memory:** ${createProgressBar(memoryUsed, memoryTotal, 15)} **${lavalinkMemoryPercentage.toFixed(1)}%**`,
+						`> **Used:** \`${formatters.memory(memoryUsed, true)}\` / \`${formatters.memory(memoryTotal, true)}\``
+					].join('\n'),
+					inline: false
+				}
+			]);
+		}
+
+		embed.setFooter({
+			text: ` • ${connectedNodes > 0 ? 'Lavalink Connected' : 'No Active Nodes'}`,
+			iconUrl: client.me.avatarURL()
+		})
+		.setTimestamp();
 
 		await ctx.editOrReply({ embeds: [embed] });
 	}
 }
+;
