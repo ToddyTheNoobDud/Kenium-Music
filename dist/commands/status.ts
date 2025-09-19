@@ -1,4 +1,3 @@
-
 import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { Cooldown, CooldownType } from "@slipher/cooldown";
 import {
@@ -187,8 +186,10 @@ export default class statusCmds extends Command {
 			0,
 		);
 
+		const banner = client.me?.fetch()
+
 		const embed = new Embed()
-			.setImage(client.me.bannerURL({ size: 4096 }) || "")
+			.setImage((await banner).bannerURL({ size: 4096}) || "")
 			.setColor(0x100e09)
 			.setDescription(`Hello, I am **${client.me?.username}**, a music bot created by [\`mushroom0162\`](https://github.com/ToddyTheNoobDud). Here is my current status:`)
 			.addFields(
