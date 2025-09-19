@@ -180,71 +180,28 @@ export default class statusCmds extends Command {
 			return "🔴 Poor";
 		})();
 
+		const guilds = client.cache.guilds.values() || [];
+		const userCount = guilds.reduce(
+			(total, guild) => total + (guild.memberCount || 0),
+			0,
+		);
+
 		const embed = new Embed()
-			.setColor(0x000000)
-			.setAuthor({
-				name: `${client.me.username} • ${connectedNodes > 0 ? 'Lavalink Connected' : 'No Active Nodes'}`,
-				iconUrl: client.me.avatarURL(),
-			})
-			.addFields([
+			.setImage(client.me.bannerURL({ size: 4096 }) || "")
+			.setColor(0x100e09)
+			.setDescription(`Hello, I am **${client.me?.username}**, a music bot created by [\`mushroom0162\`](https://github.com/ToddyTheNoobDud). Here is my current status:`)
+			.addFields(
 				{
-					name: "⏱️ **Uptime**",
-					value: [
-						`> **System:** ${formatters.uptime(process.uptime() * 1000)}`,
-						`> **Lavalink:** ${formatters.uptime(lavalinkUptime)}`
-					].join('\n'),
-					inline: true
+					inline: true,
+					name: "\`📋\` Info",
+					value: `\`📦\` Guilds: ${guilds.length}\n\`👤\`Users: ${userCount}\n\`🎤\`Players: ${client.aqua.players.size} `
 				},
 				{
-					name: "🎵 **Music Status**",
-					value: [
-						`> **Playing:** \`${playingPlayers}\` tracks`,
-						`> **Total Players:** \`${players}\``,
-						`> **Nodes:** ${getConnectionEmoji(connectedNodes > 0)} \`${connectedNodes}/${nodes.length}\``
-					].join('\n'),
-					inline: true
-				},
-				{
-					name: "🌐 **Network**",
-					value: [
-						`> **Latency:** ${pingStatus}`,
-						`> **Response:** \`${pingTime}ms\``,
-						`> **Version:** \`${(ctx.client.aqua as any)?.version || "N/A"}\``
-					].join('\n'),
-					inline: true
-				},
-				{
-					name: `💻 **System CPU** ${getStatusEmoji(cpuLoadPercent)}`,
-					value: [
-						`> **Model:** \`${CPU_CACHE.model[0] || "Unknown"}\``,
-						`> **Cores:** \`${CPU_CACHE.cores}\` @ \`${cpus()[0]?.speed}MHz\``,
-						`> **Load Average:** \`${loadavg().map(l => l.toFixed(2)).join('%, ')}%\``,
-					].join('\n'),
-					inline: false
-				},
-				{
-					name: `💾 **System Memory** ${getStatusEmoji(memoryPercentage)}`,
-					value: [
-						`> ${createProgressBar(usedMemory, totalMemory, 15)} **${memoryPercentage.toFixed(1)}%**`,
-						`> **Used:** \`${formatters.memory(usedMemory, true)}\` / \`${formatters.memory(totalMemory, true)}\``,
-						`> **Process:** \`${formatMemoryUsage(process.memoryUsage().rss)}\``
-					].join('\n'),
-					inline: false
+					inline: true,
+					name: "\`🖥️\` System",
+					value: `\`💻\` Memory Usage: ${formatMemoryUsage(process.memoryUsage().rss)}\n\`🕛\`Uptime: <t:${Math.floor((Date.now() - process.uptime() * 1000) / 1000)}:R>\n\`🛜\` Ping: ${client.gateway.latency}`
 				}
-			]);
-		if (activeNode && connectedNodes > 0) {
-			embed.addFields([
-				{
-					name: `**Lavalink Resources**`,
-					value: [
-						`> **CPU Load:** ${getStatusEmoji(cpuLoadPercent)} \`${cpuLoadPercent.toFixed(1)}%\``,
-						`> **Memory:** ${createProgressBar(memoryUsed, memoryTotal, 15)} **${lavalinkMemoryPercentage.toFixed(1)}%**`,
-						`> **Used:** \`${formatters.memory(memoryUsed, true)}\` / \`${formatters.memory(memoryTotal, true)}\``
-					].join('\n'),
-					inline: false
-				}
-			]);
-		}
+			)
 
 		await ctx.editOrReply({ embeds: [embed] });
 	}
