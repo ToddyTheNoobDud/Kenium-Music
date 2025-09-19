@@ -60,7 +60,7 @@ export const createEmbed = (player, track, client) => {
   const volumeIcon = volume === 0 ? '🔇' : volume < 50 ? '🔈' : '🔊';
   const loopIcon = loop === 'track' ? '🔂' : loop === 'queue' ? '🔁' : '▶️';
   const truncatedTitle = truncateText(title);
-  const capitalizedTitle = truncatedTitle.replace(/\b\w/g, l => l.toUpperCase());
+  const capitalizedTitle = truncatedTitle.replace(/(?<=[\(\)\[\]\{\} ])\w/g, l => l.toUpperCase());
 
   return new Container({
     components: [
