@@ -182,6 +182,10 @@ export default class statusCmds extends Command {
 
 		const embed = new Embed()
 			.setColor(0x000000)
+			.setAuthor({
+				name: `${client.me.username} • ${connectedNodes > 0 ? 'Lavalink Connected' : 'No Active Nodes'}`,
+				iconUrl: client.me.avatarURL(),
+			})
 			.addFields([
 				{
 					name: "⏱️ **Uptime**",
@@ -241,12 +245,6 @@ export default class statusCmds extends Command {
 				}
 			]);
 		}
-
-		embed.setFooter({
-			text: ` • ${connectedNodes > 0 ? 'Lavalink Connected' : 'No Active Nodes'}`,
-			iconUrl: client.me.avatarURL()
-		})
-		.setTimestamp();
 
 		await ctx.editOrReply({ embeds: [embed] });
 	}
