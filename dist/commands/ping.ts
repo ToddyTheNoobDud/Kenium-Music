@@ -4,7 +4,7 @@ import { getContextLanguage } from '../utils/i18n';
 const _functions = {
   createPingEmbed: (t: any, wsPing: number, shardPing: number, playerPing: number, shardId: number, avatarURL?: string): Embed =>
     new Embed()
-      .setColor(0)
+      .setColor(0x100e09)
       .setTitle(t.ping.title)
       .setDescription(t.ping.description
         .replace('{wsPing}', wsPing.toString())

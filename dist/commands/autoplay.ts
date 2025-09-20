@@ -28,7 +28,7 @@ export default class autoPlaycmd extends Command {
 				: t?.player?.disabled || "Autoplay has been **disabled**";
 
 			const embed = new Embed()
-				.setColor(newState ? "#000000" : "#000000")
+				.setColor(newState ? "#0x100e09" : "#0x100e09")
 				.setTitle(t.commands?.autoplay?.name || "Autoplay Status")
 				.setDescription(statusText)
 				.setFooter({

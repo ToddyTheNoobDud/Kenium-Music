@@ -22,9 +22,9 @@ const ICONS = {
 
 // Modern Black Theme Colors
 const COLORS = {
-	primary: "#000000",
-	success: "#000000",
-	error: "#000000",
+	primary: "#0x100e09",
+	success: "#0x100e09",
+	error: "#0x100e09",
 };
 
 const db = new SimpleDB();

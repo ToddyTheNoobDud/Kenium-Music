@@ -51,7 +51,7 @@ export default class LoopCommand extends Command {
 			await ctx.editOrReply({
 				embeds: [
 					new Embed()
-						.setColor(0x000000)
+						.setColor(0x100e09)
 						.setDescription(description),
 				],
 				flags: 64,

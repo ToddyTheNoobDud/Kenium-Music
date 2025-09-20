@@ -18,10 +18,13 @@ export default class previoiusCmds extends Command {
 			const { client } = ctx;
 
 			const player = client.aqua.players.get(ctx.guildId!);
+
+			if (player.current) player.queue.unshift(player.current);
+
 			player.queue.unshift(player.previous);
 			player.stop();
 
-			if (!player.playing && !player.paused && player.queue.size > 0) {
+			if (!player.playing && !player.paused && !player.queue.length) {
 				player.play();
 			}
 

@@ -21,11 +21,11 @@ export const ICONS = {
 } as const;
 
 export const COLORS = {
-	primary: "#000000",
-	success: "#000000",
-	error: "#000000",
-	warning: "#000000",
-	info: "#000000",
+	primary: "#0x100e09",
+	success: "#0x100e09",
+	error: "#0x100e09",
+	warning: "#0x100e09",
+	info: "#0x100e09",
 } as const;
 
 export const LIMITS = {

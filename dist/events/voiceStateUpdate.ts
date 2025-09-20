@@ -1,5 +1,5 @@
 import process from 'node:process'
-import { LRU } from 'tiny-lru'
+import { lru } from 'tiny-lru'
 import { createEvent, Embed } from 'seyfert'
 import { getChannelIds, isTwentyFourSevenEnabled } from '../utils/db_helper'
 
@@ -149,7 +149,7 @@ class VoiceManager {
     this.states = new Map()
     this.pending = new Map()
     this.breaker = new CircuitBreaker()
-    this.guildCache = new LRU(CACHE_SIZE, 60_000)
+    this.guildCache = lru(CACHE_SIZE, 60_000)
     this.registered = new WeakSet()
     this.cleanupTimer = null
     this._setupCleanup()
@@ -310,7 +310,7 @@ class VoiceManager {
       if (!current || current.playing || isTwentyFourSevenEnabled(player.guildId)) return
 
       const embed = new Embed()
-        .setColor(0)
+        .setColor(0x100e09)
         .setDescription('No song added in 10 minutes, disconnecting...\nUse the `/24_7` command to keep the bot in voice channel.')
         .setFooter({ text: 'Automatically destroying player' })
 

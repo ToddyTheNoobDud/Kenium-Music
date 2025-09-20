@@ -18,29 +18,25 @@ const CONFIG = {
 		ISSUES_URL: "https://github.com/ToddyTheNoobDud/Kenium-Music/issues/new",
 	},
 	BOT: {
-		VERSION: "4.7.0",
+		VERSION: "4.7.1",
 		DEVELOPER: "mushroom0162",
 		CHANGELOG: `
 ### Added
-- Translations ! (tradução)
-- Support BR / EN
+- Added new translations: Hindi, French, Arabic, Bengali, Russian and Japanese
 
 ### Changed
-- Rewrited the bot caching system with tiny-lru
-- Rewrited the voice handling
-- Rewrited the Database, patched security issues, improved the speed by a lot.
-- Recompiled all the code using @biomejs/biome
-- Improved the interaction handling system
-- Improved /play command caching and performance
-- Status color to white
-- Added origin in error handler
+- Updated dependencies
+- Rewrited the db_helper for better performance and speed.
+- Misc optimizations for typescript
+- Reworked the status UI
 
 ### Removed
 - Nothing
 
 ### Fixed
-- Fixed an long standing bug (users can use buttons when not on VC)
-- Fixed some memory leaks.
+- Fixed play cache sorting
+- Fixed some bugs related to database handling on languages
+- Fixed special texts not working.
 `,
 	},
 	COLORS: {

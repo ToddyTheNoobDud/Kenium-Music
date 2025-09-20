@@ -17,7 +17,7 @@ import { getContextLanguage } from "../utils/i18n";
 // Create singleton instance
 const MUSIXMATCH = new Musixmatch();
 const MAX_EMBED_LENGTH = 1800;
-const EMBED_COLOR = 0x000000;
+const EMBED_COLOR = 0x100e09;
 const COLLECTOR_TIMEOUT = 300_000;
 
 function createErrorEmbed(message: string, thele: any) {

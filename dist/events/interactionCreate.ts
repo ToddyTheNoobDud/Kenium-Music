@@ -115,7 +115,8 @@ const actionHandlers = {
   },
   previous: (player) => {
     if (!player.previous) return { message: '❌ No previous track available', shouldUpdate: false };
-    player.queue?.unshift(player.current, player.previous);
+    if (player.current) player.queue.unshift(player.current);
+		player.queue.unshift(player.previous);
     player.stop?.();
     return { message: '⏮️ Playing the previous track.', shouldUpdate: false };
   },
