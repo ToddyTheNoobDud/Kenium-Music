@@ -339,7 +339,6 @@ class SimpleDB extends EventEmitter {
       this._db.run('PRAGMA mmap_size = 268435456') // 256MB
       this._db.run('PRAGMA foreign_keys = ON')
       this._db.run('PRAGMA busy_timeout = 30000') // 30 seconds
-      console.warn('[SimpleDB] Using Bun SQLite')
     } else {
       this._db.pragma('journal_mode = WAL')
       this._db.pragma('synchronous = NORMAL')
@@ -348,7 +347,6 @@ class SimpleDB extends EventEmitter {
       this._db.pragma('mmap_size = 268435456') // 256MB
       this._db.pragma('foreign_keys = ON')
       this._db.pragma('busy_timeout = 30000') // 30 seconds
-      console.warn('[SimpleDB] Using better-sqlite3 aka nodejs')
     }
   }
 
