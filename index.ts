@@ -1,11 +1,11 @@
 import process from 'node:process'
 import 'dotenv/config'
-import { Client, HttpClient, ParseClient, Container, LimitedMemoryAdapter, ParseMiddlewares, ParseLocales } from 'seyfert'
+import { Client, HttpClient, ParseClient, LimitedMemoryAdapter, ParseMiddlewares, ParseLocales } from 'seyfert'
 import { CooldownManager } from '@slipher/cooldown'
-import { middlewares } from './dist/middlewares/middlewares'
+import { middlewares } from './src/middlewares/middlewares'
 import { Aqua } from 'aqualink'
-import { createEmbed, truncateText } from './dist/events/interactionCreate'
-import English from './dist/languages/en'
+import { createEmbed, truncateText } from './src/events/interactionCreate'
+import English from './src/languages/en'
 
 const { NODE_HOST, NODE_PASSWORD, NODE_PORT, NODE_NAME } = process.env
 
@@ -192,6 +192,7 @@ client.start()
     client.cooldown = new CooldownManager(client)
   })
   .catch(error => {
+    console.error('Failed to start client:', error)
     process.exit(1)
   })
 

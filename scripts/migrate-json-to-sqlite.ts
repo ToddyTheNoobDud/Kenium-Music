@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 
 function loadJson(filePath: string) {
 	if (!existsSync(filePath)) return null;
@@ -63,7 +63,7 @@ function main() {
 	const dbPath = join(process.cwd(), "db", "sey.sqlite");
 	const db = new Database(dbPath);
 	try {
-		db.pragma("journal_mode = WAL");
+		db.run("PRAGMA journal_mode = WAL;");
 	} catch (e) {
 		console.warn("Failed to set WAL mode", e);
 	}

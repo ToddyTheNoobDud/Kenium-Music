@@ -161,24 +161,9 @@ export default class statusCmds extends Command {
 		const activeNode = sortedNodes.find((node) => node.connected);
 		const { stats = {} } = activeNode || {};
 		const {
-			memory = {},
-			cpu = {},
-			players = 0,
 			playingPlayers = 0,
-			uptime: lavalinkUptime = 0,
 		} = stats;
 
-		const cpuLoadPercent = cpu?.lavalinkLoadPercentage ? cpu.lavalinkLoadPercentage * 100 : 0;
-		const memoryUsed = memory?.used || 0;
-		const memoryTotal = memory?.reservable || 0;
-		const lavalinkMemoryPercentage = memoryTotal > 0 ? ((memoryUsed / memoryTotal) * 100) : 0;
-		// Determine ping status
-		const pingStatus = (() => {
-			if (pingTime < 100) return "🟢 Excellent";
-			if (pingTime < 200) return "🟡 Good";
-			if (pingTime < 500) return "🟠 Fair";
-			return "🔴 Poor";
-		})();
 
 		const guilds = client.cache.guilds.values() || [];
 		const userCount = guilds.reduce(
@@ -196,7 +181,7 @@ export default class statusCmds extends Command {
 				{
 					inline: true,
 					name: "\`📋\` Info",
-					value: `\`📦\` Guilds: ${guilds.length}\n\`👤\`Users: ${userCount}\n\`🎤\`Players: ${client.aqua.players.size} `
+					value: `\`📦\` Guilds: ${guilds.length}\n\`👤\`Users: ${userCount}\n\`🎤\`Players: ${client.aqua.players.size} / Playing: ${playingPlayers}`
 				},
 				{
 					inline: true,

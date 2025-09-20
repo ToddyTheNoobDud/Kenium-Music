@@ -1,7 +1,14 @@
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
+let Database: any;
+
+if (process.isBun) {
+  const mod = require("bun:sqlite");
+  Database = mod.default || mod;
+} else {
+  Database = require("better-sqlite3");
+}
 
 interface SimpleDBOptions {
   dbPath?: string
@@ -44,19 +51,19 @@ const generateId = (): string => {
 }
 
 class SQLiteCollection extends EventEmitter {
-  private readonly _db: Database.Database
+  private readonly _db: any
   private readonly _tableName: string
   private readonly _quotedTable: string
-  private readonly _insertStmt: Database.Statement
-  private readonly _selectAllStmt: Database.Statement
-  private readonly _selectByIdStmt: Database.Statement
-  private readonly _updateStmt: Database.Statement
-  private readonly _deleteByIdStmt: Database.Statement
-  private readonly _countAllStmt: Database.Statement
-  private readonly _stmtCache = new Map<string, Database.Statement>()
+  private readonly _insertStmt?: any
+  private readonly _selectAllStmt?: any
+  private readonly _selectByIdStmt?: any
+  private readonly _updateStmt?: any
+  private readonly _deleteByIdStmt?: any
+  private readonly _countAllStmt?: any
+  private readonly _stmtCache = new Map<string, any>()
   private readonly _cacheSize: number
 
-  constructor(db: Database.Database, name: string, cacheSize = 50) {
+  constructor(db: any, name: string, cacheSize = 50) {
     super()
     validateIdentifier(name)
     this._db = db
@@ -115,7 +122,7 @@ class SQLiteCollection extends EventEmitter {
     }
   }
 
-  private getSelectStmt(query: any): Database.Statement | null {
+  private getSelectStmt(query: any): any | null {
     const keys = Object.keys(query)
     if (keys.length === 0) return this._selectAllStmt
 
@@ -309,7 +316,7 @@ class SQLiteCollection extends EventEmitter {
 }
 
 class SimpleDB extends EventEmitter {
-  private readonly _db: Database.Database
+  private readonly _db: any
   private readonly _dbPath: string
   private readonly _collections = new Map<string, SQLiteCollection>()
   private readonly _cacheSize: number
@@ -324,7 +331,16 @@ class SimpleDB extends EventEmitter {
 
     this._db = new Database(this._dbPath)
 
-    try {
+    if (process.isBun) {
+      this._db.run('PRAGMA journal_mode = WAL')
+      this._db.run('PRAGMA synchronous = NORMAL')
+      this._db.run('PRAGMA cache_size = 10000')
+      this._db.run('PRAGMA temp_store = MEMORY')
+      this._db.run('PRAGMA mmap_size = 268435456') // 256MB
+      this._db.run('PRAGMA foreign_keys = ON')
+      this._db.run('PRAGMA busy_timeout = 30000') // 30 seconds
+      console.warn('[SimpleDB] Using Bun SQLite')
+    } else {
       this._db.pragma('journal_mode = WAL')
       this._db.pragma('synchronous = NORMAL')
       this._db.pragma('cache_size = 10000')
@@ -332,7 +348,8 @@ class SimpleDB extends EventEmitter {
       this._db.pragma('mmap_size = 268435456') // 256MB
       this._db.pragma('foreign_keys = ON')
       this._db.pragma('busy_timeout = 30000') // 30 seconds
-    } catch {}
+      console.warn('[SimpleDB] Using better-sqlite3 aka nodejs')
+    }
   }
 
   collection(name: string): SQLiteCollection {
