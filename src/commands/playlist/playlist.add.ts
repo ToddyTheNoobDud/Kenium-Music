@@ -24,7 +24,7 @@ const playlistsCollection = db.collection("playlists");
 
 const TRACK_SEPARATOR_RE = /[,;\n]+/;
 const YOUTUBE_PLAYLIST_RE =
-	/(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/).*?[?&]list=([A-Za-z0-9_-]+)/i;
+	/(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/|music\.youtube\.com\/).*?[?&]list=([A-Za-z0-9_-]+)/i;
 const SPOTIFY_TRACK_RE = /open\.spotify\.com\/track\/([A-Za-z0-9]+)/i;
 const CONCURRENCY = 3;
 
@@ -279,23 +279,10 @@ export class AddCommand extends SubCommand {
 
 			const buttons = createButtons([
 				{
-					id: `add_more_${playlistName}_${userId}`,
-					label: t.playlist?.add?.addMore || "Add More",
-					emoji: ICONS.add,
-					style: ButtonStyle.Secondary,
-					disabled: playlistDb.tracks.length >= LIMITS.MAX_TRACKS,
-				},
-				{
 					id: `play_playlist_${playlistName}_${userId}`,
 					label: t.playlist?.add?.playNow || "Play Now",
 					emoji: ICONS.play,
 					style: ButtonStyle.Success,
-				},
-				{
-					id: `view_playlist_${playlistName}_${userId}`,
-					label: t.playlist?.add?.viewAll || "View All",
-					emoji: ICONS.playlist,
-					style: ButtonStyle.Primary,
 				},
 			]);
 

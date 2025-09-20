@@ -73,6 +73,7 @@ function getSourceIcon(uri: string): string {
 export class ViewCommand extends SubCommand {
 	async run(ctx: CommandContext) {
 		const { playlist: playlistName } = ctx.options as { playlist?: string };
+		const t = getContextTranslations(ctx);
 		const userId = ctx.author.id;
 
 		if (!playlistName) {
@@ -166,15 +167,8 @@ export class ViewCommand extends SubCommand {
 					},
 				],
 			);
-			const button = createButtons([
-				{
-					id: `add_track_${playlistName}_${userId}`,
-					label: "Add Tracks",
-					emoji: ICONS.add,
-					style: ButtonStyle.Success,
-				},
-			]);
-			return ctx.write({ embeds: [embed], components: [button], flags: 64 });
+
+			return ctx.write({ embeds: [embed], flags: 64 });
 		}
 
 		const page = 1;
@@ -249,12 +243,6 @@ export class ViewCommand extends SubCommand {
 				label: "Shuffle",
 				emoji: ICONS.shuffle,
 				style: ButtonStyle.Primary,
-			},
-			{
-				id: `manage_playlist_${playlistName}_${userId}`,
-				label: "Manage",
-				emoji: "⚙️",
-				style: ButtonStyle.Secondary,
 			},
 		]);
 

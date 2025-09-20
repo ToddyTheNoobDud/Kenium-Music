@@ -1,6 +1,6 @@
 import { Cooldown, CooldownType } from "@slipher/cooldown";
 import { Command, type CommandContext, Declare, Middlewares } from "seyfert";
-import { createEmbed } from "../events/interactionCreate";
+import { createNowPlayingEmbed } from "../events/interactionCreate";
 import { getContextLanguage } from "../utils/i18n";
 
 @Cooldown({
@@ -31,7 +31,7 @@ export default class nowplayngcmds extends Command {
 				return;
 			}
 
-			const embed = createEmbed(player, track, ctx);
+			const embed = createNowPlayingEmbed(player, track, ctx);
 
 			await ctx.editOrReply({ components: [embed], flags: 64 | 32768 });
 		} catch (error: any) {
