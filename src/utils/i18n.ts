@@ -10,14 +10,15 @@ const AVAILABLE_LANGUAGES = {
   ar: 'Arabic (AR)',
   bn: 'Bengali (BD)',
   ru: 'Russian (RU)',
-  ja: 'Japanese (JP)'
+  ja: 'Japanese (JP)',
+  tr: 'Turkish (TR)'
 } as const;
 
 const REPLACEMENT_REGEX = /\{(\w+)\}/g;
 
 const _functions = {
   isValidLang: (lang: string): lang is keyof typeof AVAILABLE_LANGUAGES =>
-    lang === 'en' || lang === 'br' || lang === 'es' || lang === 'hi' || lang === 'fr' || lang === 'ar' || lang === 'bn' || lang === 'ru' || lang === 'ja',
+    lang === 'en' || lang === 'br' || lang === 'es' || lang === 'hi' || lang === 'fr' || lang === 'ar' || lang === 'bn' || lang === 'ru' || lang === 'ja' || lang === 'tr',
 
   getContextLang: (guildId?: string): string => {
     if (!guildId) return 'en';
