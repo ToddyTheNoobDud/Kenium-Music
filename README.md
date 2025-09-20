@@ -55,7 +55,7 @@ See how the project has been growing over time in stars — a good sign we're he
 
 ## Setup (Get Jammin’ in Minutes)
 
-1. Ensure **Node.js** v20+ is installed.  
+1. Ensure **Bun** is installed (see [Bun installation guide](https://bun.sh/docs/installation)).
 2. Clone the repo:
    ```bash
    git clone https://github.com/ToddyTheNoobDud/Kenium-Music.git
@@ -71,7 +71,7 @@ See how the project has been growing over time in stars — a good sign we're he
 4. Install dependencies:
 
    ```bash
-   pnpm install
+   bun install
    ```
 
 5. Copy config example and fill your environment variables:
@@ -84,10 +84,8 @@ See how the project has been growing over time in stars — a good sign we're he
 6. Run the bot:
 
    ```bash
-   pnpm start
+   bun start
    ```
-
-   Or alternatively `npm start` if you prefer.
 
 7. Optional: check YouTube setup tutorial if you get stuck. *(Add link here)*
 
@@ -139,5 +137,3 @@ Kenium is released under the **[MIT License](LICENSE)** — do what you want wit
 <p align="center">
 Made with passion, code, and a love for music. Thanks for being part of the journey! 🎵
 </p>
-
-

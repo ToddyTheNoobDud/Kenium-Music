@@ -1,10 +1,10 @@
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 
-console.log("Starting TypeScript execution...\n");
+console.log("Starting TypeScript execution with Bun...\n");
 
 const tsFile = path.join(__dirname, "index.ts");
-const child = spawn("npx", ["tsx", tsFile], {
+const child = spawn("bun", [tsFile], {
 	stdio: "inherit", // This passes through all console output
 	shell: true,
 });

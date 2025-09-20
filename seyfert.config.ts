@@ -4,7 +4,7 @@ import "dotenv/config";
 export default config.bot({
 	token: process.env.token ?? "",
 	locations: {
-		base: "dist",
+		base: "./src",
 		commands: "commands",
 		events: "events",
 		langs: "languages",

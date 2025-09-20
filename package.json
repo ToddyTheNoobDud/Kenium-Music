@@ -1,21 +1,19 @@
 {
 	"dependencies": {
 		"@slipher/cooldown": "^0.0.6",
+		"@types/bun": "^1.2.22",
 		"aqualink": "2.13.0",
-		"better-sqlite3": "^12.2.0",
 		"dotenv": "^17.2.2",
 		"fetch-cookie": "^3.1.0",
-		"seyfert": "3.2.6",
+		"seyfert": "^3.2.7-dev-17656890690.0",
 		"tiny-lru": "^11.4.5",
 		"typescript": "^5.9.2"
 	},
 	"scripts": {
-		"start": "tsx ./index.ts",
-		"migrate-db": "tsx ./scripts/migrate-json-to-sqlite.ts"
+		"start": "bun ./index.ts",
+		"migrate-db": "bun ./scripts/migrate-json-to-sqlite.ts"
 	},
 	"devDependencies": {
-		"@types/better-sqlite3": "^7.6.13",
-		"@types/node": "^24.5.2",
-		"tsx": "^4.20.5"
+		"@types/node": "^24.5.2"
 	}
 }
