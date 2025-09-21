@@ -32,3 +32,16 @@ export const MUSIC_PLATFORMS = Object.freeze({
 		style: 1,
 	}),
 });
+export const PLAYBACK_E = Object.freeze({
+	volume_up: "🔊",
+	volume_down: "🔉",
+	mute: "🔇",
+	unmute: "🔈",
+	loop: "🔁",
+	loop_one: "🔂",
+	shuffle: "🔀",
+	previous: "⏮️",
+	resume: "▶️",
+	pause: "⏸️",
+	skip: "⏭️",
+})
