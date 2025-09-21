@@ -4,7 +4,7 @@ import { Client, HttpClient, ParseClient, LimitedMemoryAdapter, ParseMiddlewares
 import { CooldownManager } from '@slipher/cooldown'
 import { middlewares } from './src/middlewares/middlewares'
 import { Aqua } from 'aqualink'
-import { createEmbed, truncateText } from './src/events/interactionCreate'
+import { createNowPlayingEmbed, truncateText } from './src/events/interactionCreate'
 import English from './src/languages/en'
 
 const { NODE_HOST, NODE_PASSWORD, NODE_PORT, NODE_NAME } = process.env
@@ -43,7 +43,7 @@ let lastVoiceStatusUpdate = 0
 let lastErrorLog = 0
 
 const _functions = {
-  createEmbed: (player, track) => createEmbed(player, track, client),
+  createEmbed: (player, track) => createNowPlayingEmbed(player, track, client),
 
   cleanupPlayer: player => {
     const voiceChannel = player.voiceChannel || player._lastVoiceChannel
@@ -189,6 +189,7 @@ process.once('SIGINT', _functions.shutdown)
 client.start()
   .then(async () => {
     await client.uploadCommands({ cachePath: './commands.json' }).catch(() => null)
+    // @ts-ignore
     client.cooldown = new CooldownManager(client)
   })
   .catch(error => {
