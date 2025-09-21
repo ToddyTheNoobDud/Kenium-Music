@@ -7,7 +7,7 @@ import { Aqua } from 'aqualink'
 import { createNowPlayingEmbed, truncateText } from './src/events/interactionCreate'
 import English from './src/languages/en'
 
-const { NODE_HOST, NODE_PASSWORD, NODE_PORT, NODE_NAME } = process.env
+const { NODE_HOST, NODE_PASSWORD, NODE_PORT, NODE_NAME, NODE_SECURE } = process.env
 
 const PRESENCE_UPDATE_INTERVAL = 60000
 const VOICE_STATUS_LENGTH = 30
@@ -21,7 +21,7 @@ const aqua = new Aqua(client, [{
   host: NODE_HOST,
   auth: NODE_PASSWORD,
   port: NODE_PORT,
-  ssl: false,
+  ssl: NODE_SECURE === 'true' ? true : false,
   name: NODE_NAME
 }], {
   defaultSearchPlatform: 'ytsearch',
@@ -189,7 +189,6 @@ process.once('SIGINT', _functions.shutdown)
 client.start()
   .then(async () => {
     await client.uploadCommands({ cachePath: './commands.json' }).catch(() => null)
-    // @ts-ignore
     client.cooldown = new CooldownManager(client)
   })
   .catch(error => {
