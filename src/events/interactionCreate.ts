@@ -1,7 +1,7 @@
 import { Container, createEvent } from 'seyfert'
 import { ICONS, LIMITS } from '../shared/constants'
 import { createButtons, createEmbed, formatDuration, shuffleArray } from '../shared/utils'
-import { MUSIC_PLATFORMS } from '../shared/emojis'
+import { MUSIC_PLATFORMS, PLAYBACK_E } from '../shared/emojis'
 import { SimpleDB } from '../utils/simpleDB'
 
 const MAX_TITLE_LENGTH = 60
@@ -100,11 +100,11 @@ export const createNowPlayingEmbed = (player, track, client) => {
       {
         type: 1,
         components: [
-          { type: 2, label: '🔉', style: 2, custom_id: 'volume_down' },
-          { type: 2, label: '⏮️', style: 2, custom_id: 'previous' },
-          { type: 2, label: paused ? '▶️' : '⏸️', style: paused ? 3 : 2, custom_id: paused ? 'resume' : 'pause' },
-          { type: 2, label: '⏭️', style: 2, custom_id: 'skip' },
-          { type: 2, label: '🔊', style: 2, custom_id: 'volume_up' }
+          { type: 2, label: `${PLAYBACK_E.volume_down}`, style: 2, custom_id: 'volume_down' },
+          { type: 2, label: `${PLAYBACK_E.previous}`, style: 2, custom_id: 'previous' },
+          { type: 2, label: paused ? `${PLAYBACK_E.resume}` : `${PLAYBACK_E.pause}`, style: paused ? 3 : 2, custom_id: paused ? 'resume' : 'pause' },
+          { type: 2, label: `${PLAYBACK_E.skip}`, style: 2, custom_id: 'skip' },
+          { type: 2, label: `${PLAYBACK_E.volume_up}`, style: 2, custom_id: 'volume_up' }
         ]
       },
       { type: 14, divider: true, spacing: 2 }
