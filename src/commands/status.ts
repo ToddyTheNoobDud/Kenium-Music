@@ -21,93 +21,12 @@ const CPU_CACHE = {
 	lastCheck: 0,
 	loadAvg: [0, 0, 0],
 };
-
-const formatters = {
-	uptime: (() => {
-		const cache = new Map<number, string>();
-
-		return (ms: number): string => {
-			const cacheKey = Math.floor(ms / 1000);
-			if (cache.has(cacheKey)) return cache.get(cacheKey)!;
-
-			const seconds = Math.floor(ms / 1000);
-			const days = Math.floor(seconds / 86400);
-			const hours = Math.floor((seconds % 86400) / 3600);
-			const minutes = Math.floor((seconds % 3600) / 60);
-			const secs = seconds % 60;
-
-			const parts = [];
-			if (days > 0) parts.push(`**${days}** day${days !== 1 ? 's' : ''}`);
-			if (hours > 0) parts.push(`**${hours}** hour${hours !== 1 ? 's' : ''}`);
-			if (minutes > 0) parts.push(`**${minutes}** min${minutes !== 1 ? 's' : ''}`);
-			if (secs > 0 || parts.length === 0) parts.push(`**${secs}** sec${secs !== 1 ? 's' : ''}`);
-
-			const result = parts.join(', ');
-
-			cache.set(cacheKey, result);
-			if (cache.size > 100) {
-				const firstKey = cache.keys().next().value;
-				cache.delete(firstKey);
-			}
-
-			return result;
-		};
-	})(),
-
-	memory: (() => {
-		const cache = new Map<string, string>();
-		const GB = 1073741824;
-		const MB = 1048576;
-
-		return (bytes: number, inGB = false): string => {
-			const roundedBytes = Math.round(bytes / MB) * MB;
-			const cacheKey = `${roundedBytes}-${inGB}`;
-
-			if (cache.has(cacheKey)) return cache.get(cacheKey)!;
-
-			const result = inGB
-				? `${(roundedBytes / GB).toFixed(2)} GB`
-				: `${(roundedBytes / MB).toFixed(2)} MB`;
-
-			cache.set(cacheKey, result);
-			if (cache.size > 50) {
-				const firstKey = cache.keys().next().value;
-				cache.delete(firstKey);
-			}
-
-			return result;
-		};
-	})(),
+const BANNER_CACHE = {
+	url: null as string | null,
+	lastFetch: 0,
+	ttl: 7 * 24 * 60 * 60 * 1000, // 7 days
 };
 
-const createProgressBar = (
-	used: number,
-	total: number,
-	length = 10,
-): string => {
-	if (total <= 0) return "⬜".repeat(length);
-	const percentage = (used / total) * 100;
-	const progress = Math.min(Math.round((used / total) * length), length);
-
-	// Color-coded bars based on usage
-	let filled = "🟩";
-	if (percentage > 50) filled = "🟨";
-	if (percentage > 75) filled = "🟧";
-	if (percentage > 90) filled = "🟥";
-
-	return filled.repeat(progress) + "⬜".repeat(length - progress);
-};
-
-const getStatusEmoji = (percentage: number): string => {
-	if (percentage < 50) return "🟢";
-	if (percentage < 75) return "🟡";
-	if (percentage < 90) return "🟠";
-	return "🔴";
-};
-
-const getConnectionEmoji = (connected: boolean): string => {
-	return connected ? "✅" : "❌";
-};
 
 function formatMemoryUsage(bytes: number): string {
 	const units = ["B", "KB", "MB", "GB", "TB"];
@@ -119,6 +38,31 @@ function formatMemoryUsage(bytes: number): string {
 	}
 
 	return `${bytes.toFixed(2)} ${units[i]}`;
+}
+
+async function getBannerURL(client: any): Promise<string | null> {
+	const now = Date.now();
+
+	// Check if we have a cached banner and it's still valid
+	if (BANNER_CACHE.url && (now - BANNER_CACHE.lastFetch) < BANNER_CACHE.ttl) {
+		return BANNER_CACHE.url;
+	}
+
+	try {
+		// Only fetch if cache is expired or empty
+		const user = await client.me?.fetch();
+		const bannerURL = user?.bannerURL({ size: 4096 }) || null;
+
+		// Update cache
+		BANNER_CACHE.url = bannerURL;
+		BANNER_CACHE.lastFetch = now;
+
+		return bannerURL;
+	} catch (error) {
+		console.error('Failed to fetch banner:', error);
+		// Return cached URL if fetch fails, or null if no cache
+		return BANNER_CACHE.url;
+	}
 }
 
 @Declare({
@@ -133,7 +77,7 @@ function formatMemoryUsage(bytes: number): string {
 @Middlewares(["cooldown"])
 export default class statusCmds extends Command {
 	public override async run(ctx: CommandContext): Promise<void> {
-		const { client, interaction } = ctx;
+		const { client } = ctx;
 		await ctx.deferReply();
 
 		const now = Date.now();
@@ -145,11 +89,8 @@ export default class statusCmds extends Command {
 		const totalMemory = totalmem();
 		const freeMemory = freemem();
 		const usedMemory = totalMemory - freeMemory;
-		const memoryPercentage = ((usedMemory / totalMemory) * 100);
 
-		const pingTime = Date.now() - interaction.createdTimestamp;
 		const nodes = [...client.aqua.nodeMap.values()];
-		const connectedNodes = nodes.filter((node) => node.connected).length;
 
 		const sortedNodes = [...nodes].sort((a, b) => {
 			if (a.connected !== b.connected) return a.connected ? -1 : 1;
@@ -164,17 +105,16 @@ export default class statusCmds extends Command {
 			playingPlayers = 0,
 		} = stats;
 
-
 		const guilds = client.cache.guilds.values() || [];
 		const userCount = guilds.reduce(
 			(total, guild) => total + (guild.memberCount || 0),
 			0,
 		);
 
-		const banner = client.me?.fetch()
+		// Use cached banner URL
+		const bannerURL = await getBannerURL(client);
 
 		const embed = new Embed()
-			.setImage((await banner).bannerURL({ size: 4096}) || "")
 			.setColor(0x100e09)
 			.setDescription(`Hello, I am **${client.me?.username}**, a music bot created by [\`mushroom0162\`](https://github.com/ToddyTheNoobDud). Here is my current status:`)
 			.addFields(
@@ -188,9 +128,13 @@ export default class statusCmds extends Command {
 					name: "\`🖥️\` System",
 					value: `\`💻\` Memory Usage: ${formatMemoryUsage(process.memoryUsage().rss)}\n\`🕛\`Uptime: <t:${Math.floor((Date.now() - process.uptime() * 1000) / 1000)}:R>\n\`🛜\` Ping: ${client.gateway.latency}`
 				}
-			)
+			);
+
+		// Only set image if banner URL exists
+		if (bannerURL) {
+			embed.setImage(bannerURL);
+		}
 
 		await ctx.editOrReply({ embeds: [embed] });
 	}
 }
-;
