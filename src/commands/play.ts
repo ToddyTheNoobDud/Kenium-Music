@@ -26,11 +26,6 @@ const MAX_URI_LENGTH = 98
 
 const _isUrl = (query = ''): boolean => URL_REGEX.test(String(query).trim())
 
-const _escapeMarkdown = (text = ''): string => {
-  if (!text) return ''
-  return String(text).replace(/[\\`*_{}\[\]()#+\-.!|]/g, '\\$&')
-}
-
 const _truncate = (text = '', maxLength: number): string => {
   const s = String(text)
   if (s.length <= maxLength) return s
@@ -38,8 +33,8 @@ const _truncate = (text = '', maxLength: number): string => {
 }
 
 const _formatChoice = (title: string, author?: string): string => {
-  const escapedTitle = _escapeMarkdown(_truncate(title, MAX_TITLE_LENGTH))
-  const authorSuffix = author ? ` - ${_truncate(_escapeMarkdown(author), MAX_AUTHOR_LENGTH)}` : ''
+  const escapedTitle = _truncate(title, MAX_TITLE_LENGTH)
+  const authorSuffix = author ? ` - ${_truncate(author, MAX_AUTHOR_LENGTH)}` : ''
   return _truncate(escapedTitle + authorSuffix, MAX_CHOICE_LENGTH)
 }
 
@@ -136,7 +131,7 @@ const _processAutocomplete = async (
     if (!recent.length) return resolve(interaction.respond([]))
 
     const choices = recent.map((track, index) => ({
-      name: `🕘 Recent ${index + 1}: ${_truncate(track.title, 79)}`,
+      name: `🕘 Recent ${index + 1}: ${_truncate(track.title, MAX_TITLE_LENGTH)}`,
       value: track.uri.slice(0, MAX_URI_LENGTH),
     }))
 
@@ -259,17 +254,17 @@ export default class Play extends Command {
 
       if (loadType === 'track' || loadType === 'search') {
         const track = tracks[0]
-        const info = track?.info || {}
+        const info = track?.info
         player.queue.add(track)
-        if (info.uri && info.title) {
+        if (info?.uri && info?.title) {
           recentTracks.add(userId, info.title, info.uri)
         }
 
-        const title = _escapeMarkdown(info.title || 'Track')
+        const title = _truncate(info?.title || 'Track', MAX_TITLE_LENGTH)
         const addedText = t?.player?.trackAdded
           ?.replace('{title}', title)
-          ?.replace('{uri}', info.uri || '#') ||
-          `Added [**${title}**](${info.uri || '#'}) to the queue.`
+          ?.replace('{uri}', info?.uri || '#') ||
+          `Added [**${title}**](${info?.uri || '#'}) to the queue.`
 
         embed.setDescription(addedText)
       } else if (loadType === 'playlist' && playlistInfo?.name) {
@@ -279,13 +274,13 @@ export default class Play extends Command {
 
         const tracksToCache = tracks.slice(0, 3)
         tracksToCache.forEach((track: any) => {
-          const info = track?.info || {}
-          if (info.uri && info.title) {
+          const info = track?.info
+          if (info?.uri && info?.title) {
             recentTracks.add(userId, info.title, info.uri)
           }
         })
 
-        const playlistName = _escapeMarkdown(playlistInfo.name)
+        const playlistName = _truncate(playlistInfo.name, MAX_TITLE_LENGTH)
         const firstTrack = tracks[0]
         const playlistText = t.player?.playlistAdded
           ?.replace('{name}', playlistName)

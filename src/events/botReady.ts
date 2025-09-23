@@ -8,7 +8,6 @@ const NICKNAME_SUFFIX = " [24/7]";
 const BATCH_SIZE = 10;
 const BATCH_DELAY = 500;
 
-// at module top (same module where you have botReady)
 let currentClient: any;
 
 const UNKNOWN_VOICE_STATE_CODE = 10065;
@@ -18,7 +17,6 @@ function isUnknownVoiceStateError(err: any) {
 	if (err.code === UNKNOWN_VOICE_STATE_CODE) return true;
 	const msg = String(err?.message ?? err ?? "");
 	if (msg.includes("Unknown Voice State 10065")) return true;
-	// be defensive: look for a voice-states route + 404
 	if (
 		msg.includes("/voice-states/") &&
 		(msg.includes("404") || msg.includes("Unknown"))

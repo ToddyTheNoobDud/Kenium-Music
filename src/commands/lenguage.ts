@@ -12,7 +12,8 @@ const LANGUAGE_NAMES = {
   bn: 'Bengali (BD)',
   ru: 'Russian (RU)',
   ja: 'Japanese (JP)',
-  tr: 'Turkish (TR)'
+  tr: 'Turkish (TR)',
+  th: 'Thai (TH)'
 } as const;
 
 const options = {
@@ -29,7 +30,8 @@ const options = {
       { name: 'Bengali (BD)', value: 'bn' },
       { name: 'Russian (RU)', value: 'ru' },
       { name: 'Japanese (JP)', value: 'ja' },
-      { name: 'Turkish (TR)', value: 'tr' }
+      { name: 'Turkish (TR)', value: 'tr' },
+      { name: 'Thai (TH)', value: 'th' }
     ],
   })
 };

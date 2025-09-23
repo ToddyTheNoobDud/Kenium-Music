@@ -7,12 +7,15 @@ import {
 	Middlewares,
 } from "seyfert";
 import { getContextLanguage } from "../utils/i18n";
+import { lru } from "tiny-lru";
 
 const TRACKS_PER_PAGE = 5;
 const MAX_DURATION_CACHE = 1000;
 const EPHEMERAL_FLAG = 64 | (32768 as const);
 
-const durationCache: Map<number, string> = new Map();
+// use tiny-lru for a bounded LRU cache instead of a plain Map
+const durationCache = lru(MAX_DURATION_CACHE);
+
 const queueViewState = new Map<string, { page: number; maxPages: number }>();
 
 function pad(n: number) {
@@ -31,7 +34,8 @@ function formatDuration(ms: number): string {
 		hours > 0
 			? `${hours}:${pad(minutes)}:${pad(seconds)}`
 			: `${minutes}:${pad(seconds)}`;
-	if (durationCache.size < MAX_DURATION_CACHE) durationCache.set(ms, formatted);
+	// tiny-lru will enforce max size and evict LRU items automatically
+	durationCache.set(ms, formatted);
 	return formatted;
 }
 
@@ -83,7 +87,7 @@ function sliceQueue(q: any, start: number, end: number): any[] {
 const createButtonRows = (
 	page: number,
 	maxPages: number,
-	opts: { paused: boolean; loop: boolean; shuffle: boolean },
+	opts: { paused: boolean; loop: boolean },
 	thele: any,
 ) => {
 	const isFirst = page <= 1;
@@ -132,13 +136,6 @@ const createButtonRows = (
 		{
 			type: 1,
 			components: [
-				{
-					type: 2,
-					style: opts.shuffle ? 3 : 2,
-					emoji: { name: "🔀" },
-					custom_id: "queue_shuffle",
-					label: opts.shuffle ? thele.queue.shuffleOn : thele.queue.shuffleOff,
-				},
 				{
 					type: 2,
 					style: opts.loop ? 3 : 2,
@@ -231,7 +228,6 @@ function createQueueContainer(player: any, page: number, thele: any): Container 
 	const buttonRows = createButtonRows(validPage, maxPages, {
 		paused: !!player?.paused,
 		loop: !!player?.loop,
-		shuffle: !!player?.shuffle,
 	}, thele);
 
 	components.push({ type: 14, divider: true, spacing: 2 }, ...buttonRows);
@@ -281,14 +277,11 @@ async function handleQueueNavigation(
 				if (player?.paused) await player.pause(false);
 				else await player.pause(true);
 				break;
-			case "queue_shuffle":
-				if (typeof player?.shuffle === "function") player.shuffle();
-				newPage = 1;
-				break;
 			case "queue_loop": {
 				const currentLoop = player?.loop || 0;
 				const newLoop = currentLoop === 0 ? 1 : 0;
 				if (typeof player?.setLoop === "function") player.setLoop(newLoop);
+				else player.loop = newLoop;
 				break;
 			}
 			case "queue_clear":
@@ -359,7 +352,6 @@ async function handleShowQueue(
 			"queue_last",
 			"queue_refresh",
 			"queue_playpause",
-			"queue_shuffle",
 			"queue_loop",
 			"queue_clear",
 		]) {
@@ -394,6 +386,7 @@ export default class QueueCommand extends Command {
 				});
 				return;
 			}
+
 			await handleShowQueue(ctx, player, thele);
 		} catch (error: any) {
 			if (error?.code === 10065) return;

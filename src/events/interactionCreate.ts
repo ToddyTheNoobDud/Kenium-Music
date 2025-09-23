@@ -83,7 +83,7 @@ export const createNowPlayingEmbed = (player, track, client) => {
 
   return new Container({
     components: [
-      { type: 10, content: `**${platform.emoji} Now Playing**` },
+      { type: 10, content: `**${platform.emoji} Now Playing** | **Queue size**: ${player?.queue?.length || 0}` },
       { type: 14, divider: true, spacing: 1 },
       {
         type: 9,
