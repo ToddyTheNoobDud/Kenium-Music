@@ -4,8 +4,10 @@ import {
 	Declare,
 	Embed,
 	Middlewares,
+	Container,
 } from "seyfert";
 import { getContextLanguage } from "../utils/i18n";
+import { getPlatform, truncateText, formatTime } from "../events/interactionCreate";
 
 @Declare({
 	name: "grab",
@@ -18,6 +20,35 @@ export default class Grab extends Command {
 		const minutes = Math.floor(totalSeconds / 60);
 		const seconds = totalSeconds % 60;
 		return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+	}
+
+	private createGrabNowPlayingUI(player: any, track: any, client: any) {
+		const { position = 0, volume = 0, loop } = player || {}
+		const { title = 'Unknown', uri = '', length = 0, requester } = track || {}
+		const platform = getPlatform(uri)
+		const volumeIcon = volume === 0 ? '🔇' : volume < 50 ? '🔈' : '🔊'
+		const loopIcon = loop === 'track' ? '🔂' : loop === 'queue' ? '🔁' : '▶️'
+		const truncatedTitle = truncateText(title)
+		const capitalizedTitle = truncatedTitle.replace(/\b\w/g, l => l.toUpperCase())
+
+		return new Container({
+			components: [
+				{ type: 10, content: `**${platform.emoji} Now Playing** | **Queue size**: ${player?.queue?.length || 0}` },
+				{ type: 14, divider: true, spacing: 1 },
+				{
+					type: 9,
+					components: [
+						{ type: 10, content: `## **[\`${capitalizedTitle}\`](${uri})**\n\`${formatTime(position)}\` / \`${formatTime(length)}\`` },
+						{ type: 10, content: `${volumeIcon} \`${volume}%\` ${loopIcon} Requester: \`${requester?.username || 'Unknown'}\`` }
+					],
+					accessory: {
+						type: 11,
+						media: { url: track?.info?.artworkUrl || client?.me?.avatarURL?.({ extension: 'webp' }) || '' }
+					}
+				}
+				// Removed the buttons section (type: 1 with button components)
+			]
+		})
 	}
 
 	public override async run(ctx: CommandContext) {
@@ -38,32 +69,11 @@ export default class Grab extends Command {
 			const song = player.current;
 			const guild = await ctx.guild();
 
-			const nowPlayingTitle = t.player?.nowPlaying?.replace('{title}', song.title) || `🎵 Now Playing: **${song.title}**`;
-			const listenHere = t.grab?.listenHere || "🔗 Listen Here";
-			const durationLabel = t.grab?.duration || "⏱️ Duration";
-			const authorLabel = t.grab?.author || "👤 Author";
-			const serverLabel = t.grab?.server || "🏠 Server";
-			const footerText = t?.grab?.footer || "Grabbed from your current session";
-
-			const trackEmbed = new Embed()
-				.setTitle(nowPlayingTitle)
-				.setDescription(`[${listenHere}](${song.uri})`)
-				.addFields(
-					{
-						name: durationLabel,
-						value: `\`${this.formatDuration(song.length)}\``,
-						inline: true,
-					},
-					{ name: authorLabel, value: `\`${song.author}\``, inline: true },
-					{ name: serverLabel, value: `\`${guild.name}\``, inline: true },
-				)
-				.setColor(0)
-				.setThumbnail(song.thumbnail)
-				.setFooter({ text: footerText })
-				.setTimestamp();
+			// Create the same UI as nowplaying but without buttons
+			const trackUI = this.createGrabNowPlayingUI(player, song, client);
 
 			try {
-				await ctx.author.write({ embeds: [trackEmbed] });
+				await ctx.author.write({ components: [trackUI], flags: 32768 });
 				return ctx.write({
 					content: t?.grab?.sentToDm || "✅ I've sent you the track details in your DMs.",
 					flags: 64,

@@ -113,7 +113,7 @@ export default class filtersss extends Command {
 
 			await ctx.editOrReply({
 				embeds: [
-					new Embed().setDescription(appliedText).setColor(0),
+					new Embed().setDescription(appliedText).setColor("#0x100e09"),
 				],
 				flags: 64,
 			});

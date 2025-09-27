@@ -22,7 +22,7 @@ export default class skipCmds extends Command {
 			player.stop();
 
 			await ctx.editOrReply({
-				embeds: [new Embed().setDescription(t.player?.stopped).setColor(0)],
+				embeds: [new Embed().setDescription(t.player?.stopped).setColor("#0x100e09")],
 				flags: 64,
 			});
 		} catch (error) {

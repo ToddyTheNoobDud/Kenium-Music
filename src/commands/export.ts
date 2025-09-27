@@ -81,7 +81,7 @@ export default class exportcmds extends Command {
 				.substring(2, 10)
 				.toUpperCase();
 
-			const warningHeader = `# DO NOT MODIFY THIS FILE / CAN GET CORRUPTED - Kenium 4.7.1 - BY mushroom0162\n# Export ID: ${randomId}\n# Generated: ${new Date().toISOString()}\n\n`;
+			const warningHeader = `# DO NOT MODIFY THIS FILE / CAN GET CORRUPTED - Kenium 4.8.0 - BY mushroom0162\n# Export ID: ${randomId}\n# Generated: ${new Date().toISOString()}\n\n`;
 			const queueString = warningHeader + queueLines.join("\n");
 
 			const platformsString = Array.from(platforms).sort().join("_");
@@ -95,7 +95,7 @@ export default class exportcmds extends Command {
 				embeds: [
 					new Embed()
 						.setDescription(t?.export?.success || "Exported the queue with URLs for import")
-						.setColor(0),
+						.setColor("#0x100e09"),
 				],
 				files: [attachment],
 				flags: 64,

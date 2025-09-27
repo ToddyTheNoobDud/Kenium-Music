@@ -25,7 +25,7 @@ export default class clearcmds extends Command {
 				await ctx.editOrReply({
 					embeds: [new Embed()
 						.setDescription(t.player?.queueEmpty || "The queue is empty")
-						.setColor(0)
+						.setColor("#0x100e09")
 					],
 					flags: 64,
 				});
@@ -37,7 +37,7 @@ export default class clearcmds extends Command {
 			await ctx.editOrReply({
 				embeds: [new Embed()
 					.setDescription(t.player?.queueCleared|| "Cleared the queue")
-					.setColor(0)
+					.setColor("#0x100e09")
 				],
 				flags: 64,
 			});

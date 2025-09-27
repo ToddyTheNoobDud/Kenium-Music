@@ -73,7 +73,7 @@ export const updatePresence = async clientInstance => {
     const userCount = guilds.reduce((total, guild) => total + (guild.memberCount || 0), 0)
 
     const activities = [
-      { name: '⚡ Kenium 4.7.1 ⚡', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
+      { name: '⚡ Kenium 4.8.0 ⚡', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
       { name: `${userCount} users`, type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
       { name: `${guilds.length} servers`, type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
       { name: 'Sponsor: https://links.triniumhost.com/', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' }
@@ -137,7 +137,7 @@ aqua.on('trackStart', async (player, track) => {
     const now = Date.now()
     if (now - lastVoiceStatusUpdate > VOICE_STATUS_THROTTLE) {
       lastVoiceStatusUpdate = now
-      const status = `⭐ ${truncateText(track.info?.title || track.title, VOICE_STATUS_LENGTH)} - Kenium 4.7.1`
+      const status = `⭐ ${truncateText(track.info?.title || track.title, VOICE_STATUS_LENGTH)} - Kenium 4.8.0`
       client.channels.setVoiceStatus(player.voiceChannel, status).catch(() => null)
     }
   } catch (error) {
@@ -183,8 +183,8 @@ aqua.on('nodeDisconnect', (_, reason) => {
   client.logger.info(`Node disconnected: ${reason}`)
 })
 
-process.once('SIGTERM', _functions.shutdown)
-process.once('SIGINT', _functions.shutdown)
+process.on('SIGINT', _functions.shutdown)
+process.on('SIGTERM', _functions.shutdown)
 
 client.start()
   .then(async () => {

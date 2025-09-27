@@ -26,7 +26,7 @@ export default class destroycmd extends Command {
 			await ctx.editOrReply({
 				embeds: [new Embed()
 					.setDescription(t.player?.destroyed || "Destroyed the music")
-					.setColor(0)
+					.setColor("#0x100e09")
 				],
 				flags: 64,
 			});

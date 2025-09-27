@@ -1,7 +1,7 @@
 import { Cooldown, CooldownType } from "@slipher/cooldown";
-import { Command, type CommandContext, Declare, Middlewares } from "seyfert";
-import { createNowPlayingEmbed } from "../events/interactionCreate";
+import { Command, type CommandContext, Declare, Middlewares, Container } from "seyfert";
 import { getContextLanguage } from "../utils/i18n";
+import { getPlatform, truncateText, formatTime } from "../events/interactionCreate";
 
 @Cooldown({
 	type: CooldownType.User,
@@ -14,6 +14,35 @@ import { getContextLanguage } from "../utils/i18n";
 })
 @Middlewares(["cooldown", "checkPlayer"])
 export default class nowplayngcmds extends Command {
+	private createNowPlayingUI(player: any, track: any, client: any) {
+		const { position = 0, volume = 0, loop } = player || {}
+		const { title = 'Unknown', uri = '', length = 0, requester } = track || {}
+		const platform = getPlatform(uri)
+		const volumeIcon = volume === 0 ? '🔇' : volume < 50 ? '🔈' : '🔊'
+		const loopIcon = loop === 'track' ? '🔂' : loop === 'queue' ? '🔁' : '▶️'
+		const truncatedTitle = truncateText(title)
+		const capitalizedTitle = truncatedTitle.replace(/\b\w/g, l => l.toUpperCase())
+
+		return new Container({
+			components: [
+				{ type: 10, content: `**${platform.emoji} Now Playing** | **Queue size**: ${player?.queue?.length || 0}` },
+				{ type: 14, divider: true, spacing: 1 },
+				{
+					type: 9,
+					components: [
+						{ type: 10, content: `## **[\`${capitalizedTitle}\`](${uri})**\n\`${formatTime(position)}\` / \`${formatTime(length)}\`` },
+						{ type: 10, content: `${volumeIcon} \`${volume}%\` ${loopIcon} Requester: \`${requester?.username || 'Unknown'}\`` }
+					],
+					accessory: {
+						type: 11,
+						media: { url: track?.info?.artworkUrl || client?.me?.avatarURL?.({ extension: 'webp' }) || '' }
+					}
+				}
+				// Removed the buttons section (type: 1 with button components)
+			]
+		})
+	}
+
 	public override async run(ctx: CommandContext): Promise<void> {
 		try {
 			const { client } = ctx;
@@ -31,8 +60,7 @@ export default class nowplayngcmds extends Command {
 				return;
 			}
 
-			const embed = createNowPlayingEmbed(player, track, ctx);
-
+			const embed = this.createNowPlayingUI(player, track, client);
 			await ctx.editOrReply({ components: [embed], flags: 64 | 32768 });
 		} catch (error: any) {
 			if (error?.code === 10065) return;

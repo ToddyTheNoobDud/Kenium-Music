@@ -32,7 +32,7 @@ export default class previoiusCmds extends Command {
 				embeds: [
 					new Embed()
 						.setDescription(player.playing ? t.player.previousPlayed : t.player.previousAdded || "Playing/added the previous track")
-						.setColor(0),
+						.setColor("#0x100e09"),
 				],
 				flags: 64,
 			});

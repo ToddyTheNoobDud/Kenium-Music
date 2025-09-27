@@ -38,7 +38,7 @@ export default class Volume extends Command {
 				return ctx.write({
 					embeds: [
 						new Embed()
-							.setColor(0)
+							.setColor("#0x100e09")
 							.setDescription(t.volume?.rangeError || "Use an integer between 0 and 200."),
 					],
 				});
@@ -47,7 +47,7 @@ export default class Volume extends Command {
 			player.setVolume(volume);
 
 			await ctx.editOrReply({
-				embeds: [new Embed().setDescription(t.player?.volumeSet).setColor(0)],
+				embeds: [new Embed().setDescription(t.player?.volumeSet).setColor("#0x100e09")],
 				flags: 64,
 			});
 		} catch (error) {

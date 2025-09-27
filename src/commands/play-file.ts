@@ -62,7 +62,7 @@ export default class PlayFile extends Command {
 						embeds: [
 							new Embed()
 								.setDescription(thele.player.noTrackFound)
-								.setColor(0),
+								.setColor("#0x100e09"),
 						],
 						flags: 64,
 					});
@@ -76,7 +76,7 @@ export default class PlayFile extends Command {
 				}
 				await ctx.editOrReply({
 					embeds: [
-						new Embed().setDescription(thele.player.fileAdded).setColor(0),
+						new Embed().setDescription(thele.player.fileAdded).setColor("#0x100e09"),
 					],
 					flags: 64,
 				});

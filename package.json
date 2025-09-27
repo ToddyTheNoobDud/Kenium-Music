@@ -2,8 +2,8 @@
 	"dependencies": {
 		"@slipher/cooldown": "^0.0.6",
 		"@types/bun": "^1.2.22",
-		"aqualink": "2.13.0",
-		"better-sqlite3": "^12.2.0",
+		"aqualink": "2.14.0",
+		"better-sqlite3": "^12.4.1",
 		"dotenv": "^17.2.2",
 		"fetch-cookie": "^3.1.0",
 		"seyfert": "^3.2.7-dev-17656890690.0",

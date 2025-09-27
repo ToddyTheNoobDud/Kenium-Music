@@ -34,7 +34,7 @@ export default class Seek extends Command {
 			player.seek(time * 1000);
 
 			await ctx.editOrReply({
-				embeds: [new Embed().setDescription(t.player.seeked).setColor(0)],
+				embeds: [new Embed().setDescription(t.player.seeked).setColor("#0x100e09")],
 				flags: 64,
 			});
 		} catch (error) {

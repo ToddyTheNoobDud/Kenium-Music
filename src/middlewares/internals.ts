@@ -13,7 +13,7 @@ export const checkPlayer = createMiddleware<void>(
 				flags: 64,
 				embeds: [
 					new Embed()
-						.setColor(0)
+						.setColor("#0x100e09")
 						.setDescription(
 							`**[❌ | No active \`player\` found.](https://discord.com/oauth2/authorize?client_id=1202232935311495209)**`,
 						),
@@ -55,7 +55,7 @@ export const checkTrack = createMiddleware<void>(
 				flags: 64,
 				embeds: [
 					new Embed()
-						.setColor(0)
+						.setColor("#0x100e09")
 						.setDescription(
 							`**[❌ | No active \`track\` found.](https://discord.com/oauth2/authorize?client_id=1202232935311495209)**`,
 						),

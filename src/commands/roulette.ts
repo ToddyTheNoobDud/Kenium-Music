@@ -11,15 +11,13 @@ export default class roulettecmds extends Command {
     public override async run(ctx: CommandContext) {
         try {
             const player = ctx.client.aqua.players.get(ctx.guildId!);
-            const lang = getContextLanguage(ctx);
-            const t = ctx.t.get(lang);
 
             const queue = player?.queue;
             if (!queue || queue.length === 0) {
                 return ctx.write({
                     embeds: [
                         new Embed()
-                            .setDescription(t?.roulette?.emptyQueue || '❌ The queue is empty!')
+                            .setDescription('❌ The queue is empty!')
                             .setColor(0xff0000)
                     ],
                     flags: 64,
@@ -52,13 +50,13 @@ export default class roulettecmds extends Command {
                 embeds: [
                     new Embed()
                         .setDescription(
-                            (t?.roulette?.playingRandom || '🎲 Playing random track: **{title}** by **{author}**')
+                            ('🎲 Playing random track: **{title}** by **{author}**')
                                 .replace('{title}', trackTitle)
                                 .replace('{author}', trackAuthor)
                         )
                         .setColor(0x00ff00)
                         .setFooter({
-                            text: `${t?.roulette?.queuePosition || 'Position'}: ${randomIndex + 1}/${queue.length + 1}`,
+                            text: `Position: ${randomIndex + 1}/${queue.length + 1}`,
                         })
                 ],
                 flags: 64,
@@ -71,7 +69,7 @@ export default class roulettecmds extends Command {
             return ctx.write({
                 embeds: [
                     new Embed()
-                        .setDescription(t?.roulette?.error || '❌ An error occurred while playing random track!')
+                        .setDescription('❌ An error occurred while playing random track!')
                         .setColor(0xff0000)
                 ],
                 flags: 64,

@@ -161,7 +161,7 @@ export default class importcmds extends Command {
 			const resultEmbed = new Embed()
 				.setTitle(completeTitle)
 				.setDescription(description)
-				.setColor(0)
+				.setColor("#0x100e09")
 				.setTimestamp();
 
 			await ctx.editOrReply({ embeds: [resultEmbed], flags: 64 });
