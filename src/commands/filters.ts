@@ -62,22 +62,22 @@ export default class filtersss extends Command {
 					player.filters.setKaraoke(true);
 					break;
 				case "timescale":
-					player.filters.setTimescale({ speed: 1.2, pitch: 1.2, rate: 1.0 });
+					player.filters.setTimescale(true, { speed: 1.2, pitch: 1.2, rate: 1.0 });
 					break;
 				case "tremolo":
-					player.filters.setTremolo({ depth: 0.5, frequency: 4 });
+					player.filters.setTremolo(true, { depth: 0.5, frequency: 4 });
 					break;
 				case "vibrato":
-					player.filters.setVibrato({ depth: 0.5, frequency: 4 });
+					player.filters.setVibrato(true, { depth: 0.5, frequency: 4 });
 					break;
 				case "rotation":
-					player.filters.setRotation({ rotationHz: 0.2 });
+					player.filters.setRotation(true, { rotationHz: 0.2 });
 					break;
 				case "distortion":
-					player.filters.setDistortion({ distortion: 0.5 });
+					player.filters.setDistortion(true, { distortion: 0.5 });
 					break;
 				case "channelMix":
-					player.filters.setChannelMix({
+					player.filters.setChannelMix(true, {
 						leftToLeft: 0.5,
 						leftToRight: 0.5,
 						rightToLeft: 0.5,
@@ -85,7 +85,7 @@ export default class filtersss extends Command {
 					});
 					break;
 				case "lowPass":
-					player.filters.setLowPass({ smoothing: 20 });
+					player.filters.setLowPass(true, { smoothing: 20 });
 					break;
 				case "bassboost":
 					player.filters.setBassboost(true);
