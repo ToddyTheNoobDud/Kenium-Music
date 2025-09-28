@@ -119,7 +119,8 @@ See how the project has been growing over time in stars — a good sign we're he
 | **Bengali (BN)** | 🇧🇩 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
 | **Spanish (ES)** | 🇪🇸 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
 | **French (FR)** | 🇫🇷 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
-| **Hindi (HI)** | 🇮🇳 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
+| **Turkish (TR)** | 🇹🇷 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
+| **Thai (TH)** | 🇹🇭 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
 
 </p>
 
