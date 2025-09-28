@@ -306,6 +306,8 @@ export default createEvent({
     const id = interaction.customId
     const parts = id.split('_')
 
+    if (id.startsWith('ignore_')) return
+
     if (parts.length > 1) {
       const isPlaylistButton = parts[0] === 'playlist' || ['play', 'shuffle', 'add', 'view', 'create'].includes(parts[0])
 
@@ -352,57 +354,59 @@ export default createEvent({
 
         const handler = playlistActionHandlers[action]
         if (!handler) {
-          return interaction.editOrReply({ content: '❌ This button action is not recognized.' }).catch(() => {})
+          return interaction.editOrReply({ content: '❌ This button action is not recognized.' }).catch(() => { })
         }
 
         try {
           const result = await handler(interaction, client, userId, playlistName, page)
-          if (result.message) await interaction.followup({ content: result.message }).catch(() => {})
+          if (result.message) await interaction.followup({ content: result.message }).catch(() => { })
         } catch (err) {
           console.debug('playlist handler failed', err)
-          await interaction.editOrReply({ content: '❌ An error occurred.' }).catch(() => {})
+          await interaction.editOrReply({ content: '❌ An error occurred.' }).catch(() => { })
         }
         return
       }
     }
 
-    const prefixCheck = ['queue', 'select', 'platform', 'lyrics', 'help', 'playlist'].some(p => id.startsWith(p))
-    if (prefixCheck) return
 
     try {
       await interaction.deferReply(64)
     } catch {
       return
     }
-
+    // only handle these buttons if there's an active player with a current track, so check for the customIds: skip, pause, resume, previous, volume_up, volume_down, so for that i coded something with ignore_ on the buttons, early checks on the first lines lmao...
     const player = client.aqua?.players?.get?.(interaction.guildId)
+    if (!player) {
+      return interaction.editOrReply({ content: '❌ There is no active music player in this server.' }).catch(() => { })
+    }
     if (!player?.current) {
-      return interaction.editOrReply({ content: '❌ There is no music playing right now.', flags: 64 }).catch(() => {})
+      return interaction.editOrReply({ content: '❌ There is no music playing right now.', flags: 64 }).catch(() => { })
     }
 
     const memberVoice = await interaction.member?.voice().catch(() => null)
     if (!memberVoice) {
-      return interaction.editOrReply({ content: '❌ You must be in a voice channel to use this button.' }).catch(() => {})
+      return interaction.editOrReply({ content: '❌ You must be in a voice channel to use this button.' }).catch(() => { })
     }
 
     if (interaction.user.id !== player.current.requester?.id) {
-      return interaction.editOrReply({ content: '❌ You are not allowed to use this button.' }).catch(() => {})
+      return interaction.editOrReply({ content: '❌ You are not allowed to use this button.' }).catch(() => { })
+
     }
 
     const handler = actionHandlers[id]
     if (!handler) {
-      return interaction.editOrReply({ content: '❌ This button action is not recognized.' }).catch(() => {})
+      return interaction.editOrReply({ content: '❌ This button action is not recognized.' }).catch(() => { })
     }
 
     try {
       const result = await handler(player)
-      await interaction.followup({ content: result.message }).catch(() => {})
+      await interaction.followup({ content: result.message }).catch(() => { })
       if (result.shouldUpdate && player.current) {
         queueMicrotask(() => updateNowPlayingEmbed(player, client))
       }
     } catch (err) {
       console.debug('action handler failed', err)
-      await interaction.editOrReply({ content: '❌ An error occurred. Please try again.' }).catch(() => {})
+      await interaction.editOrReply({ content: '❌ An error occurred. Please try again.' }).catch(() => { })
     }
   }
 })

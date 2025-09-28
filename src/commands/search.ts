@@ -249,7 +249,7 @@ export default class SearchCommand extends Command {
 
 			return {
 				type: 2,
-				custom_id: `platform_${key.toLowerCase()}`,
+				custom_id: `ignore_platform_${key.toLowerCase()}`,
 				label: platform.name,
 				...(emoji && { emoji }),
 				style: isActive ? 4 : platform.style,
@@ -263,7 +263,7 @@ export default class SearchCommand extends Command {
 			{ length: Math.min(count, CONFIG.MAX_RESULTS) },
 			(_, i) => ({
 				type: 2,
-				custom_id: `select_${i}`,
+				custom_id: `ignore_select_${i}`,
 				label: `${i + 1}`,
 				emoji: { name: "▶️" },
 				style: CONFIG.BUTTON_STYLE_SELECTION,
@@ -295,7 +295,7 @@ export default class SearchCommand extends Command {
 
 		// Handle track selection
 		for (let i = 0; i < Math.min(tracks.length, CONFIG.MAX_RESULTS); i++) {
-			collector.run(`select_${i}`, async (interaction: any) => {
+			collector.run(`ignore_select_${i}`, async (interaction: any) => {
 				try {
 					await interaction.deferUpdate();
 					await this.handleTrackSelection(interaction, player, tracks, thele);
@@ -308,7 +308,7 @@ export default class SearchCommand extends Command {
 		// Handle platform switching
 		Object.keys(MUSIC_PLATFORMS).forEach((key) => {
 			collector.run(
-				`platform_${key.toLowerCase()}`,
+				`ignore_platform_${key.toLowerCase()}`,
 				async (interaction: any) => {
 					try {
 						await interaction.deferUpdate();
@@ -351,7 +351,7 @@ export default class SearchCommand extends Command {
 
 		// Handle track selection for multi-platform
 		for (let i = 0; i < Math.min(tracks.length, CONFIG.MAX_RESULTS); i++) {
-			collector.run(`select_${i}`, async (interaction: any) => {
+			collector.run(`ignore_select_${i}`, async (interaction: any) => {
 				try {
 					await interaction.deferUpdate();
 					await this.handleTrackSelection(interaction, player, tracks, thele);

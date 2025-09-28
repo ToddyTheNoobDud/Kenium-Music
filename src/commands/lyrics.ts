@@ -74,7 +74,7 @@ function chunkContent(content: string, maxLength = MAX_EMBED_LENGTH) {
 function createNavigationRow(currentPage: number, totalPages: number, thele: any) {
 	const row = new ActionRow().addComponents(
 		new Button()
-			.setCustomId("lyrics_close")
+			.setCustomId("ignore_lyrics_close")
 			.setEmoji("🗑️")
 			.setStyle(ButtonStyle.Danger)
 			.setLabel(thele.common.close),
@@ -83,18 +83,18 @@ function createNavigationRow(currentPage: number, totalPages: number, thele: any
 	if (totalPages > 1) {
 		row.components.unshift(
 			new Button()
-				.setCustomId("lyrics_prev")
+				.setCustomId("ignore_lyrics_prev")
 				.setEmoji("◀️")
 				.setStyle(ButtonStyle.Primary)
 				.setLabel(thele.common.previous)
 				.setDisabled(currentPage === 0),
 			new Button()
-				.setCustomId("lyrics_page")
+				.setCustomId("ignore_lyrics_page")
 				.setLabel(`${currentPage + 1}/${totalPages}`)
 				.setStyle(ButtonStyle.Secondary)
 				.setDisabled(true),
 			new Button()
-				.setCustomId("lyrics_next")
+				.setCustomId("ignore_lyrics_next")
 				.setEmoji("▶️")
 				.setStyle(ButtonStyle.Primary)
 				.setLabel(thele.common.next)
@@ -144,7 +144,7 @@ async function displayLyricsUI(ctx: CommandContext, data: any, thele: any) {
 			idle: number;
 		});
 
-		collector.run("lyrics_prev", async (i) => {
+		collector.run("ignore_lyrics_prev", async (i) => {
 			if (currentPage > 0) {
 				currentPage--;
 				await i.update({
@@ -154,7 +154,7 @@ async function displayLyricsUI(ctx: CommandContext, data: any, thele: any) {
 			}
 		});
 
-		collector.run("lyrics_next", async (i) => {
+		collector.run("ignore_lyrics_next", async (i) => {
 			if (currentPage < totalPages - 1) {
 				currentPage++;
 				await i.update({
@@ -164,7 +164,7 @@ async function displayLyricsUI(ctx: CommandContext, data: any, thele: any) {
 			}
 		});
 
-		collector.run("lyrics_close", async (_i) => {
+		collector.run("ignore_lyrics_close", async (_i) => {
 			collector.stop();
 			await response.delete().catch(() => null);
 		});

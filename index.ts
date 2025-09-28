@@ -57,6 +57,7 @@ const _functions = {
   shutdown: async () => {
     if (presenceInterval) clearInterval(presenceInterval)
     await aqua.savePlayer().catch(() => null)
+  console.log('Shutting down, bye!')
     process.exit(0)
   }
 }
@@ -189,6 +190,7 @@ process.on('SIGTERM', _functions.shutdown)
 client.start()
   .then(async () => {
     await client.uploadCommands({ cachePath: './commands.json' }).catch(() => null)
+    aqua.loadPlayers().catch(() => null)
     client.cooldown = new CooldownManager(client as unknown as any)
   })
   .catch(error => {

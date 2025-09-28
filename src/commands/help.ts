@@ -55,7 +55,7 @@ export default class HelpCommand extends Command {
 			},
 		});
 
-		collector.run("help_prev", async (i) => {
+		collector.run("ignore_help_prev", async (i) => {
 			page = Math.max(page - 1, 0);
 			const updated = this._buildContainer(
 				commands,
@@ -67,7 +67,7 @@ export default class HelpCommand extends Command {
 			await i.update({ components: [updated] });
 		});
 
-		collector.run("help_next", async (i) => {
+		collector.run("ignore_help_next", async (i) => {
 			page = Math.min(page + 1, totalPages - 1);
 			const updated = this._buildContainer(
 				commands,
@@ -121,14 +121,14 @@ export default class HelpCommand extends Command {
 					components: [
 						{
 							type: 2,
-							custom_id: "help_prev",
+							custom_id: "ignore_help_prev",
 							label: "⬅️ Previous",
 							style: ButtonStyle.Secondary,
 							disabled: disabled || page === 0,
 						},
 						{
 							type: 2,
-							custom_id: "help_next",
+							custom_id: "ignore_help_next",
 							label: "Next ➡️",
 							style: ButtonStyle.Secondary,
 							disabled: disabled || page === totalPages - 1,

@@ -7,12 +7,13 @@ import {
 	Embed,
 	Middlewares,
 } from "seyfert";
+import { ButtonStyle, ComponentType } from "seyfert/lib/types";
 import { getContextLanguage } from "../utils/i18n";
 
 const CONFIG = {
 	GITHUB: {
 		API_URL:
-			"https://api.github.com/repos/ToddyTheNoobDud/Kenium-Music/commits?per_page=7",
+			"https://api.github.com/repos/ToddyTheNoobDud/Kenium-Music/commits?per_page=15",
 		REPO_URL: "https://github.com/ToddyTheNoobDud/Kenium-Music",
 		COMMITS_URL: "https://github.com/ToddyTheNoobDud/Kenium-Music/commits/main",
 		ISSUES_URL: "https://github.com/ToddyTheNoobDud/Kenium-Music/issues/new",
@@ -106,10 +107,55 @@ function formatCommitMessage(message: string): string {
 		: truncated;
 }
 
-function createChangelogEmbed(ctx: CommandContext, commits: any[], thele: any): Container {
-	// Pre-calculate timestamp to avoid repeated calls
-	const _now = Math.floor(Date.now() / 1000);
+function createChangelogPage(ctx: CommandContext, thele: any, currentPage: 'changelog' | 'commits' = 'changelog'): Container {
+	const description = CONFIG.BOT.CHANGELOG;
+	const navigationButtons = createNavigationButtons(currentPage, thele);
 
+	return new Container({
+		components: [
+			{
+				type: 10,
+				content: `### ${CONFIG.DISPLAY.EMOJIS.RELEASE} Kenium Music v${CONFIG.BOT.VERSION} - Changelog`,
+			},
+			{ type: 14, divider: true, spacing: 2 },
+			{
+				type: 9,
+				components: [
+					{
+						type: 10,
+						content: description,
+					},
+				],
+				accessory: {
+					type: 11,
+					media: { url: ctx.client.me.avatarURL({ extension: "webp" }) || "" },
+				},
+			},
+			{ type: 14, divider: true, spacing: 2 },
+			{
+				type: 1,
+				components: [
+					{
+						type: 2,
+						label: `${thele.invite.github}${CONFIG.DISPLAY.EMOJIS.REPO}`,
+						style: 5,
+						url: CONFIG.GITHUB.REPO_URL,
+					},
+					{
+						type: 2,
+						label: `${thele.invite.supportServer}${CONFIG.DISPLAY.EMOJIS.ISSUE}`,
+						style: 5,
+						url: CONFIG.GITHUB.ISSUES_URL,
+					},
+				],
+			},
+			{ type: 14, divider: true, spacing: 2 },
+			navigationButtons,
+		],
+	});
+}
+
+function createCommitsPage(ctx: CommandContext, commits: any[], thele: any, currentPage: 'changelog' | 'commits' = 'commits'): Container {
 	// Build commits string in single pass
 	const commitsText = commits
 		.map((commit) => {
@@ -124,17 +170,14 @@ function createChangelogEmbed(ctx: CommandContext, commits: any[], thele: any): 
 		})
 		.join("\n");
 
-	const description = `
-${CONFIG.BOT.CHANGELOG}
-
-## ${CONFIG.DISPLAY.EMOJIS.GITHUB} ${thele.common.loading}
-${commitsText}`;
+	const description = `## ${CONFIG.DISPLAY.EMOJIS.GITHUB} Recent Commits\n${commitsText}`;
+	const navigationButtons = createNavigationButtons(currentPage, thele);
 
 	return new Container({
 		components: [
 			{
 				type: 10,
-				content: `### ${CONFIG.DISPLAY.EMOJIS.RELEASE} Kenium Music v${CONFIG.BOT.VERSION}`,
+				content: `### ${CONFIG.DISPLAY.EMOJIS.RELEASE} Kenium Music v${CONFIG.BOT.VERSION} - Commits`,
 			},
 			{ type: 14, divider: true, spacing: 2 },
 			{
@@ -142,7 +185,7 @@ ${commitsText}`;
 				components: [
 					{
 						type: 10,
-						content: `${description}`,
+						content: description,
 					},
 				],
 				accessory: {
@@ -174,8 +217,34 @@ ${commitsText}`;
 					},
 				],
 			},
+			{ type: 14, divider: true, spacing: 2 },
+			navigationButtons,
 		],
 	});
+}
+
+function createNavigationButtons(currentPage: 'changelog' | 'commits', thele: any) {
+	return {
+		type: 1,
+		components: [
+			{
+				type: 2,
+				custom_id: "ignore_changelog_page",
+				label: thele.common.previous || "Changelog",
+				emoji: { name: "📝" },
+				style: currentPage === 'changelog' ? ButtonStyle.Primary : ButtonStyle.Secondary,
+				disabled: currentPage === 'changelog',
+			},
+			{
+				type: 2,
+				custom_id: "ignore_commits_page",
+				label: thele.common.next || "Commits",
+				emoji: { name: "📜" },
+				style: currentPage === 'commits' ? ButtonStyle.Primary : ButtonStyle.Secondary,
+				disabled: currentPage === 'commits',
+			},
+		],
+	};
 }
 
 @Declare({
@@ -191,6 +260,8 @@ ${commitsText}`;
 })
 @Middlewares(["cooldown"])
 export default class Changelog extends Command {
+	private activeCollectors = new WeakSet<any>();
+
 	public override async run(ctx: CommandContext): Promise<void> {
 		const lang = getContextLanguage(ctx);
 		const thele = ctx.t.get(lang);
@@ -199,12 +270,18 @@ export default class Changelog extends Command {
 			await ctx.deferReply(true);
 
 			const commits = await fetchCommits();
-			const embed = createChangelogEmbed(ctx, commits, thele);
 
-			await ctx.editOrReply({
-				components: [embed],
+			// Start with changelog page
+			const changelogContainer = createChangelogPage(ctx, thele, 'changelog');
+
+			const message = await ctx.editOrReply({
+				components: [changelogContainer],
 				flags: 64 | 32768,
-			});
+			}, true);
+
+			// Set up button interaction handler
+			this.setupNavigationHandler(message, ctx, commits, thele);
+
 		} catch (error) {
 			console.error("Changelog error:", error);
 
@@ -221,5 +298,55 @@ export default class Changelog extends Command {
 
 			await ctx.editOrReply({ embeds: [errorEmbed] });
 		}
+	}
+
+	private setupNavigationHandler(
+		message: any,
+		ctx: CommandContext,
+		commits: any[],
+		thele: any
+	): void {
+		const collector = message.createComponentCollector({
+			filter: (i: any) => i.user.id === ctx.interaction.user.id,
+			idle: 300000, // 5 minutes timeout
+			onStop: () => {
+				this.activeCollectors.delete(collector);
+				message
+					.edit({ components: [] })
+					.catch(() => {});
+			},
+		});
+
+		this.activeCollectors.add(collector);
+
+		// Handle changelog page button
+		collector.run("ignore_changelog_page", async (interaction: any) => {
+			try {
+				await interaction.deferUpdate();
+				const changelogContainer = createChangelogPage(interaction, thele, 'changelog');
+
+				await interaction.editOrReply({
+					components: [changelogContainer],
+					flags: 64 | 32768,
+				});
+			} catch (error) {
+				console.error("Navigation error:", error);
+			}
+		});
+
+		// Handle commits page button
+		collector.run("ignore_commits_page", async (interaction: any) => {
+			try {
+				await interaction.deferUpdate();
+				const commitsContainer = createCommitsPage(interaction, commits, thele, 'commits');
+
+				await interaction.editOrReply({
+					components: [commitsContainer],
+					flags: 64 | 32768,
+				});
+			} catch (error) {
+				console.error("Navigation error:", error);
+			}
+		});
 	}
 }
