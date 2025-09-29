@@ -95,7 +95,7 @@ export default createEvent({
 	},
 });
 
-const processAutoJoin = async (client) => {
+const processAutoJoin = async (client: any): Promise<void> => {
 	const guildsWithTwentyFourSeven = settingsCollection.find({
 		twentyFourSevenEnabled: true,
 	});
@@ -105,7 +105,7 @@ const processAutoJoin = async (client) => {
 		const batch = guildsWithTwentyFourSeven.slice(i, i + BATCH_SIZE);
 
 		await Promise.allSettled(
-			batch.map((settings) => processGuild(client, settings)),
+			batch.map((settings: any) => processGuild(client, settings)),
 		);
 
 		if (i + BATCH_SIZE < guildsWithTwentyFourSeven.length) {
@@ -114,7 +114,7 @@ const processAutoJoin = async (client) => {
 	}
 };
 
-const processGuild = async (client, settings) => {
+const processGuild = async (client: any, settings: any): Promise<void> => {
 	const { guildId, voiceChannelId, textChannelId, _id } = settings;
 
 	if (!voiceChannelId || !textChannelId) {
@@ -154,20 +154,31 @@ const processGuild = async (client, settings) => {
 			}),
 			updateNickname(guild),
 		]);
-	} catch (error) {
-		console.error(`[Music] Guild ${guildId}: ${error.message}`);
-		settingsCollection.delete({ _id });
+	} catch (error: any) {
+		// Log the error for debugging
+		console.error(`[Music] Guild ${guildId}: ${error?.message ?? error}`);
+
+		// If the error is an Unknown Voice State issue, perform the cleanup for that guild.
+		// For transient errors like "no nodes available" we should not delete the saved 24/7 settings.
+		if (isUnknownVoiceStateError(error)) {
+			await cleanup247ForGuild(guildId);
+			return;
+		}
+
+		// For other errors, we don't delete the settings as they might be transient
 	}
 };
 
-const updateNickname = async (guild) => {
+const updateNickname = async (guild: any): Promise<void> => {
 	const botMember = guild.members.me;
 	if (!botMember) return;
 
 	const currentNick = botMember.nickname || botMember.user.username;
-	if (currentNick.includes("[24/7]")) return;
+	if (currentNick.includes(NICKNAME_SUFFIX)) return;
 
 	try {
 		await botMember.edit({ nick: currentNick + NICKNAME_SUFFIX });
-	} catch {}
+	} catch (e) {
+		currentClient?.logger?.warn?.("[24/7] Failed to update nickname:", e);
+	}
 };
