@@ -138,7 +138,8 @@ export class PlayCommand extends SubCommand {
 		await ctx.deferReply(true);
 
 		try {
-			const player = ctx.client.aqua.createConnection({
+			let player = ctx.client.aqua.players.get(ctx.guildId!);
+			if (!player) player = ctx.client.aqua.createConnection({
 				guildId: ctx.guildId!,
 				voiceChannel: voiceState.channelId,
 				textChannel: ctx.channelId!,

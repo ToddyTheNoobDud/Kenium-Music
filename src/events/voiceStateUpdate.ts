@@ -3,30 +3,33 @@ import { lru } from 'tiny-lru'
 import { createEvent, Embed } from 'seyfert'
 import { getChannelIds, isTwentyFourSevenEnabled } from '../utils/db_helper'
 
-const NO_SONG_TIMEOUT = 600_000
-const REJOIN_DELAY = 5_000
-const CLEANUP_INTERVAL = 300_000
+const NO_SONG_TIMEOUT = 600000
+const REJOIN_DELAY = 5000
+const CLEANUP_INTERVAL = 300000
 const CACHE_SIZE = 1000
 const DEBOUNCE_DELAY = 50
 
+// State constants using bit flags for efficient transitions
 const STATE_IDLE = 1
 const STATE_PLAYING = 2
 const STATE_REJOINING = 4
 const STATE_DESTROYING = 8
 
+// Pre-computed transition matrix for O(1) lookups
 const TRANSITIONS = new Uint8Array(16)
 TRANSITIONS[STATE_IDLE] = STATE_PLAYING | STATE_DESTROYING
 TRANSITIONS[STATE_PLAYING] = STATE_IDLE | STATE_DESTROYING
 TRANSITIONS[STATE_REJOINING] = STATE_PLAYING | STATE_IDLE
 TRANSITIONS[STATE_DESTROYING] = STATE_REJOINING
 
-const _unrefTimeout = (fn, delay) => {
+// Optimized timer utilities
+const unrefTimeout = (fn: () => void, delay: number): NodeJS.Timeout => {
   const timer = setTimeout(fn, delay)
   timer.unref?.()
   return timer
 }
 
-const _clearTimer = (timer) => {
+const clearTimer = (timer: NodeJS.Timeout | null): null => {
   if (timer) {
     clearTimeout(timer)
     timer.unref?.()
@@ -34,17 +37,28 @@ const _clearTimer = (timer) => {
   return null
 }
 
-const _safeDelete = (msg) => msg?.delete?.().catch(() => {})
-
-const _getBotId = (client) => client.me?.id || client.user?.id || client.bot?.id
-
-const _getChannelPair = (guildId: string, voiceId?: string, textId?: string): [string, string] | null => {
-  if (voiceId && textId) return [voiceId, textId]
-  const ids = getChannelIds(guildId)
-  return ids?.voiceChannelId && ids?.textChannelId ? [ids.voiceChannelId, ids.textChannelId] : null
+const safeDelete = (msg: any): void => {
+  msg?.delete?.().catch(() => {})
 }
 
-const _fetchGuild = async (cache, client, guildId) => {
+const getBotId = (client: any): string | undefined => {
+  return client.me?.id || client.user?.id || client.bot?.id
+}
+
+const getChannelPair = (
+  guildId: string,
+  voiceId?: string,
+  textId?: string
+): [string, string] | null => {
+  if (voiceId && textId) return [voiceId, textId]
+
+  const ids = getChannelIds(guildId)
+  return ids?.voiceChannelId && ids?.textChannelId
+    ? [ids.voiceChannelId, ids.textChannelId]
+    : null
+}
+
+const fetchGuild = async (cache: any, client: any, guildId: string): Promise<any> => {
   let guild = cache.get(guildId)
   if (guild) return guild
 
@@ -63,7 +77,7 @@ const _fetchGuild = async (cache, client, guildId) => {
   }
 }
 
-const _getVoiceChannel = async (guild, channelId) => {
+const getVoiceChannel = async (guild: any, channelId: string): Promise<any> => {
   let channel = guild.channels?.get?.(channelId)
   if (channel) return channel.type === 2 ? channel : null
 
@@ -75,13 +89,16 @@ const _getVoiceChannel = async (guild, channelId) => {
   }
 }
 
-const _countHumans = (members) => {
+const countHumans = (members: any): number => {
   if (!members) return 0
+
   if (typeof members.filter === 'function') {
-    const filtered = members.filter(m => !m?.user?.bot)
+    const filtered = members.filter((m: any) => !m?.user?.bot)
     return filtered.size ?? filtered.length ?? 0
   }
-  return [...(members.values?.() ?? [])].filter(m => !m?.user?.bot).length
+
+  const membersArray = Array.from(members.values?.() ?? [])
+  return membersArray.filter((m: any) => !m?.user?.bot).length
 }
 
 interface FailureEntry {
@@ -90,25 +107,24 @@ interface FailureEntry {
 }
 
 class CircuitBreaker {
-  failures: Map<string, FailureEntry>
+  private readonly failures = new Map<string, FailureEntry>()
+  private readonly maxFailures = 3
+  private readonly baseResetTime = 30000
 
-  constructor() {
-    this.failures = new Map()
-  }
-
-  canAttempt(guildId) {
+  canAttempt(guildId: string): boolean {
     const entry = this.failures.get(guildId)
     if (!entry) return true
 
-    const resetTime = 30_000 << Math.min(entry.count - 3, 5)
+    const resetTime = this.baseResetTime << Math.min(entry.count - this.maxFailures, 5)
     if (Date.now() - entry.lastAttempt > resetTime) {
       this.failures.delete(guildId)
       return true
     }
-    return entry.count < 3
+
+    return entry.count < this.maxFailures
   }
 
-  recordResult(guildId, success) {
+  recordResult(guildId: string, success: boolean): void {
     if (success) {
       this.failures.delete(guildId)
     } else {
@@ -120,10 +136,12 @@ class CircuitBreaker {
     }
   }
 
-  cleanup() {
+  cleanup(): void {
     const now = Date.now()
+    const expireTime = 600000
+
     for (const [guildId, entry] of this.failures) {
-      if (now - entry.lastAttempt > 600_000) {
+      if (now - entry.lastAttempt > expireTime) {
         this.failures.delete(guildId)
       }
     }
@@ -136,78 +154,77 @@ interface PendingEntry {
 }
 
 class VoiceManager {
-  timeouts: Map<string, NodeJS.Timeout>
-  states: Map<string, number>
-  pending: Map<string, PendingEntry>
-  breaker: CircuitBreaker
-  guildCache: any
-  registered: WeakSet<any>
-  cleanupTimer: NodeJS.Timeout | null
+  private readonly timeouts = new Map<string, NodeJS.Timeout>()
+  private readonly states = new Map<string, number>()
+  private readonly pending = new Map<string, PendingEntry>()
+  private readonly breaker = new CircuitBreaker()
+  private readonly guildCache: any
+  private readonly registered = new WeakSet<any>()
+  private cleanupTimer: NodeJS.Timeout | null = null
 
   constructor() {
-    this.timeouts = new Map()
-    this.states = new Map()
-    this.pending = new Map()
-    this.breaker = new CircuitBreaker()
-    this.guildCache = lru(CACHE_SIZE, 60_000)
-    this.registered = new WeakSet()
-    this.cleanupTimer = null
-    this._setupCleanup()
+    this.guildCache = lru(CACHE_SIZE, 60000)
+    this.setupCleanup()
   }
 
-  _setupCleanup() {
-    this.cleanupTimer = _unrefTimeout(() => {
+  private setupCleanup(): void {
+    this.cleanupTimer = unrefTimeout(() => {
       this.breaker.cleanup()
-      this._setupCleanup()
+      this.setupCleanup()
     }, CLEANUP_INTERVAL)
   }
 
-  _setState(guildId, newState) {
+  private setState(guildId: string, newState: number): boolean {
     const current = this.states.get(guildId) ?? STATE_IDLE
     if (!(TRANSITIONS[current] & newState)) return false
+
     this.states.set(guildId, newState)
     return true
   }
 
-  _clearTimeout(guildId) {
+  private clearTimeout(guildId: string): void {
     const timer = this.timeouts.get(guildId)
     if (timer) {
-      this.timeouts.set(guildId, _clearTimer(timer))
+      this.timeouts.set(guildId, clearTimer(timer))
       this.timeouts.delete(guildId)
     }
   }
 
-  _setTimeout(guildId, fn, delay) {
-    this._clearTimeout(guildId)
-    this.timeouts.set(guildId, _unrefTimeout(() => {
+  private setTimeout(guildId: string, fn: () => void, delay: number): void {
+    this.clearTimeout(guildId)
+    this.timeouts.set(guildId, unrefTimeout(() => {
       this.timeouts.delete(guildId)
       fn()
     }, delay))
   }
 
-  register(client) {
+  register(client: any): void {
     if (this.registered.has(client)) return
     this.registered.add(client)
 
     const aqua = client.aqua
+
     const handlers = {
-      trackStart: (player) => {
-        this._setState(player.guildId, STATE_PLAYING)
-        this._clearTimeout(player.guildId)
+      trackStart: (player: any) => {
+        this.setState(player.guildId, STATE_PLAYING)
+        this.clearTimeout(player.guildId)
       },
-      queueEnd: (player) => {
-        this._setState(player.guildId, STATE_IDLE)
+
+      queueEnd: (player: any) => {
+        this.setState(player.guildId, STATE_IDLE)
         if (!isTwentyFourSevenEnabled(player.guildId)) {
-          this._scheduleDestroy(client, player)
+          this.scheduleDestroy(client, player)
         }
       },
-      playerDestroy: (player) => {
+
+      playerDestroy: (player: any) => {
         if (!player?.guildId) return
-        this._setState(player.guildId, STATE_DESTROYING)
-        this._clearTimeout(player.guildId)
+
+        this.setState(player.guildId, STATE_DESTROYING)
+        this.clearTimeout(player.guildId)
 
         if (isTwentyFourSevenEnabled(player.guildId)) {
-          this._scheduleRejoin(client, player.guildId, player.voiceChannel, player.textChannel)
+          this.scheduleRejoin(client, player.guildId, player.voiceChannel, player.textChannel)
         } else {
           this.states.delete(player.guildId)
         }
@@ -221,7 +238,7 @@ class VoiceManager {
     client._voiceHandlers = handlers
   }
 
-  unregister(client) {
+  unregister(client: any): void {
     if (!this.registered.has(client)) return
     this.registered.delete(client)
 
@@ -231,49 +248,59 @@ class VoiceManager {
       client.aqua.off('queueEnd', handlers.queueEnd)
       client.aqua.off('playerDestroy', handlers.playerDestroy)
     }
+
     delete client._voiceHandlers
   }
 
-  handleUpdate(event, client) {
+  handleUpdate(event: any, client: any): void {
     const guildId = event.guildId
     const existing = this.pending.get(guildId)
-    if (existing) existing.timer = _clearTimer(existing.timer)
+
+    if (existing) {
+      existing.timer = clearTimer(existing.timer)
+    }
 
     this.pending.set(guildId, {
       event,
-      timer: _unrefTimeout(() => {
+      timer: unrefTimeout(() => {
         this.pending.delete(guildId)
-        this._processUpdate(event, client)
+        this.processUpdate(event, client)
       }, DEBOUNCE_DELAY)
     })
   }
 
-  _processUpdate(event, client) {
+  private processUpdate(event: any, client: any): void {
     const { newState, oldState } = event
     const guildId = newState?.guildId
+
     if (!guildId || oldState?.channelId === newState?.channelId) return
 
     const player = client.aqua?.players?.get?.(guildId)
     const is247 = isTwentyFourSevenEnabled(guildId)
 
     if (!player && is247) {
-      const pair = _getChannelPair(guildId)
-      if (pair) this._scheduleRejoin(client, guildId, pair[0], pair[1])
+      const pair = getChannelPair(guildId)
+      if (pair) this.scheduleRejoin(client, guildId, pair[0], pair[1])
     }
 
     if (player && !is247) {
-      this._checkActivity(client, guildId, player)
+      this.checkActivity(client, guildId, player)
     }
   }
 
-  _scheduleRejoin(client, guildId, voiceId, textId) {
+  private scheduleRejoin(
+    client: any,
+    guildId: string,
+    voiceId: string,
+    textId: string
+  ): void {
     if (!this.breaker.canAttempt(guildId)) return
 
-    this._setTimeout(guildId, async () => {
-      if (!this._setState(guildId, STATE_REJOINING)) return
+    this.setTimeout(guildId, async () => {
+      if (!this.setState(guildId, STATE_REJOINING)) return
 
       try {
-        await this._rejoinChannel(client, guildId, voiceId, textId)
+        await this.rejoinChannel(client, guildId, voiceId, textId)
         this.breaker.recordResult(guildId, true)
       } catch {
         this.breaker.recordResult(guildId, false)
@@ -281,16 +308,21 @@ class VoiceManager {
     }, REJOIN_DELAY)
   }
 
-  async _rejoinChannel(client, guildId, voiceId, textId) {
+  private async rejoinChannel(
+    client: any,
+    guildId: string,
+    voiceId: string,
+    textId: string
+  ): Promise<void> {
     if (client.aqua?.players?.get?.(guildId)) return
 
-    const pair = _getChannelPair(guildId, voiceId, textId)
+    const pair = getChannelPair(guildId, voiceId, textId)
     if (!pair) return
 
-    const guild = await _fetchGuild(this.guildCache, client, guildId)
+    const guild = await fetchGuild(this.guildCache, client, guildId)
     if (!guild) return
 
-    const voiceChannel = await _getVoiceChannel(guild, pair[0])
+    const voiceChannel = await getVoiceChannel(guild, pair[0])
     if (!voiceChannel) return
 
     await client.aqua.createConnection({
@@ -301,11 +333,11 @@ class VoiceManager {
       defaultVolume: 65
     })
 
-    this._setState(guildId, STATE_IDLE)
+    this.setState(guildId, STATE_IDLE)
   }
 
-  _scheduleDestroy(client, player) {
-    this._setTimeout(player.guildId, async () => {
+  private scheduleDestroy(client: any, player: any): void {
+    this.setTimeout(player.guildId, async () => {
       const current = client.aqua?.players?.get?.(player.guildId)
       if (!current || current.playing || isTwentyFourSevenEnabled(player.guildId)) return
 
@@ -317,7 +349,7 @@ class VoiceManager {
       try {
         const msg = await client.messages.write(current.textChannel, { embeds: [embed] })
         if (msg) {
-          this._setTimeout(`msg_${msg.id}`, () => _safeDelete(msg), 10_000)
+          this.setTimeout(`msg_${msg.id}`, () => safeDelete(msg), 10000)
         }
       } catch {}
 
@@ -325,36 +357,36 @@ class VoiceManager {
     }, NO_SONG_TIMEOUT)
   }
 
-  async _checkActivity(client, guildId, player) {
+  private async checkActivity(client: any, guildId: string, player: any): Promise<void> {
     const voiceId = player?.voiceChannel
     if (!voiceId) return
 
-    const guild = await _fetchGuild(this.guildCache, client, guildId)
+    const guild = await fetchGuild(this.guildCache, client, guildId)
     if (!guild) return
 
-    const voiceChannel = await _getVoiceChannel(guild, voiceId)
+    const voiceChannel = await getVoiceChannel(guild, voiceId)
     if (!voiceChannel) return
 
     const members = voiceChannel.members || voiceChannel.voiceMembers || voiceChannel?.members?.cache
-    const humanCount = _countHumans(members)
+    const humanCount = countHumans(members)
 
     if (humanCount === 0) {
-      this._scheduleDestroy(client, player)
+      this.scheduleDestroy(client, player)
     } else {
-      this._clearTimeout(guildId)
+      this.clearTimeout(guildId)
     }
   }
 
-  cleanup() {
-    for (const timer of this.timeouts.values()) _clearTimer(timer)
-    for (const { timer } of this.pending.values()) _clearTimer(timer)
-    if (this.cleanupTimer) _clearTimer(this.cleanupTimer)
+  cleanup(): void {
+    for (const timer of this.timeouts.values()) clearTimer(timer)
+    for (const { timer } of this.pending.values()) clearTimer(timer)
+    if (this.cleanupTimer) clearTimer(this.cleanupTimer)
 
     this.timeouts.clear()
     this.pending.clear()
     this.states.clear()
     this.guildCache.clear()
-    this.breaker.failures.clear()
+    this.breaker.cleanup()
     this.cleanupTimer = null
   }
 }
@@ -366,10 +398,13 @@ export default createEvent({
   run: async ([newState, oldState], client) => {
     if (!client.aqua?.players) return
 
-    const botId = _getBotId(client)
-    if ((newState?.userId === botId) ||
-        (oldState?.userId === botId) ||
-        (oldState?.channelId === newState?.channelId)) return
+    const botId = getBotId(client)
+    const userLeft = newState?.userId === botId
+    const userJoined = oldState?.userId === botId
+    const sameChannel = oldState?.channelId === newState?.channelId
+
+    if (userLeft || userJoined || sameChannel) return
+
     manager.register(client)
     manager.handleUpdate({
       newState,

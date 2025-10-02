@@ -23,21 +23,29 @@ const CONFIG = {
 		DEVELOPER: "mushroom0162",
 		CHANGELOG: `
 ### Added
-- Added new translations: Hindi, French, Arabic, Bengali, Russian and Japanese
+- Added turkish and thai languages
+- Added handling for all playlists buttons
+- Added new buttons for changelog command and a 2nd page.
+- Added a new command: roulette
+- Added queue size on the trackStart UI
+- Remade the bot color, uses a new type of black theme
+
 
 ### Changed
 - Updated dependencies
-- Rewrited the db_helper for better performance and speed.
-- Misc optimizations for typescript
-- Reworked the status UI
+- Rewrited the button handling system, way faster than before because of internal changes
+- Rewrited the nowplaying and grab with the new ui.
+- Improved the playlists overall performance
+- Converted Kenium to use bun.sh
+
 
 ### Removed
-- Nothing
+- Shuffle button from queue
 
 ### Fixed
-- Fixed play cache sorting
-- Fixed some bugs related to database handling on languages
-- Fixed special texts not working.
+- Fixed some random bugs with checks
+- Fixed some texts escaping issues
+- Fixed the filters
 `,
 	},
 	COLORS: {

@@ -7,7 +7,19 @@ import { Aqua } from 'aqualink'
 import { createNowPlayingEmbed, truncateText } from './src/events/interactionCreate'
 import English from './src/languages/en'
 
-const { NODE_HOST, NODE_PASSWORD, NODE_PORT, NODE_NAME, NODE_SECURE } = process.env
+const {
+  NODE_HOST,
+  NODE_PASSWORD,
+  NODE_PORT,
+  NODE_NAME,
+  NODE_SECURE,
+  id
+} = process.env
+
+if (!NODE_HOST || !NODE_PASSWORD || !NODE_PORT || !id) {
+  console.error('Missing required environment variables')
+  process.exit(1)
+}
 
 const PRESENCE_UPDATE_INTERVAL = 60000
 const VOICE_STATUS_LENGTH = 30
@@ -16,12 +28,11 @@ const ERROR_LOG_THROTTLE = 5000
 
 const client = new Client({})
 
-
 const aqua = new Aqua(client, [{
   host: NODE_HOST,
   auth: NODE_PASSWORD,
-  port: NODE_PORT,
-  ssl: NODE_SECURE === 'true' ? true : false,
+  port: Number.parseInt(NODE_PORT, 10),
+  ssl: NODE_SECURE === 'true',
   name: NODE_NAME
 }], {
   defaultSearchPlatform: 'ytsearch',
@@ -34,56 +45,86 @@ const aqua = new Aqua(client, [{
   leaveOnEnd: false
 })
 
-aqua.init(process.env.CLIENT_ID)
+aqua.init(id)
 Object.assign(client, { aqua })
 aqua.on('debug', msg => client.logger.debug(msg))
 
-let presenceInterval = null
-let lastVoiceStatusUpdate = 0
-let lastErrorLog = 0
+const state = {
+  presenceInterval: null as NodeJS.Timeout | null,
+  lastVoiceStatusUpdate: 0,
+  lastErrorLog: 0,
+  cachedGuildCount: 0,
+  cachedUserCount: 0,
+  lastCountUpdate: 0
+}
 
-const _functions = {
-  createEmbed: (player, track) => createNowPlayingEmbed(player, track, client),
+const COUNT_CACHE_TTL = 30000
 
-  cleanupPlayer: player => {
-    const voiceChannel = player.voiceChannel || player._lastVoiceChannel
-    if (voiceChannel) {
-      client.channels.setVoiceStatus(voiceChannel, null).catch(() => null)
-    }
-    player.nowPlayingMessage?.delete().catch(() => null)
+const cleanupPlayer = (player: any): void => {
+  const voiceChannel = player.voiceChannel || player._lastVoiceChannel
+  if (voiceChannel) {
+    client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
+  }
+
+  const msg = player.nowPlayingMessage
+  if (msg?.delete) {
+    msg.delete().catch(() => {})
     player.nowPlayingMessage = null
-  },
-
-  shutdown: async () => {
-    if (presenceInterval) clearInterval(presenceInterval)
-    await aqua.savePlayer().catch(() => null)
-  console.log('Shutting down, bye!')
-    process.exit(0)
   }
 }
 
-export const updatePresence = async clientInstance => {
-  if (presenceInterval) clearInterval(presenceInterval)
+const shutdown = async (): Promise<void> => {
+  if (state.presenceInterval) {
+    clearInterval(state.presenceInterval)
+    state.presenceInterval = null
+  }
+
+  await aqua.savePlayer().catch(() => {})
+  process.exit(0)
+}
+
+export const updatePresence = (clientInstance: typeof client): void => {
+  if (state.presenceInterval) {
+    clearInterval(state.presenceInterval)
+  }
 
   let activityIndex = 0
 
-  presenceInterval = setInterval(() => {
+
+  const activities = [
+    { name: '⚡ Kenium 4.8.0 ⚡', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
+    { name: '{users} users', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
+    { name: '{guilds} servers', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
+    { name: 'Sponsor: https://links.triniumhost.com/', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' }
+  ]
+
+  state.presenceInterval = setInterval(() => {
     if (!clientInstance.me?.id) return
 
-    const guilds = clientInstance.cache.guilds?.values() || []
-    const userCount = guilds.reduce((total, guild) => total + (guild.memberCount || 0), 0)
+    const now = Date.now()
 
-    const activities = [
-      { name: '⚡ Kenium 4.8.0 ⚡', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
-      { name: `${userCount} users`, type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
-      { name: `${guilds.length} servers`, type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
-      { name: 'Sponsor: https://links.triniumhost.com/', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' }
-    ]
+
+    if (now - state.lastCountUpdate > COUNT_CACHE_TTL) {
+      const guilds = clientInstance.cache.guilds?.values() || []
+      state.cachedGuildCount = Array.isArray(guilds) ? guilds.length : 0
+      state.cachedUserCount = 0
+
+      for (const guild of guilds) {
+        state.cachedUserCount += guild.memberCount || 0
+      }
+
+      state.lastCountUpdate = now
+    }
+
+    const currentActivity = activities[activityIndex++ % activities.length]
+    const activityName = currentActivity.name
+      .replace('{users}', String(state.cachedUserCount))
+      .replace('{guilds}', String(state.cachedGuildCount))
 
     clientInstance.gateway?.setPresence({
-      activities: [activities[activityIndex++ % activities.length]],
-      status: 'idle',
-      since: Date.now(),
+      activities: [{ ...currentActivity, name: activityName }],
+      status: 'idle' as unknown as any,
+      since: now,
       afk: true
     })
   }, PRESENCE_UPDATE_INTERVAL)
@@ -91,7 +132,7 @@ export const updatePresence = async clientInstance => {
 
 client.setServices({
   langs: { default: 'en' },
-  middlewares: middlewares,
+  middlewares,
   cache: {
     disabledCache: {
       bans: true,
@@ -107,46 +148,41 @@ client.setServices({
   }
 })
 
-aqua.on('trackStart', async (player, track) => {
-  try {
-    const channel = client.cache.channels.get(player.textChannel)
-    if (!channel) return
+aqua.on('trackStart', async (player: any, track: any) => {
+  const channel = client.cache.channels.get(player.textChannel)
+  if (!channel) return
 
-    const embed = _functions.createEmbed(player, track)
+  const embed = createNowPlayingEmbed(player, track, client)
+  const messageOptions = {
+    components: [embed],
+    flags: 4096 | 32768
+  }
 
-    if (player.nowPlayingMessage?.id && player.nowPlayingMessage.edit) {
-      try {
-        await player.nowPlayingMessage.edit({
-          components: [embed],
-          flags: 4096 | 32768
-        })
-      } catch {
-        const message = await channel.client.messages.write(channel.id, {
-          components: [embed],
-          flags: 4096 | 32768
-        }).catch(() => null)
-        if (message) player.nowPlayingMessage = message
-      }
-    } else {
-      const message = await channel.client.messages.write(channel.id, {
-        components: [embed],
-        flags: 4096 | 32768
-      }).catch(() => null)
-      if (message) player.nowPlayingMessage = message
+  const msg = player.nowPlayingMessage
+  if (msg?.id && msg.edit) {
+    try {
+      await msg.edit(messageOptions)
+    } catch {
+      const newMsg = await channel.client.messages.write(channel.id, messageOptions).catch(() => null)
+      if (newMsg) player.nowPlayingMessage = newMsg
     }
+  } else {
+    const newMsg = await channel.client.messages.write(channel.id, messageOptions).catch(() => null)
+    if (newMsg) player.nowPlayingMessage = newMsg
+  }
 
-    const now = Date.now()
-    if (now - lastVoiceStatusUpdate > VOICE_STATUS_THROTTLE) {
-      lastVoiceStatusUpdate = now
-      const status = `⭐ ${truncateText(track.info?.title || track.title, VOICE_STATUS_LENGTH)} - Kenium 4.8.0`
-      client.channels.setVoiceStatus(player.voiceChannel, status).catch(() => null)
+  const now = Date.now()
+  if (now - state.lastVoiceStatusUpdate > VOICE_STATUS_THROTTLE) {
+    state.lastVoiceStatusUpdate = now
+    const title = track.info?.title || track.title
+    if (title) {
+      const status = `⭐ ${truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.8.0`
+      client.channels.setVoiceStatus(player.voiceChannel, status).catch(() => {})
     }
-  } catch (error) {
-    // Error handling removed console.log as requested
   }
 })
 
-aqua.on('trackError', async (player, track, payload) => {
+aqua.on('trackError', async (player: any, track: any, payload: any) => {
   const channel = client.cache.channels.get(player.textChannel)
   if (!channel) return
 
@@ -155,43 +191,43 @@ aqua.on('trackError', async (player, track, payload) => {
 
   await channel.client.messages.write(channel.id, {
     content: `❌ **${title}**: ${truncateText(errorMsg, 50)}`
-  }).catch(() => null)
+  }).catch(() => {})
 })
 
-aqua.on('playerDestroy', _functions.cleanupPlayer)
-aqua.on('queueEnd', _functions.cleanupPlayer)
-aqua.on('trackEnd', _functions.cleanupPlayer)
+const cleanupHandler = (player: any) => cleanupPlayer(player)
+aqua.on('playerDestroy', cleanupHandler)
+aqua.on('queueEnd', cleanupHandler)
+aqua.on('trackEnd', cleanupHandler)
 
-aqua.on('nodeError', (node, error) => {
+aqua.on('nodeError', (node: any, error: Error) => {
   const now = Date.now()
-  if (now - lastErrorLog > ERROR_LOG_THROTTLE) {
+  if (now - state.lastErrorLog > ERROR_LOG_THROTTLE) {
     client.logger.error(`Node [${node.name}] error: ${error.message}`)
-    lastErrorLog = now
+    state.lastErrorLog = now
   }
 })
-aqua.on('socketClosed', (player, payload) => {
+
+aqua.on('socketClosed', (player: any, payload: any) => {
   client.logger.debug(`Socket closed [${player.guildId}], code: ${payload.code}`)
 })
-aqua.on("debug", (message) => {
-  client.logger.debug(message)
-})
 
-aqua.on('nodeConnect', node => {
+aqua.on('nodeConnect', (node: any) => {
   client.logger.debug(`Node [${node.name}] connected, IsNodeSecure: ${node.ssl}`)
 })
 
-aqua.on('nodeDisconnect', (_, reason) => {
+aqua.on('nodeDisconnect', (_: any, reason: string) => {
   client.logger.info(`Node disconnected: ${reason}`)
 })
 
-process.on('SIGINT', _functions.shutdown)
-process.on('SIGTERM', _functions.shutdown)
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)
 
 client.start()
   .then(async () => {
-    await client.uploadCommands({ cachePath: './commands.json' }).catch(() => null)
-    aqua.loadPlayers().catch(() => null)
+    await client.uploadCommands({ cachePath: './commands.json' }).catch(() => {})
+    aqua.loadPlayers().catch(() => {})
     client.cooldown = new CooldownManager(client as unknown as any)
+    updatePresence(client)
   })
   .catch(error => {
     console.error('Failed to start client:', error)
@@ -205,6 +241,6 @@ declare module 'seyfert' {
   interface Client<Ready extends boolean> {
     cooldown: CooldownManager
   }
-  interface RegisteredMiddlewares extends ParseMiddlewares<typeof middlewares> { }
-  interface DefaultLocale extends ParseLocales<typeof English> { }
+  interface RegisteredMiddlewares extends ParseMiddlewares<typeof middlewares> {}
+  interface DefaultLocale extends ParseLocales<typeof English> {}
 }

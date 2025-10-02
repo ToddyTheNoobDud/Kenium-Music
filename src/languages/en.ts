@@ -481,13 +481,6 @@ Don't want more? [\`Click here to invite me\`](https://discord.com/oauth2/author
             duration: "Duration"
         }
     },
-    // Roulette command
-    roulette: {
-        emptyQueue: "❌ The queue is empty!",
-        playingRandom: "🎲 Playing random track: **{title}** by **{author}**",
-        queuePosition: "Position",
-        error: "❌ An error occurred while playing random track!"
-    },
     // Common words
     common: {
         enabled: "enabled",
