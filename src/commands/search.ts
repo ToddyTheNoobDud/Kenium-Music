@@ -368,7 +368,7 @@ export default class SearchCommand extends Command {
 		tracks: any[],
 		thele: any,
 	): Promise<void> {
-		const trackIndex = parseInt(i.customId.split("_")[1], 10);
+		const trackIndex = parseInt(i.customId.split("_")[2], 10);
 		const track = tracks[trackIndex];
 
 		if (track) {
@@ -396,7 +396,7 @@ export default class SearchCommand extends Command {
 		_message: any,
 		thele: any,
 	): Promise<void> {
-		const platformKey = i.customId.split("_")[1] as keyof typeof MUSIC_PLATFORMS;
+		const platformKey = i.customId.split("_")[2] as keyof typeof MUSIC_PLATFORMS;
 		const newPlatform = MUSIC_PLATFORMS[platformKey];
 		if (!newPlatform || newPlatform.name.toUpperCase() === currentPlatform.name.toUpperCase()) {
 			return;
