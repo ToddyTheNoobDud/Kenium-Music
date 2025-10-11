@@ -115,7 +115,7 @@ export default class statusCmds extends Command {
 		const bannerURL = await getBannerURL(client);
 
 		const embed = new Embed()
-			.setColor(0x100e09)
+			.setColor(0x532e68)
 			.setDescription(`Hello, I am **${client.me?.username}**, a music bot created by [\`mushroom0162\`](https://github.com/ToddyTheNoobDud). Here is my current status:`)
 			.addFields(
 				{

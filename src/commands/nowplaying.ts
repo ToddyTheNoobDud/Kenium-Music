@@ -1,7 +1,7 @@
 import { Cooldown, CooldownType } from "@slipher/cooldown";
 import { Command, type CommandContext, Declare, Middlewares, Container } from "seyfert";
 import { getContextLanguage } from "../utils/i18n";
-import { getPlatform, truncateText, formatTime } from "../events/interactionCreate";
+import { _functions } from "../events/interactionCreate";
 
 @Cooldown({
 	type: CooldownType.User,
@@ -17,10 +17,10 @@ export default class nowplayngcmds extends Command {
 	private createNowPlayingUI(player: any, track: any, client: any) {
 		const { position = 0, volume = 0, loop } = player || {}
 		const { title = 'Unknown', uri = '', length = 0, requester } = track || {}
-		const platform = getPlatform(uri)
+		const platform = _functions.getPlatform(uri)
 		const volumeIcon = volume === 0 ? '🔇' : volume < 50 ? '🔈' : '🔊'
 		const loopIcon = loop === 'track' ? '🔂' : loop === 'queue' ? '🔁' : '▶️'
-		const truncatedTitle = truncateText(title)
+		const truncatedTitle = _functions.truncateText(title)
 		const capitalizedTitle = truncatedTitle.replace(/\b\w/g, l => l.toUpperCase())
 
 		return new Container({
@@ -30,14 +30,15 @@ export default class nowplayngcmds extends Command {
 				{
 					type: 9,
 					components: [
-						{ type: 10, content: `## **[\`${capitalizedTitle}\`](${uri})**\n\`${formatTime(position)}\` / \`${formatTime(length)}\`` },
+						{ type: 10, content: `## **[\`${capitalizedTitle}\`](${uri})**\n\`${_functions.formatTime(position)}\` / \`${_functions.formatTime(length)}\`` },
 						{ type: 10, content: `${volumeIcon} \`${volume}%\` ${loopIcon} Requester: \`${requester?.username || 'Unknown'}\`` }
 					],
 					accessory: {
 						type: 11,
 						media: { url: track?.info?.artworkUrl || client?.me?.avatarURL?.({ extension: 'webp' }) || '' }
 					}
-				}
+				},
+				{ type: 14, divider: true, spacing: 2 },
 				// Removed the buttons section (type: 1 with button components)
 			]
 		})

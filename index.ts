@@ -4,27 +4,21 @@ import { Client, HttpClient, ParseClient, LimitedMemoryAdapter, ParseMiddlewares
 import { CooldownManager } from '@slipher/cooldown'
 import { middlewares } from './src/middlewares/middlewares'
 import { Aqua } from 'aqualink'
-import { createNowPlayingEmbed, truncateText } from './src/events/interactionCreate'
+import { createNowPlayingEmbed, _functions } from './src/events/interactionCreate'
 import English from './src/languages/en'
 
-const {
-  NODE_HOST,
-  NODE_PASSWORD,
-  NODE_PORT,
-  NODE_NAME,
-  NODE_SECURE,
-  id
-} = process.env
-
-if (!NODE_HOST || !NODE_PASSWORD || !NODE_PORT || !id) {
-  console.error('Missing required environment variables')
-  process.exit(1)
-}
-
+// Constants
 const PRESENCE_UPDATE_INTERVAL = 60000
 const VOICE_STATUS_LENGTH = 30
 const VOICE_STATUS_THROTTLE = 5000
 const ERROR_LOG_THROTTLE = 5000
+const COUNT_CACHE_TTL = 30000
+
+const { NODE_HOST, NODE_PASSWORD, NODE_PORT, NODE_NAME, NODE_SECURE, id } = process.env
+
+if (!NODE_HOST || !NODE_PASSWORD || !NODE_PORT || !id) {
+  process.exit(1)
+}
 
 const client = new Client({})
 
@@ -49,8 +43,9 @@ aqua.init(id)
 Object.assign(client, { aqua })
 aqua.on('debug', msg => client.logger.debug(msg))
 
+// State management
 const state = {
-  presenceInterval: null as NodeJS.Timeout | null,
+  presenceInterval: null,
   lastVoiceStatusUpdate: 0,
   lastErrorLog: 0,
   cachedGuildCount: 0,
@@ -58,13 +53,9 @@ const state = {
   lastCountUpdate: 0
 }
 
-const COUNT_CACHE_TTL = 30000
-
-const cleanupPlayer = (player: any): void => {
+const cleanupPlayer = (player) => {
   const voiceChannel = player.voiceChannel || player._lastVoiceChannel
-  if (voiceChannel) {
-    client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
-  }
+  if (voiceChannel) client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
 
   const msg = player.nowPlayingMessage
   if (msg?.delete) {
@@ -73,24 +64,19 @@ const cleanupPlayer = (player: any): void => {
   }
 }
 
-const shutdown = async (): Promise<void> => {
+const shutdown = async () => {
   if (state.presenceInterval) {
     clearInterval(state.presenceInterval)
     state.presenceInterval = null
   }
-
   await aqua.savePlayer().catch(() => {})
   process.exit(0)
 }
 
-export const updatePresence = (clientInstance: typeof client): void => {
-  if (state.presenceInterval) {
-    clearInterval(state.presenceInterval)
-  }
+export const updatePresence = (clientInstance) => {
+  if (state.presenceInterval) clearInterval(state.presenceInterval)
 
   let activityIndex = 0
-
-
   const activities = [
     { name: '⚡ Kenium 4.8.0 ⚡', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
     { name: '{users} users', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
@@ -98,21 +84,15 @@ export const updatePresence = (clientInstance: typeof client): void => {
     { name: 'Sponsor: https://links.triniumhost.com/', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' }
   ]
 
-  state.presenceInterval = setInterval(() => {
+  const timer = setInterval(() => {
     if (!clientInstance.me?.id) return
 
     const now = Date.now()
-
-
     if (now - state.lastCountUpdate > COUNT_CACHE_TTL) {
       const guilds = clientInstance.cache.guilds?.values() || []
       state.cachedGuildCount = Array.isArray(guilds) ? guilds.length : 0
       state.cachedUserCount = 0
-
-      for (const guild of guilds) {
-        state.cachedUserCount += guild.memberCount || 0
-      }
-
+      for (const guild of guilds) state.cachedUserCount += guild.memberCount || 0
       state.lastCountUpdate = now
     }
 
@@ -123,11 +103,14 @@ export const updatePresence = (clientInstance: typeof client): void => {
 
     clientInstance.gateway?.setPresence({
       activities: [{ ...currentActivity, name: activityName }],
-      status: 'idle' as unknown as any,
+      status: 'idle',
       since: now,
       afk: true
     })
   }, PRESENCE_UPDATE_INTERVAL)
+
+  if (timer.unref) timer.unref()
+  state.presenceInterval = timer
 }
 
 client.setServices({
@@ -142,23 +125,18 @@ client.setServices({
       presences: true,
       stageInstances: true
     },
-    adapter: new LimitedMemoryAdapter({
-      message: { expire: 5 * 60 * 1000, limit: 10 }
-    })
+    adapter: new LimitedMemoryAdapter({ message: { expire: 5 * 60 * 1000, limit: 10 } })
   }
 })
 
-aqua.on('trackStart', async (player: any, track: any) => {
+aqua.on('trackStart', async (player, track) => {
   const channel = client.cache.channels.get(player.textChannel)
   if (!channel) return
 
   const embed = createNowPlayingEmbed(player, track, client)
-  const messageOptions = {
-    components: [embed],
-    flags: 4096 | 32768
-  }
-
+  const messageOptions = { components: [embed], flags: 4096 | 32768 }
   const msg = player.nowPlayingMessage
+
   if (msg?.id && msg.edit) {
     try {
       await msg.edit(messageOptions)
@@ -176,30 +154,30 @@ aqua.on('trackStart', async (player: any, track: any) => {
     state.lastVoiceStatusUpdate = now
     const title = track.info?.title || track.title
     if (title) {
-      const status = `⭐ ${truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.8.0`
+      const status = `⭐ ${_functions.truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.8.0`
       client.channels.setVoiceStatus(player.voiceChannel, status).catch(() => {})
     }
   }
 })
 
-aqua.on('trackError', async (player: any, track: any, payload: any) => {
+aqua.on('trackError', async (player, track, payload) => {
   const channel = client.cache.channels.get(player.textChannel)
   if (!channel) return
 
   const errorMsg = payload.exception?.message || 'Playback failed'
-  const title = truncateText(track.info?.title || track.title, 25)
+  const title = _functions.truncateText(track.info?.title || track.title, 25)
 
   await channel.client.messages.write(channel.id, {
-    content: `❌ **${title}**: ${truncateText(errorMsg, 50)}`
+    content: `❌ **${title}**: ${_functions.truncateText(errorMsg, 50)}`
   }).catch(() => {})
 })
 
-const cleanupHandler = (player: any) => cleanupPlayer(player)
+const cleanupHandler = (player) => cleanupPlayer(player)
 aqua.on('playerDestroy', cleanupHandler)
 aqua.on('queueEnd', cleanupHandler)
 aqua.on('trackEnd', cleanupHandler)
 
-aqua.on('nodeError', (node: any, error: Error) => {
+aqua.on('nodeError', (node, error) => {
   const now = Date.now()
   if (now - state.lastErrorLog > ERROR_LOG_THROTTLE) {
     client.logger.error(`Node [${node.name}] error: ${error.message}`)
@@ -207,32 +185,29 @@ aqua.on('nodeError', (node: any, error: Error) => {
   }
 })
 
-aqua.on('socketClosed', (player: any, payload: any) => {
+aqua.on('socketClosed', (player, payload) => {
   client.logger.debug(`Socket closed [${player.guildId}], code: ${payload.code}`)
 })
 
-aqua.on('nodeConnect', (node: any) => {
+aqua.on('nodeConnect', (node) => {
   client.logger.debug(`Node [${node.name}] connected, IsNodeSecure: ${node.ssl}`)
 })
 
-aqua.on('nodeDisconnect', (_: any, reason: string) => {
+aqua.on('nodeDisconnect', (_, reason) => {
   client.logger.info(`Node disconnected: ${reason}`)
 })
 
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
-client.start()
-  .then(async () => {
-    await client.uploadCommands({ cachePath: './commands.json' }).catch(() => {})
-    aqua.loadPlayers().catch(() => {})
-    client.cooldown = new CooldownManager(client as unknown as any)
-    updatePresence(client)
-  })
-  .catch(error => {
-    console.error('Failed to start client:', error)
-    process.exit(1)
-  })
+client.start().then(async () => {
+  await client.uploadCommands({ cachePath: './commands.json' }).catch(() => {})
+  aqua.loadPlayers().catch(() => {})
+  client.cooldown = new CooldownManager(client as any)
+  updatePresence(client)
+}).catch(error => {
+  process.exit(1)
+})
 
 declare module 'seyfert' {
   interface UsingClient extends ParseClient<Client<true>>, ParseClient<HttpClient> {

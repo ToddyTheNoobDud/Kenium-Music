@@ -1,47 +1,39 @@
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-let Database: any;
+
+let Database
 
 if (process.isBun) {
-  const mod = require("bun:sqlite");
-  Database = mod.default || mod;
+  const mod = require('bun:sqlite')
+  Database = mod.default || mod
 } else {
-  Database = require("better-sqlite3");
+  Database = require('better-sqlite3')
 }
 
-interface SimpleDBOptions {
-  dbPath?: string
-  cacheSize?: number
-  maxCacheSize?: number
-  enableWAL?: boolean
-}
-
+// Constants
 const VALID_IDENTIFIER = /^[A-Za-z0-9_]+$/
 const JSON_PATH_COMPONENT = /^[A-Za-z0-9_]+$/
 const ID_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz'
 
-const ensureDir = (dir: string): void => {
+// Utility functions
+const ensureDir = (dir) => {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 
-const validateIdentifier = (name: string): void => {
-  if (!VALID_IDENTIFIER.test(name)) {
-    throw new Error(`Invalid identifier: ${name}`)
-  }
+const validateIdentifier = (name) => {
+  if (!VALID_IDENTIFIER.test(name)) throw new Error(`Invalid identifier: ${name}`)
 }
 
-const buildJsonPath = (key: string): string => {
+const buildJsonPath = (key) => {
   const parts = key.split('.')
   for (const part of parts) {
-    if (!JSON_PATH_COMPONENT.test(part)) {
-      throw new Error(`Invalid key: ${part}`)
-    }
+    if (!JSON_PATH_COMPONENT.test(part)) throw new Error(`Invalid key: ${part}`)
   }
   return `$.${parts.map(p => `"${p}"`).join('.')}`
 }
 
-const generateId = (): string => {
+const generateId = () => {
   const timestamp = Date.now().toString(36)
   let random = ''
   for (let i = 0; i < 6; i++) {
@@ -51,19 +43,19 @@ const generateId = (): string => {
 }
 
 class SQLiteCollection extends EventEmitter {
-  private readonly _db: any
-  private readonly _tableName: string
-  private readonly _quotedTable: string
-  private readonly _insertStmt?: any
-  private readonly _selectAllStmt?: any
-  private readonly _selectByIdStmt?: any
-  private readonly _updateStmt?: any
-  private readonly _deleteByIdStmt?: any
-  private readonly _countAllStmt?: any
-  private readonly _stmtCache = new Map<string, any>()
-  private readonly _cacheSize: number
+  private _db: any;
+  private _tableName: string;
+  private _quotedTable: string;
+  private _cacheSize: number;
+  private _stmtCache: Map<string, any>;
+  private _insertStmt: any;
+  private _selectAllStmt: any;
+  private _selectByIdStmt: any;
+  private _updateStmt: any;
+  private _deleteByIdStmt: any;
+  private _countAllStmt: any;
 
-  constructor(db: any, name: string, cacheSize = 50) {
+  constructor(db, name, cacheSize = 50) {
     super()
     validateIdentifier(name)
     this._db = db
@@ -71,6 +63,7 @@ class SQLiteCollection extends EventEmitter {
     validateIdentifier(this._tableName)
     this._quotedTable = `"${this._tableName}"`
     this._cacheSize = Math.max(0, cacheSize)
+    this._stmtCache = new Map()
 
     this._db.prepare(
       `CREATE TABLE IF NOT EXISTS ${this._quotedTable} (
@@ -93,7 +86,6 @@ class SQLiteCollection extends EventEmitter {
          updatedAt = excluded.updatedAt,
          createdAt = COALESCE((SELECT createdAt FROM ${this._quotedTable} WHERE _id = excluded._id), excluded.createdAt)`
     )
-
     this._selectAllStmt = this._db.prepare(`SELECT _id, doc FROM ${this._quotedTable}`)
     this._selectByIdStmt = this._db.prepare(`SELECT _id, doc FROM ${this._quotedTable} WHERE _id = ?`)
     this._updateStmt = this._db.prepare(`UPDATE ${this._quotedTable} SET doc = ?, updatedAt = ? WHERE _id = ?`)
@@ -101,38 +93,35 @@ class SQLiteCollection extends EventEmitter {
     this._countAllStmt = this._db.prepare(`SELECT COUNT(*) as c FROM ${this._quotedTable}`)
   }
 
-  private normalizeDoc(doc: any): any {
+  normalizeDoc(doc) {
     if (!doc || typeof doc !== 'object') doc = {}
     if (!doc._id) doc._id = generateId()
     return doc
   }
 
-  private parseRow(row: any): any | null {
+  parseRow(row) {
     try {
       const parsed = JSON.parse(row.doc)
-      if (typeof parsed === 'object' && parsed !== null) {
-        if (!parsed._id) parsed._id = row._id
+      if (typeof parsed === 'object' && parsed !== null && !parsed._id) {
+        parsed._id = row._id
       }
       return parsed
-    } catch (err) {
-      try {
-        console.error('[SimpleDB] Failed to parse JSON doc for id=', row && row._id, 'error=', err)
-      } catch {}
+    } catch {
       return null
     }
   }
 
-  private getSelectStmt(query: any): any | null {
+  getSelectStmt(query) {
     const keys = Object.keys(query)
     if (keys.length === 0) return this._selectAllStmt
 
     keys.sort()
     const cacheKey = keys.join('|')
     if (this._cacheSize > 0 && this._stmtCache.has(cacheKey)) {
-      return this._stmtCache.get(cacheKey)!
+      return this._stmtCache.get(cacheKey)
     }
 
-    const where: string[] = []
+    const where = []
     for (const key of keys) {
       const path = buildJsonPath(key)
       const val = query[key]
@@ -161,10 +150,10 @@ class SQLiteCollection extends EventEmitter {
     return stmt
   }
 
-  private buildParams(query: any): any[] {
+  buildParams(query) {
     const keys = Object.keys(query)
     keys.sort()
-    const params: any[] = []
+    const params = []
 
     for (const key of keys) {
       const val = query[key]
@@ -181,10 +170,9 @@ class SQLiteCollection extends EventEmitter {
     return params
   }
 
-  insert(docs: any | any[]): any {
+  insert(docs) {
     const arr = Array.isArray(docs) ? docs : [docs]
     const now = new Date().toISOString()
-
     const tx = this._db.transaction(() => {
       for (const item of arr) {
         const doc = this.normalizeDoc(item)
@@ -192,25 +180,17 @@ class SQLiteCollection extends EventEmitter {
       }
     })
 
-    try {
-      tx()
-    } catch (err) {
-      console.error('[SimpleDB] Insert transaction failed', err)
-      throw err
-    }
-
+    tx()
     this.emit('change', 'insert', arr)
     return arr.length === 1 ? arr[0] : arr
   }
 
-  find(query: any = {}): any[] {
+  find(query = {}) {
     const stmt = this.getSelectStmt(query)
     if (!stmt) return []
-
     const params = this.buildParams(query)
     const rows = stmt.all(...params)
-
-    const results: any[] = []
+    const results = []
     for (const row of rows) {
       const doc = this.parseRow(row)
       if (doc) results.push(doc)
@@ -218,27 +198,24 @@ class SQLiteCollection extends EventEmitter {
     return results
   }
 
-  findOne(query: any = {}): any {
+  findOne(query = {}) {
     const stmt = this.getSelectStmt(query)
     if (!stmt) return null
-
     const params = this.buildParams(query)
     const row = stmt.get(...params)
-
     return row ? this.parseRow(row) : null
   }
 
-  findById(id: string): any {
+  findById(id) {
     if (!id) return null
-    const row = this._selectByIdStmt.get(id) as any
+    const row = this._selectByIdStmt.get(id)
     return row ? this.parseRow(row) : null
   }
 
-  update(query: any, updates: any): number {
+  update(query, updates) {
     if (query?._id) {
       const existing = this.findById(query._id)
       if (!existing) return 0
-
       const merged = { ...existing, ...updates, _id: existing._id, updatedAt: new Date().toISOString() }
       this._updateStmt.run(JSON.stringify(merged), merged.updatedAt, merged._id)
       this.emit('change', 'update', merged)
@@ -256,18 +233,12 @@ class SQLiteCollection extends EventEmitter {
       }
     })
 
-    try {
-      tx()
-    } catch (err) {
-      console.error('[SimpleDB] Update transaction failed', err)
-      throw err
-    }
-
+    tx()
     this.emit('change', 'update', { query, updates })
     return matches.length
   }
 
-  delete(query: any): number {
+  delete(query) {
     if (!query || Object.keys(query).length === 0) return 0
 
     if (query._id) {
@@ -285,42 +256,43 @@ class SQLiteCollection extends EventEmitter {
       }
     })
 
-    try {
-      tx()
-    } catch (err) {
-      console.error('[SimpleDB] Delete transaction failed', err)
-      throw err
-    }
-
+    tx()
     this.emit('change', 'delete', { query })
     return matches.length
   }
 
-  count(query: any = {}): number {
+  count(query = {}) {
     if (!query || Object.keys(query).length === 0) {
-      const row = this._countAllStmt.get() as any
+      const row = this._countAllStmt.get()
       return row?.c || 0
     }
     return this.find(query).length
   }
 
-  getStats(): { documentCount: number } {
-    const row = this._countAllStmt.get() as any
+  getStats() {
+    const row = this._countAllStmt.get()
     return { documentCount: row?.c || 0 }
   }
 
-  destroy(): void {
+  destroy() {
     this._stmtCache.clear()
     this.removeAllListeners()
   }
 }
 
+interface SimpleDBOptions {
+  dbPath?: string;
+  cacheSize?: number;
+  maxCacheSize?: number;
+  enableWAL?: boolean;
+}
+
 class SimpleDB extends EventEmitter {
-  private readonly _db: any
-  private readonly _dbPath: string
-  private readonly _collections = new Map<string, SQLiteCollection>()
-  private readonly _cacheSize: number
-  private readonly _maxCacheSize: number
+  private _dbPath: string;
+  private _cacheSize: number;
+  private _maxCacheSize: number;
+  private _collections: Map<string, SQLiteCollection>;
+  private _db: any;
 
   constructor(options: SimpleDBOptions = {}) {
     super()
@@ -328,7 +300,7 @@ class SimpleDB extends EventEmitter {
     ensureDir(join(process.cwd(), 'db'))
     this._cacheSize = typeof options.cacheSize === 'number' ? Math.max(0, options.cacheSize) : 50
     this._maxCacheSize = typeof options.maxCacheSize === 'number' ? Math.max(0, options.maxCacheSize) : 100
-
+    this._collections = new Map()
     this._db = new Database(this._dbPath)
 
     if (process.isBun) {
@@ -336,36 +308,32 @@ class SimpleDB extends EventEmitter {
       this._db.run('PRAGMA synchronous = NORMAL')
       this._db.run('PRAGMA cache_size = 10000')
       this._db.run('PRAGMA temp_store = MEMORY')
-      this._db.run('PRAGMA mmap_size = 268435456') // 256MB
+      this._db.run('PRAGMA mmap_size = 268435456')
       this._db.run('PRAGMA foreign_keys = ON')
-      this._db.run('PRAGMA busy_timeout = 30000') // 30 seconds
+      this._db.run('PRAGMA busy_timeout = 30000')
     } else {
       this._db.pragma('journal_mode = WAL')
       this._db.pragma('synchronous = NORMAL')
       this._db.pragma('cache_size = 10000')
       this._db.pragma('temp_store = MEMORY')
-      this._db.pragma('mmap_size = 268435456') // 256MB
+      this._db.pragma('mmap_size = 268435456')
       this._db.pragma('foreign_keys = ON')
-      this._db.pragma('busy_timeout = 30000') // 30 seconds
+      this._db.pragma('busy_timeout = 30000')
     }
   }
 
-  collection(name: string): SQLiteCollection {
+  collection(name) {
     let col = this._collections.get(name)
     if (col) return col
-
     col = new SQLiteCollection(this._db, name, this._cacheSize)
-    col.on('change', (type: string, data: any) => this.emit('change', type, data))
+    col.on('change', (type, data) => this.emit('change', type, data))
     this._collections.set(name, col)
     return col
   }
 
-  close(): void {
-    for (const col of this._collections.values()) {
-      col.destroy()
-    }
+  close() {
+    for (const col of this._collections.values()) col.destroy()
     this._collections.clear()
-
     try {
       this._db.close()
     } catch {}

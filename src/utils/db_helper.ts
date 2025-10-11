@@ -2,28 +2,25 @@ import { SimpleDB } from './simpleDB'
 import { lru } from 'tiny-lru'
 
 export class DatabaseError extends Error {
-  constructor(message: string, public readonly cause?: Error) {
+  constructor(message, cause) {
     super(message)
     this.name = 'DatabaseError'
+    this.cause = cause
   }
 }
 
 export class ValidationError extends Error {
-  constructor(message: string, public readonly field: string, public readonly value: any) {
+  field = null
+  value = null
+  constructor(message, field, value) {
     super(message)
     this.name = 'ValidationError'
+    this.field = field
+    this.value = value
   }
 }
 
-interface GuildSettings {
-  _id: string
-  guildId: string
-  twentyFourSevenEnabled: boolean
-  voiceChannelId: string | null
-  textChannelId: string | null
-  lang: string
-}
-
+// Constants
 const COLLECTION_NAME = 'guildSettings'
 const CACHE_MAX = 1000
 const CACHE_TTL_MS = 600000
@@ -32,9 +29,9 @@ const GUILD_ID_RE = /^\d{17,20}$/
 const SUPPORTED_LANGS = new Set(['en', 'br', 'es', 'hi', 'fr', 'ar', 'bn', 'ru', 'ja', 'tr'])
 
 export const _functions = {
-  isValidGuildId: (guildId: string): boolean => GUILD_ID_RE.test(guildId),
-  isValidLang: (lang: string): boolean => SUPPORTED_LANGS.has(lang),
-  createDefaultSettings: (guildId: string): GuildSettings => ({
+  isValidGuildId: (guildId) => GUILD_ID_RE.test(guildId),
+  isValidLang: (lang) => SUPPORTED_LANGS.has(lang),
+  createDefaultSettings: (guildId) => ({
     _id: guildId,
     guildId,
     twentyFourSevenEnabled: false,
@@ -45,21 +42,21 @@ export const _functions = {
 }
 
 class DatabaseManager {
-  private static instance: DatabaseManager
-  private db: SimpleDB | null = null
-  private settingsCollection: any = null
-  readonly cache = lru<GuildSettings>(CACHE_MAX, CACHE_TTL_MS, false)
-  private updateQueue = new Map<string, Partial<GuildSettings>>()
-  private updateTimer: NodeJS.Timeout | null = null
+  static instance = null
+  db = null
+  settingsCollection = null
+  cache = lru(CACHE_MAX, CACHE_TTL_MS, false)
+  updateQueue = new Map()
+  updateTimer = null
 
-  private constructor() {}
-
-  static getInstance(): DatabaseManager {
-    if (!DatabaseManager.instance) DatabaseManager.instance = new DatabaseManager()
+  static getInstance() {
+    if (!DatabaseManager.instance) {
+      DatabaseManager.instance = new DatabaseManager()
+    }
     return DatabaseManager.instance
   }
 
-  private getDb(): SimpleDB {
+  getDb() {
     if (!this.db) {
       this.db = new SimpleDB({
         cacheSize: 100,
@@ -80,18 +77,22 @@ class DatabaseManager {
     return this.settingsCollection
   }
 
-  private scheduleBatch(): void {
+  scheduleBatch() {
     if (this.updateTimer) return
-    const t = setTimeout(() => {
+
+    const timer = setTimeout(() => {
       this.processBatchUpdates()
       this.updateTimer = null
-    }, BATCH_INTERVAL_MS) as NodeJS.Timeout
-    t.unref()
-    this.updateTimer = t
+    }, BATCH_INTERVAL_MS)
+
+    // Optimized: Unref properly
+    if (timer.unref) timer.unref()
+    this.updateTimer = timer
   }
 
-  private processBatchUpdates(): void {
+  processBatchUpdates() {
     if (this.updateQueue.size === 0) return
+
     const collection = this.getSettingsCollection()
     const tx = collection._db.transaction(() => {
       for (const [guildId, updates] of this.updateQueue) {
@@ -106,6 +107,7 @@ class DatabaseManager {
         }
       }
     })
+
     try {
       tx()
       this.updateQueue.clear()
@@ -118,13 +120,13 @@ class DatabaseManager {
     }
   }
 
-  queueUpdate(guildId: string, updates: Partial<GuildSettings>): void {
+  queueUpdate(guildId, updates) {
     const existing = this.updateQueue.get(guildId)
     this.updateQueue.set(guildId, existing ? { ...existing, ...updates } : updates)
     this.scheduleBatch()
   }
 
-  cleanup(): void {
+  cleanup() {
     if (this.updateTimer) {
       clearTimeout(this.updateTimer)
       this.updateTimer = null
@@ -141,28 +143,32 @@ class DatabaseManager {
 
 const dbManager = DatabaseManager.getInstance()
 
-export const getGuildSettings = (guildId: string): GuildSettings => {
+export const getGuildSettings = (guildId) => {
   if (!_functions.isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
+
   const cached = dbManager.cache.get(guildId)
   if (cached) return cached
+
   try {
     const collection = dbManager.getSettingsCollection()
     const found = collection.findOne({ guildId })
     const settings = found || _functions.createDefaultSettings(guildId)
+
     if (!found) collection.insert(settings)
     dbManager.cache.set(guildId, settings)
     return settings
   } catch (error) {
-    throw new DatabaseError('Failed to retrieve guild settings', error as Error)
+    throw new DatabaseError('Failed to retrieve guild settings', error)
   }
 }
 
-export const updateGuildSettings = (guildId: string, updates: Partial<GuildSettings>): void => {
+export const updateGuildSettings = (guildId, updates) => {
   if (!_functions.isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
+
   const cached = dbManager.cache.get(guildId)
   if (cached) {
     Object.assign(cached, updates)
@@ -171,7 +177,7 @@ export const updateGuildSettings = (guildId: string, updates: Partial<GuildSetti
   dbManager.queueUpdate(guildId, updates)
 }
 
-export const isTwentyFourSevenEnabled = (guildId: string): boolean => {
+export const isTwentyFourSevenEnabled = (guildId) => {
   try {
     const settings = getGuildSettings(guildId)
     return settings.twentyFourSevenEnabled === true
@@ -180,7 +186,7 @@ export const isTwentyFourSevenEnabled = (guildId: string): boolean => {
   }
 }
 
-export const getChannelIds = (guildId: string): { voiceChannelId: string; textChannelId: string } | null => {
+export const getChannelIds = (guildId) => {
   try {
     const settings = getGuildSettings(guildId)
     return settings.twentyFourSevenEnabled && settings.voiceChannelId && settings.textChannelId
@@ -191,7 +197,7 @@ export const getChannelIds = (guildId: string): { voiceChannelId: string; textCh
   }
 }
 
-export const setChannelIds = (guildId: string, voiceChannelId: string, textChannelId: string): void => {
+export const setChannelIds = (guildId, voiceChannelId, textChannelId) => {
   if (!_functions.isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
@@ -201,25 +207,26 @@ export const setChannelIds = (guildId: string, voiceChannelId: string, textChann
   updateGuildSettings(guildId, { voiceChannelId, textChannelId })
 }
 
-export const getGuildLang = (guildId: string): string => {
+export const getGuildLang = (guildId) => {
   try {
-    const settings = getGuildSettings(guildId)
-    return settings.lang || 'en'
+    return getGuildSettings(guildId).lang || 'en'
   } catch {
     return 'en'
   }
 }
 
-export const setGuildLang = (guildId: string, lang: string): boolean => {
+export const setGuildLang = (guildId, lang) => {
   if (!_functions.isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
   if (!_functions.isValidLang(lang)) {
     throw new ValidationError('Invalid language code', 'lang', lang)
   }
+
   try {
     const collection = dbManager.getSettingsCollection()
     const existing = collection.findOne({ guildId })
+
     if (existing) {
       collection.update({ guildId }, { lang })
       dbManager.cache.set(guildId, { ...existing, lang })
@@ -234,14 +241,9 @@ export const setGuildLang = (guildId: string, lang: string): boolean => {
   }
 }
 
-export const cleanupDatabase = (): void => {
-  dbManager.cleanup()
-}
+export const cleanupDatabase = () => dbManager.cleanup()
 
-export const getCacheStats = () => {
-  const cache: any = dbManager.cache as any
-  return {
-    size: cache.size,
-    evictions: cache.evictions
-  }
-}
+export const getCacheStats = () => ({
+  size: dbManager.cache.size,
+  evictions: dbManager.cache.evictions
+})
