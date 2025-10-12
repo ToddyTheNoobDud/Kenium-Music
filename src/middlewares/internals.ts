@@ -35,8 +35,19 @@ export const checkVoice = createMiddleware<void>(
 		if (
 			!memberVoice ||
 			(botvoice && botvoice.channelId !== memberVoice.channelId)
-		)
+		)	{
+			await context.editOrReply({
+				flags: 64,
+				embeds: [
+					new Embed()
+						.setColor("#0x100e09")
+						.setDescription(
+							`**[❌ | You must be in a voice channel.](https://discord.com/oauth2/authorize?client_id=1202232935311495209)**`,
+						),
+				],
+			});
 			return pass();
+		}
 
 		next();
 	},
