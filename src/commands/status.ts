@@ -27,6 +27,28 @@ const BANNER_CACHE = {
 	ttl: 7 * 24 * 60 * 60 * 1000, // 7 days
 };
 
+function formatDates(totalSeconds: number): string {
+	const SECONDS_IN_DAY = 86400;
+	const SECONDS_IN_HOUR = 3600;
+	const SECONDS_IN_MINUTE = 60;
+
+	if (totalSeconds >= SECONDS_IN_DAY) {
+		const days = Math.floor(totalSeconds / SECONDS_IN_DAY);
+		return `${days} day${days > 1 ? "s" : ""}`;
+	}
+	if (totalSeconds >= SECONDS_IN_HOUR) {
+		const hours = Math.floor(totalSeconds / SECONDS_IN_HOUR);
+		return `${hours} hour${hours > 1 ? "s" : ""}`;
+	}
+	if (totalSeconds >= SECONDS_IN_MINUTE) {
+		const minutes = Math.floor(totalSeconds / SECONDS_IN_MINUTE);
+		return `${minutes} minute${minutes > 1 ? "s" : ""}`;
+	}
+
+	const seconds = Math.floor(totalSeconds);
+	return `${seconds} second${seconds !== 1 ? "s" : ""}`;
+}
+
 
 function formatMemoryUsage(bytes: number): string {
 	const units = ["B", "KB", "MB", "GB", "TB"];
@@ -126,7 +148,7 @@ export default class statusCmds extends Command {
 				{
 					inline: true,
 					name: "\`🖥️\` System",
-					value: `\`💻\` Memory Usage: ${formatMemoryUsage(process.memoryUsage().rss)}\n\`🕛\`Uptime: <t:${Math.floor((Date.now() - process.uptime() * 1000) / 1000)}:R>\n\`🛜\` Ping: ${client.gateway.latency}`
+					value: `\`💻\` Memory Usage: ${formatMemoryUsage(process.memoryUsage().rss)}\n\`🕛\`Uptime: ${formatDates(process.uptime())}\n\`🛜\` Ping: ${client.gateway.latency}`
 				}
 			);
 
