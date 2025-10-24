@@ -6,9 +6,8 @@ import {
 	Embed,
 	Middlewares,
 } from "seyfert";
-import { getGuildSettings, updateGuildSettings } from "../utils/db_helper";
+import { updateGuildSettingsSync, getGuildSettings } from "../utils/db_helper"; // ✅ Use sync version for critical updates
 import { getContextLanguage } from "../utils/i18n";
-
 @Declare({
 	name: "247",
 	description: "Toggle 247 mode",
@@ -38,21 +37,24 @@ export default class twentcmds extends Command {
 			}
 
 			const guildId = ctx.guildId;
+
+			// ✅ OPTIMIZED: Get current state from cache
 			const guildSettings = getGuildSettings(guildId);
 
 			const currentEnabled = guildSettings.twentyFourSevenEnabled === true;
 			const newEnabled = !currentEnabled;
 
-			updateGuildSettings(guildId, {
+			// ✅ CRITICAL: Use synchronous update for 24/7 mode to prevent race conditions
+			const voiceChannelId = (await ctx.member.voice()).channelId;
+			updateGuildSettingsSync(guildId, {
 				twentyFourSevenEnabled: newEnabled,
-				voiceChannelId: newEnabled
-					? (await ctx.member.voice()).channelId
-					: null,
+				voiceChannelId: newEnabled ? voiceChannelId : null,
 				textChannelId: newEnabled ? ctx.channelId : null,
 			});
 
 			const botMember = await ctx.me();
 			let newNickname: string;
+
 			if (newEnabled) {
 				newNickname = botMember.nick
 					? `${botMember.nick} [24/7]`
@@ -62,8 +64,14 @@ export default class twentcmds extends Command {
 					botMember.nick?.replace(/ ?\[24\/7\]/, "") || botMember.user.username;
 			}
 
+			// ✅ Only update nickname if changed
 			if (botMember.nick !== newNickname) {
-				botMember.edit({ nick: newNickname });
+				try {
+					await botMember.edit({ nick: newNickname });
+				} catch (err) {
+					// Ignore permission errors
+					console.warn('Failed to update nickname:', err);
+				}
 			}
 
 			const action = newEnabled ? t.common?.enabled : t.common?.disabled;
@@ -79,7 +87,8 @@ export default class twentcmds extends Command {
 			await ctx.write({ embeds: [embed], flags: 64 });
 		} catch (error) {
 			console.error(error);
-			if (error.code === 10065) return;
+			// ✅ Proper error code check
+			if ((error as any)?.code === 10065) return;
 		}
 	}
 }

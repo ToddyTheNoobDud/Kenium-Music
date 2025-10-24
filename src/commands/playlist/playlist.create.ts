@@ -8,11 +8,10 @@ import {
 import { ButtonStyle } from "seyfert/lib/types";
 import { ICONS, LIMITS } from "../../shared/constants";
 import { createButtons, createEmbed } from "../../shared/utils";
-import { SimpleDB } from "../../utils/simpleDB";
+import { getPlaylistsCollection } from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
-const db = new SimpleDB();
-const playlistsCollection = db.collection("playlists");
+const playlistsCollection = getPlaylistsCollection();
 
 @Declare({
 	name: "create",
@@ -27,7 +26,6 @@ export class CreateCommand extends SubCommand {
 		const userId = ctx.author.id;
 		const t = getContextTranslations(ctx);
 
-		// Early validation
 		if (name.length > LIMITS.MAX_NAME_LENGTH) {
 			return ctx.write({
 				embeds: [
@@ -41,29 +39,30 @@ export class CreateCommand extends SubCommand {
 			});
 		}
 
-		// Single query for both checks
-		const userPlaylists = playlistsCollection.find({ userId });
+		const existing = playlistsCollection.findOne({ userId, name });
 
-		if (userPlaylists.length >= LIMITS.MAX_PLAYLISTS) {
-			return ctx.write({
-				embeds: [
-					createEmbed(
-						"error",
-						t.playlist?.create?.limitReached || "Playlist Limit Reached",
-						(t.playlist?.create?.maxPlaylists || "You can only have a maximum of {max} playlists.").replace("{max}", String(LIMITS.MAX_PLAYLISTS)),
-					),
-				],
-				flags: 64,
-			});
-		}
-
-		if (userPlaylists.some((p) => p.name === name)) {
+		if (existing) {
 			return ctx.write({
 				embeds: [
 					createEmbed(
 						"error",
 						t.playlist?.create?.exists || "Playlist Exists",
 						(t.playlist?.create?.alreadyExists || "A playlist named \"{name}\" already exists!").replace("{name}", name),
+					),
+				],
+				flags: 64,
+			});
+		}
+
+		const userPlaylistCount = playlistsCollection.count({ userId });
+
+		if (userPlaylistCount >= LIMITS.MAX_PLAYLISTS) {
+			return ctx.write({
+				embeds: [
+					createEmbed(
+						"error",
+						t.playlist?.create?.limitReached || "Playlist Limit Reached",
+						(t.playlist?.create?.maxPlaylists || "You can only have a maximum of {max} playlists.").replace("{max}", String(LIMITS.MAX_PLAYLISTS)),
 					),
 				],
 				flags: 64,

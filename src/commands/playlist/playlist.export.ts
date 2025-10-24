@@ -8,7 +8,7 @@ import {
 	SubCommand,
 } from "seyfert";
 import { handlePlaylistAutocomplete } from "../../shared/utils";
-import { SimpleDB } from "../../utils/simpleDB";
+import { getPlaylistsCollection } from "../../utils/db"; // ✅ Changed
 import { getContextTranslations } from "../../utils/i18n";
 
 // Modern Emoji Set
@@ -27,8 +27,7 @@ const COLORS = {
 	error: "#0x100e09",
 };
 
-const db = new SimpleDB();
-const playlistsCollection = db.collection("playlists");
+const playlistsCollection = getPlaylistsCollection(); // ✅ Changed
 
 function createEmbed(
 	type: string,

@@ -6,7 +6,7 @@ import { middlewares } from './src/middlewares/middlewares'
 import { Aqua } from 'aqualink'
 import { createNowPlayingEmbed, _functions } from './src/events/interactionCreate'
 import English from './src/languages/en'
-
+import { hasKaraokeSession, cleanupKaraokeSession } from './src/commands/karaoke'
 // Constants
 const PRESENCE_UPDATE_INTERVAL = 60000
 const VOICE_STATUS_LENGTH = 30
@@ -56,6 +56,7 @@ const state = {
 const cleanupPlayer = (player) => {
   const voiceChannel = player.voiceChannel || player._lastVoiceChannel
   if (voiceChannel) client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
+  if (hasKaraokeSession(player.guildId)) cleanupKaraokeSession(player.guildId)
 
   const msg = player.nowPlayingMessage
   if (msg?.delete) {

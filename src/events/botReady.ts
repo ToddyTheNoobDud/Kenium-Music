@@ -1,8 +1,7 @@
 import { createEvent } from 'seyfert'
 import { updatePresence } from '../../index'
-import { SimpleDB } from '../utils/simpleDB'
+import { getSettingsCollection } from '../utils/db'
 
-// Constants
 const NICKNAME_SUFFIX = ' [24/7]'
 const BATCH_SIZE = 10
 const BATCH_DELAY = 500
@@ -10,13 +9,11 @@ const UNKNOWN_VOICE_STATE_CODE = 10065
 const STARTUP_DELAY = 6000
 const VOICE_STATE_ROUTE_REGEX = /\/guilds\/(\d{17,20})\/voice-states/i
 
-const db = new SimpleDB()
-const settingsCollection = db.collection('guildSettings')
-let clientInstance = null
+const settingsCollection = getSettingsCollection()
+let clientInstance: any = null
 let errorHandlerRegistered = false
 
-// Utility functions
-const isUnknownVoiceStateError = (err) => {
+const isUnknownVoiceStateError = (err: any): boolean => {
   if (!err) return false
   if (err.code === UNKNOWN_VOICE_STATE_CODE) return true
 
@@ -25,7 +22,7 @@ const isUnknownVoiceStateError = (err) => {
     (errStr.includes('/voice-states/') && (errStr.includes('404') || errStr.includes('Unknown')))
 }
 
-const extractGuildIdFromError = (err) => {
+const extractGuildIdFromError = (err: any): string | null => {
   const candidates = [
     err?.path,
     err?.route,
@@ -44,10 +41,10 @@ const extractGuildIdFromError = (err) => {
   return null
 }
 
-const cleanup247ForGuild = async (guildId) => {
+const cleanup247ForGuild = async (guildId: string) => {
   try {
-    const docs = settingsCollection.find({ guildId })
-    if (!docs?.length) return
+    const docs = settingsCollection.findOne({ guildId })
+    if (!docs) return
 
     settingsCollection.delete({ guildId })
 
@@ -60,7 +57,7 @@ const cleanup247ForGuild = async (guildId) => {
   }
 }
 
-const processGuild = async (client, settings) => {
+const processGuild = async (client: any, settings: any) => {
   const { guildId, voiceChannelId, textChannelId, _id } = settings
 
   if (!voiceChannelId || !textChannelId) {
@@ -105,8 +102,11 @@ const processGuild = async (client, settings) => {
   }
 }
 
-const processAutoJoin = async (client) => {
-  const guildsWithTwentyFourSeven = settingsCollection.find({ twentyFourSevenEnabled: true })
+const processAutoJoin = async (client: any) => {
+  const guildsWithTwentyFourSeven = settingsCollection.find({
+    twentyFourSevenEnabled: true
+  })
+
   if (!guildsWithTwentyFourSeven?.length) return
 
   const totalGuilds = guildsWithTwentyFourSeven.length
@@ -114,13 +114,14 @@ const processAutoJoin = async (client) => {
   for (let i = 0; i < totalGuilds; i += BATCH_SIZE) {
     const batch = guildsWithTwentyFourSeven.slice(i, i + BATCH_SIZE)
     await Promise.allSettled(batch.map(settings => processGuild(client, settings)))
+
     if (i + BATCH_SIZE < totalGuilds) {
       await new Promise(resolve => setTimeout(resolve, BATCH_DELAY))
     }
   }
 }
 
-const updateNickname = async (guild) => {
+const updateNickname = async (guild: any) => {
   const botMember = guild.members?.me
   if (!botMember) return
 
@@ -129,10 +130,11 @@ const updateNickname = async (guild) => {
 
   try {
     await botMember.edit({ nick: currentNick + NICKNAME_SUFFIX })
-  } catch {}
+  } catch {
+  }
 }
 
-const setupGlobalErrorHandler = (client) => {
+const setupGlobalErrorHandler = (client: any) => {
   if (errorHandlerRegistered) return
   errorHandlerRegistered = true
 

@@ -7,7 +7,7 @@ import {
 	Options,
 	SubCommand,
 } from "seyfert";
-import { SimpleDB } from "../../utils/simpleDB";
+import { getPlaylistsCollection } from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
 // Modern Emoji Set
@@ -19,15 +19,13 @@ const ICONS = {
 	duration: "⏱️",
 };
 
-// Modern Black Theme Colors
 const COLORS = {
 	primary: "#0x100e09",
 	success: "#0x100e09",
 	error: "#0x100e09",
 };
 
-const db = new SimpleDB();
-const playlistsCollection = db.collection("playlists");
+const playlistsCollection = getPlaylistsCollection();
 
 function createEmbed(
 	type: string,
@@ -115,7 +113,6 @@ export class ImportCommand extends SubCommand {
 			const response = await fetch(attachment.url);
 			const data = await response.json();
 
-			// Validate the imported data
 			if (!data.name || !Array.isArray(data.tracks)) {
 				return await ctx.write({
 					embeds: [
@@ -129,10 +126,8 @@ export class ImportCommand extends SubCommand {
 				});
 			}
 
-			// Determine the playlist name
 			const playlistName = providedName || data.name;
 
-			// Check if playlist name already exists
 			const existing = playlistsCollection.findOne({
 				userId,
 				name: playlistName,

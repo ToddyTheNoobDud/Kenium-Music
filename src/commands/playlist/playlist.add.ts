@@ -16,11 +16,27 @@ import {
 	handlePlaylistAutocomplete,
 	handleTrackAutocomplete,
 } from "../../shared/utils";
-import { SimpleDB } from "../../utils/simpleDB";
+import { getPlaylistsCollection } from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
-const db = new SimpleDB();
-const playlistsCollection = db.collection("playlists");
+const playlistsCollection = getPlaylistsCollection();
+
+interface Track {
+	title: string;
+	uri: string;
+	author: string;
+	duration: number;
+	addedAt: string;
+	addedBy: string;
+	source: string;
+	identifier: string;
+	isStream: boolean;
+	isSeekable: boolean;
+	position: number;
+	artworkUrl: string | null;
+	isrc: string | null;
+	userId: string;
+}
 
 const TRACK_SEPARATOR_RE = /[,;\n]+/;
 const YOUTUBE_PLAYLIST_RE =
@@ -57,7 +73,7 @@ export const _functions = {
 		const l = Math.max(1, limit);
 		let i = 0;
 		const next = async () => {
-			for (;;) {
+			for (; ;) {
 				if (shouldStop?.()) return;
 				const idx = i++;
 				if (idx >= items.length) return;
@@ -101,6 +117,7 @@ export class AddCommand extends SubCommand {
 			userId,
 			name: playlistName,
 		});
+
 		if (!playlistDb) {
 			return ctx.write({
 				embeds: [
@@ -118,6 +135,7 @@ export class AddCommand extends SubCommand {
 			0,
 			LIMITS.MAX_TRACKS - playlistDb.tracks.length,
 		);
+
 		if (availableSlots === 0) {
 			return ctx.write({
 				embeds: [
@@ -157,7 +175,7 @@ export class AddCommand extends SubCommand {
 			if (!uri || toAdd.length >= availableSlots) return;
 			const canonical = _functions.canonicalizeUri(uri);
 			if (existingCanonical.has(canonical)) return;
-			toAdd.push({
+			const newTrack: Track = {
 				title: track.info.title || "Unknown",
 				uri,
 				author: track.info.author || "Unknown",
@@ -165,7 +183,15 @@ export class AddCommand extends SubCommand {
 				addedAt: timestamp,
 				addedBy: userId,
 				source: determineSource(uri),
-			});
+				identifier: track.info.identifier || uri,
+				isStream: track.info.isStream || false,
+				isSeekable: track.info.isSeekable || true,
+				position: track.info.position || 0,
+				artworkUrl: track.info.artworkUrl || null,
+				isrc: track.info.isrc || null,
+				userId
+			};
+			toAdd.push(newTrack);
 			existingCanonical.add(canonical);
 		};
 
@@ -224,17 +250,19 @@ export class AddCommand extends SubCommand {
 
 			if (toAdd.length > availableSlots) toAdd.length = availableSlots;
 
-			for (const t of toAdd) {
-				playlistDb.tracks.push(t);
-			}
+			playlistDb.tracks.push(...toAdd);
 			playlistDb.lastModified = timestamp;
+			playlistDb.totalDuration = (playlistDb.totalDuration || 0) +
+				toAdd.reduce((sum, t) => sum + (t.duration || 0), 0);
 
-			const addedDuration = toAdd.reduce((s, t) => s + (t.duration || 0), 0);
-			playlistDb.totalDuration =
-				(playlistDb.totalDuration || 0) + addedDuration;
 
-			playlistsCollection.update({ _id: playlistDb._id }, playlistDb);
-
+			playlistsCollection.updateAtomic({ _id: playlistDb._id }, {
+				$set: {
+					tracks: playlistDb.tracks,
+					lastModified: timestamp,
+					totalDuration: playlistDb.totalDuration
+				}
+			});
 			const primary = toAdd[0];
 			const embed = createEmbed(
 				"success",

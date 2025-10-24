@@ -1,8 +1,8 @@
-import { SimpleDB } from './simpleDB'
+import { getDatabase } from './db'
 import { lru } from 'tiny-lru'
 
 export class DatabaseError extends Error {
-  constructor(message, cause) {
+  constructor(message: string, cause?: unknown) {
     super(message)
     this.name = 'DatabaseError'
     this.cause = cause
@@ -10,28 +10,29 @@ export class DatabaseError extends Error {
 }
 
 export class ValidationError extends Error {
-  field = null
-  value = null
-  constructor(message, field, value) {
+  field: string | null = null
+  value: unknown = null
+  constructor(message: string, field?: string, value?: unknown) {
     super(message)
     this.name = 'ValidationError'
-    this.field = field
+    this.field = field || null
     this.value = value
   }
 }
 
-// Constants
+
 const COLLECTION_NAME = 'guildSettings'
 const CACHE_MAX = 1000
 const CACHE_TTL_MS = 600000
-const BATCH_INTERVAL_MS = 1000
+const BATCH_INTERVAL_MS = 100
+const MAX_BATCH_SIZE = 50
 const GUILD_ID_RE = /^\d{17,20}$/
 const SUPPORTED_LANGS = new Set(['en', 'br', 'es', 'hi', 'fr', 'ar', 'bn', 'ru', 'ja', 'tr', 'th'])
 
 export const _functions = {
-  isValidGuildId: (guildId) => GUILD_ID_RE.test(guildId),
-  isValidLang: (lang) => SUPPORTED_LANGS.has(lang),
-  createDefaultSettings: (guildId) => ({
+  isValidGuildId: (guildId: string) => GUILD_ID_RE.test(guildId),
+  isValidLang: (lang: string) => SUPPORTED_LANGS.has(lang),
+  createDefaultSettings: (guildId: string) => ({
     _id: guildId,
     guildId,
     twentyFourSevenEnabled: false,
@@ -42,37 +43,33 @@ export const _functions = {
 }
 
 class DatabaseManager {
-  static instance = null
-  db = null
-  settingsCollection = null
+  static instance: DatabaseManager | null = null
+  settingsCollection: any = null
   cache = lru(CACHE_MAX, CACHE_TTL_MS, false)
-  updateQueue = new Map()
-  updateTimer = null
+  updateQueue = new Map<string, any>()
+  updateTimer: NodeJS.Timeout | null = null
+  isProcessing = false
 
-  static getInstance() {
+  static getInstance(): DatabaseManager {
     if (!DatabaseManager.instance) {
       DatabaseManager.instance = new DatabaseManager()
     }
     return DatabaseManager.instance
   }
 
-  getDb() {
-    if (!this.db) {
-      this.db = new SimpleDB({
-        cacheSize: 100,
-        maxCacheSize: 200,
-        enableWAL: true
-      })
-    }
-    return this.db
-  }
-
   getSettingsCollection() {
     if (!this.settingsCollection) {
-      this.settingsCollection = this.getDb().collection(COLLECTION_NAME)
-      this.settingsCollection._db.prepare(
-        `CREATE INDEX IF NOT EXISTS idx_guild_settings_guild ON col_${COLLECTION_NAME}(json_extract(doc, '$.guildId'))`
-      ).run()
+      const db = getDatabase()
+      this.settingsCollection = db.collection(COLLECTION_NAME)
+
+      try {
+        this.settingsCollection._db.prepare(
+          `CREATE INDEX IF NOT EXISTS idx_guild_settings_guild
+           ON "col_${COLLECTION_NAME}"(json_extract(doc, '$.guildId'))`
+        ).run()
+      } catch (err) {
+        console.warn('Failed to create guild settings index:', err)
+      }
     }
     return this.settingsCollection
   }
@@ -85,65 +82,86 @@ class DatabaseManager {
       this.updateTimer = null
     }, BATCH_INTERVAL_MS)
 
-    // Optimized: Unref properly
     if (timer.unref) timer.unref()
     this.updateTimer = timer
   }
 
   processBatchUpdates() {
     if (this.updateQueue.size === 0) return
+    if (this.isProcessing) {
+      this.scheduleBatch()
+      return
+    }
 
+    this.isProcessing = true
     const collection = this.getSettingsCollection()
-    const tx = collection._db.transaction(() => {
-      for (const [guildId, updates] of this.updateQueue) {
-        const existing = collection.findOne({ guildId })
-        if (existing) {
-          collection.update({ guildId }, updates)
-          this.cache.set(guildId, { ...existing, ...updates })
-        } else {
-          const doc = { ..._functions.createDefaultSettings(guildId), ...updates }
-          collection.insert(doc)
-          this.cache.set(guildId, doc)
-        }
-      }
-    })
+    const updates = Array.from(this.updateQueue.entries())
+
+    const chunks = []
+    for (let i = 0; i < updates.length; i += MAX_BATCH_SIZE) {
+      chunks.push(updates.slice(i, i + MAX_BATCH_SIZE))
+    }
 
     try {
-      tx()
+      for (const chunk of chunks) {
+        const tx = collection._db.transaction(() => {
+          for (const [guildId, updateData] of chunk) {
+            const existing = collection.findOne({ guildId })
+
+            if (existing) {
+              collection.updateAtomic(
+                { _id: existing._id },
+                { $set: updateData }
+              )
+              this.cache.set(guildId, { ...existing, ...updateData })
+            } else {
+              const doc = { ..._functions.createDefaultSettings(guildId), ...updateData }
+              collection.insert(doc)
+              this.cache.set(guildId, doc)
+            }
+          }
+        })
+
+        tx()
+      }
+
       this.updateQueue.clear()
-    } catch {
+    } catch (error) {
+      console.error('Batch update failed:', error)
       if (this.updateTimer) {
         clearTimeout(this.updateTimer)
         this.updateTimer = null
       }
-      this.scheduleBatch()
+      setTimeout(() => this.scheduleBatch(), BATCH_INTERVAL_MS * 2)
+    } finally {
+      this.isProcessing = false
     }
   }
 
-  queueUpdate(guildId, updates) {
+  queueUpdate(guildId: string, updates: any) {
     const existing = this.updateQueue.get(guildId)
     this.updateQueue.set(guildId, existing ? { ...existing, ...updates } : updates)
     this.scheduleBatch()
   }
 
-  cleanup() {
+  flushUpdates() {
     if (this.updateTimer) {
       clearTimeout(this.updateTimer)
       this.updateTimer = null
-      this.processBatchUpdates()
     }
+    this.processBatchUpdates()
+  }
+
+  cleanup() {
+    this.flushUpdates()
     this.cache.clear()
-    if (this.db) {
-      this.db.close()
-      this.db = null
-    }
     this.settingsCollection = null
   }
 }
 
 const dbManager = DatabaseManager.getInstance()
 
-export const getGuildSettings = (guildId) => {
+export const getGuildSettings = (guildId: string) => {
   if (!_functions.isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
@@ -164,7 +182,7 @@ export const getGuildSettings = (guildId) => {
   }
 }
 
-export const updateGuildSettings = (guildId, updates) => {
+export const updateGuildSettings = (guildId: string, updates: any) => {
   if (!_functions.isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
@@ -177,7 +195,32 @@ export const updateGuildSettings = (guildId, updates) => {
   dbManager.queueUpdate(guildId, updates)
 }
 
-export const isTwentyFourSevenEnabled = (guildId) => {
+export const updateGuildSettingsSync = (guildId: string, updates: any) => {
+  if (!_functions.isValidGuildId(guildId)) {
+    throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
+  }
+
+  try {
+    const collection = dbManager.getSettingsCollection()
+    const existing = collection.findOne({ guildId })
+
+    if (existing) {
+      collection.updateAtomic({ _id: existing._id }, { $set: updates })
+      const updated = { ...existing, ...updates }
+      dbManager.cache.set(guildId, updated)
+      return updated
+    } else {
+      const doc = { ..._functions.createDefaultSettings(guildId), ...updates }
+      collection.insert(doc)
+      dbManager.cache.set(guildId, doc)
+      return doc
+    }
+  } catch (error) {
+    throw new DatabaseError('Failed to update guild settings', error)
+  }
+}
+
+export const isTwentyFourSevenEnabled = (guildId: string): boolean => {
   try {
     const settings = getGuildSettings(guildId)
     return settings.twentyFourSevenEnabled === true
@@ -186,7 +229,7 @@ export const isTwentyFourSevenEnabled = (guildId) => {
   }
 }
 
-export const getChannelIds = (guildId) => {
+export const getChannelIds = (guildId: string) => {
   try {
     const settings = getGuildSettings(guildId)
     return settings.twentyFourSevenEnabled && settings.voiceChannelId && settings.textChannelId
@@ -197,17 +240,17 @@ export const getChannelIds = (guildId) => {
   }
 }
 
-export const setChannelIds = (guildId, voiceChannelId, textChannelId) => {
+export const setChannelIds = (guildId: string, voiceChannelId: string, textChannelId: string) => {
   if (!_functions.isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
   if (!voiceChannelId || !textChannelId) {
     throw new ValidationError('Channel IDs are required', 'channelIds', { voiceChannelId, textChannelId })
   }
-  updateGuildSettings(guildId, { voiceChannelId, textChannelId })
+  updateGuildSettingsSync(guildId, { voiceChannelId, textChannelId })
 }
 
-export const getGuildLang = (guildId) => {
+export const getGuildLang = (guildId: string): string => {
   try {
     return getGuildSettings(guildId).lang || 'en'
   } catch {
@@ -215,7 +258,7 @@ export const getGuildLang = (guildId) => {
   }
 }
 
-export const setGuildLang = (guildId, lang) => {
+export const setGuildLang = (guildId: string, lang: string): boolean => {
   if (!_functions.isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
@@ -228,7 +271,7 @@ export const setGuildLang = (guildId, lang) => {
     const existing = collection.findOne({ guildId })
 
     if (existing) {
-      collection.update({ guildId }, { lang })
+      collection.updateAtomic({ _id: existing._id }, { $set: { lang } })
       dbManager.cache.set(guildId, { ...existing, lang })
     } else {
       const doc = { ..._functions.createDefaultSettings(guildId), lang }
@@ -245,5 +288,6 @@ export const cleanupDatabase = () => dbManager.cleanup()
 
 export const getCacheStats = () => ({
   size: dbManager.cache.size,
-  evictions: dbManager.cache.evictions
+  evictions: dbManager.cache.evictions,
+  pendingUpdates: dbManager.updateQueue.size
 })

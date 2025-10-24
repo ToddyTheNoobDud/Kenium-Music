@@ -189,6 +189,7 @@ async function fetchMusixmatchLyrics(query: string, currentTrack: any) {
 	if (!searchQuery) return null;
 
 	try {
+		console.log(searchQuery);
 		const result = await MUSIXMATCH.findLyrics(searchQuery);
 		if (!result?.text && !result?.lines) return null;
 

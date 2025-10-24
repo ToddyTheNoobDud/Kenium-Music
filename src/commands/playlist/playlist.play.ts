@@ -15,17 +15,14 @@ import {
 	handlePlaylistAutocomplete,
 	shuffleArray,
 } from "../../shared/utils";
-import { SimpleDB } from "../../utils/simpleDB";
 import { getContextTranslations } from "../../utils/i18n";
-
-const db = new SimpleDB();
-const playlistsCollection = db.collection("playlists");
-
+import { getPlaylistsCollection } from "../../utils/db";
+const playlistsCollection = getPlaylistsCollection();
 const MAX_RESOLVE_CONCURRENCY = 6;
 
 async function _resolveTrack(aqua: any, uri: string, requester: any) {
 	if (!uri) return null;
-	const res = await aqua.resolve({ query: uri, requester });
+	const res = await aqua.resolve({ query: uri, requester: requester });
 	if (
 		res &&
 		res.loadType !== "LOAD_FAILED" &&
@@ -154,7 +151,7 @@ export class PlayCommand extends SubCommand {
 				tracks,
 				MAX_RESOLVE_CONCURRENCY,
 				async (t) => {
-					const tr = await _resolveTrack(ctx.client.aqua, t.uri, ctx.author);
+					const tr = await _resolveTrack(ctx.client.aqua, t.uri, ctx.interaction.user);
 					return tr;
 				},
 			);
@@ -172,15 +169,10 @@ export class PlayCommand extends SubCommand {
 			}
 
 			for (const t of loadedTracks) player.queue.add(t);
-
-			playlistsCollection.update(
-				{ _id: playlistDb._id },
-				{
-					...playlistDb,
-					playCount: (playlistDb.playCount || 0) + 1,
-					lastPlayedAt: Date.now(),
-				},
-			);
+			playlistsCollection.updateAtomic({ _id: playlistDb._id }, {
+				$inc: { playCount: 1 },
+				$set: { lastPlayedAt: Date.now() }
+			});
 
 			if (!player.playing && !player.paused && player.queue.size) player.play();
 

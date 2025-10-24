@@ -72,8 +72,7 @@ export const _functions = {
 
   setPlayerVolume: async (player, volume) => {
     if (!player) return
-    player.volume = volume
-    if (player.setVolume) await player.setVolume(volume).catch(() => {})
+    await player.setVolume?.(volume)
   },
 
   addToQueueFront: (queue, item) => {
@@ -297,6 +296,8 @@ const playlistActionHandlers = {
     await interaction.editOrReply({ embeds: [embed], components })
     return { message: '', shouldUpdate: false }
   }
+
+
 }
 
 // Button ID parser

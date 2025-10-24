@@ -6,12 +6,10 @@ import {
 	SubCommand,
 } from "seyfert";
 import { createEmbed, handlePlaylistAutocomplete } from "../../shared/utils";
-import { SimpleDB } from "../../utils/simpleDB";
+import { getPlaylistsCollection } from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
-const db = new SimpleDB();
-const playlistsCollection = db.collection("playlists");
-
+const playlistsCollection = getPlaylistsCollection();
 @Declare({
 	name: "delete",
 	description: "🗑️ Delete a playlist",
@@ -35,6 +33,7 @@ export class DeleteCommand extends SubCommand {
 			userId,
 			name: playlistName,
 		});
+
 		if (!playlist) {
 			return ctx.write({
 				embeds: [

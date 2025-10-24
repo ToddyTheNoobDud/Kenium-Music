@@ -13,11 +13,10 @@ import {
 	handlePlaylistAutocomplete,
 	handleTrackIndexAutocomplete,
 } from "../../shared/utils";
-import { SimpleDB } from "../../utils/simpleDB";
+import { getPlaylistsCollection } from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
-const db = new SimpleDB();
-const playlistsCollection = db.collection("playlists");
+const playlistsCollection = getPlaylistsCollection();
 
 @Declare({
 	name: "remove",
@@ -53,6 +52,7 @@ export class RemoveCommand extends SubCommand {
 			userId,
 			name: playlistName,
 		});
+
 		if (!playlist) {
 			return ctx.write({
 				embeds: [
@@ -79,20 +79,24 @@ export class RemoveCommand extends SubCommand {
 			});
 		}
 
-		const [removedTrack] = playlist.tracks.splice(index - 1, 1);
+		const removedTrack = playlist.tracks[index - 1];
 		const timestamp = new Date().toISOString();
+		const updatedTracks = playlist.tracks.filter((_, i) => i !== index - 1);
+		const newTotalDuration = Math.max(
+			0,
+			(playlist.totalDuration || 0) - (removedTrack.duration || 0)
+		);
 
-		// Batch update
-		const updatedPlaylist = {
-			...playlist,
-			lastModified: timestamp,
-			totalDuration: playlist.tracks.reduce(
-				(sum: number, track: any) => sum + (track.duration || 0),
-				0,
-			),
-		};
-
-		playlistsCollection.update({ _id: playlist._id }, updatedPlaylist);
+		playlistsCollection.updateAtomic(
+			{ _id: playlist._id },
+			{
+				$set: {
+					tracks: updatedTracks,
+					lastModified: timestamp,
+					totalDuration: newTotalDuration
+				}
+			}
+		);
 
 		const embed = createEmbed(
 			"success",
@@ -116,7 +120,7 @@ export class RemoveCommand extends SubCommand {
 				},
 				{
 					name: `${ICONS.tracks} ${t.playlist?.remove?.remaining || "Remaining"}`,
-					value: `${playlist.tracks.length} tracks`,
+					value: `${updatedTracks.length} tracks`,
 					inline: true,
 				},
 			],

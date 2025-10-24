@@ -16,11 +16,10 @@ import {
 	formatDuration,
 	handlePlaylistAutocomplete,
 } from "../../shared/utils";
-import { SimpleDB } from "../../utils/simpleDB";
 import { getContextTranslations } from "../../utils/i18n";
+import { getPlaylistsCollection } from "../../utils/db"; // ✅ Use singleton
 
-const db = new SimpleDB();
-const playlistsCollection = db.collection("playlists");
+const playlistsCollection = getPlaylistsCollection(); // ✅ Use singleton
 
 function createSelectMenu(
 	customId: string,
@@ -77,7 +76,14 @@ export class ViewCommand extends SubCommand {
 		const userId = ctx.author.id;
 
 		if (!playlistName) {
-			const playlists = playlistsCollection.find({ userId });
+			const playlists = playlistsCollection.find(
+				{ userId },
+				{
+					sort: { lastModified: -1 },
+					limit: 25,
+					fields: ['name', 'tracks', 'totalDuration', 'lastModified', 'createdAt', 'playCount']
+				}
+			);
 			if (!Array.isArray(playlists) || playlists.length === 0) {
 				const embed = createEmbed(
 					"info",
@@ -127,12 +133,12 @@ export class ViewCommand extends SubCommand {
 			const components =
 				selectOptions.length > 0
 					? [
-							createSelectMenu(
-								`select_playlist_${userId}`,
-								"Choose a playlist to view...",
-								selectOptions,
-							),
-						]
+						createSelectMenu(
+							`select_playlist_${userId}`,
+							"Choose a playlist to view...",
+							selectOptions,
+						),
+					]
 					: [];
 
 			return ctx.write({ embeds: [embed], components, flags: 64 });

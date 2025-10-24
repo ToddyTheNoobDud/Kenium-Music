@@ -14,7 +14,6 @@ if (process.isBun) {
 // Constants
 const VALID_IDENTIFIER = /^[A-Za-z0-9_]+$/
 const JSON_PATH_COMPONENT = /^[A-Za-z0-9_]+$/
-const ID_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz'
 
 // Types
 interface QueryOperator {
@@ -47,6 +46,13 @@ interface Document {
   [key: string]: any
 }
 
+interface AtomicUpdate {
+  $set?: { [key: string]: any }
+  $inc?: { [key: string]: number }
+  $push?: { [key: string]: any }
+  $pull?: { [key: string]: any }
+}
+
 // Utility functions
 const ensureDir = (dir: string): void => {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
@@ -65,7 +71,7 @@ const buildJsonPath = (key: string): string => {
       throw new Error(`Invalid key component: ${part}`)
     }
   }
-  return `$.${parts.map(p => `"${p}"`).join('.')}`
+  return `$.${parts.join('.')}`
 }
 
 const generateId = (): string => {
@@ -96,7 +102,6 @@ class SQLiteCollection extends EventEmitter {
     this._cacheSize = Math.max(0, cacheSize)
     this._stmtCache = new Map()
 
-    // Create table
     this._db.prepare(
       `CREATE TABLE IF NOT EXISTS ${this._quotedTable} (
         _id TEXT PRIMARY KEY,
@@ -106,7 +111,6 @@ class SQLiteCollection extends EventEmitter {
       )`
     ).run()
 
-    // Create indexes
     try {
       this._db.prepare(
         `CREATE INDEX IF NOT EXISTS "${this._tableName}_updated_idx"
@@ -120,7 +124,6 @@ class SQLiteCollection extends EventEmitter {
       console.warn(`Failed to create indexes for ${name}:`, err)
     }
 
-    // Prepare common statements
     this._insertStmt = this._db.prepare(
       `INSERT INTO ${this._quotedTable} (_id, doc, createdAt, updatedAt)
        VALUES (?, ?, ?, ?)
@@ -183,7 +186,6 @@ class SQLiteCollection extends EventEmitter {
         conditions.push(`json_extract(doc, ?) IS NULL`)
         params.push(path)
       } else if (typeof value === 'object' && !Array.isArray(value)) {
-        // Handle operators
         for (const [op, opValue] of Object.entries(value)) {
           switch (op) {
             case '$gt':
@@ -249,7 +251,6 @@ class SQLiteCollection extends EventEmitter {
       sql += ` WHERE ${where}`
     }
 
-    // Add sorting
     if (options.sort) {
       const sortClauses = Object.entries(options.sort).map(([key, direction]) => {
         const path = buildJsonPath(key)
@@ -260,7 +261,6 @@ class SQLiteCollection extends EventEmitter {
       }
     }
 
-    // Add pagination
     if (options.limit) {
       sql += ` LIMIT ${options.limit}`
     }
@@ -268,7 +268,6 @@ class SQLiteCollection extends EventEmitter {
       sql += ` OFFSET ${options.skip}`
     }
 
-    // Cache statement if no dynamic options
     if (!options.limit && !options.skip && !options.sort) {
       const cacheKey = where
       if (this._cacheSize > 0 && this._stmtCache.has(cacheKey)) {
@@ -337,7 +336,6 @@ class SQLiteCollection extends EventEmitter {
       for (const row of rows) {
         const doc = this.parseRow(row)
         if (doc) {
-          // Field projection
           if (options.fields && options.fields.length > 0) {
             const projected: any = { _id: doc._id }
             for (const field of options.fields) {
@@ -373,6 +371,79 @@ class SQLiteCollection extends EventEmitter {
     }
   }
 
+  updateAtomic(query: Query, updates: AtomicUpdate): number {
+    if (!query || Object.keys(query).length === 0) {
+      throw new Error('Update query cannot be empty')
+    }
+
+    const now = new Date().toISOString()
+
+    try {
+      if (query._id && Object.keys(query).length === 1) {
+        const id = query._id as string
+        const row = this._selectByIdStmt.get(id)
+        if (!row) return 0
+
+        const doc = this.parseRow(row)
+        if (!doc) return 0
+
+        const merged: any = { ...doc }
+
+        if (updates.$set) {
+          for (const [key, value] of Object.entries(updates.$set)) {
+            merged[key] = value
+          }
+        }
+
+        if (updates.$inc) {
+          for (const [key, value] of Object.entries(updates.$inc)) {
+            merged[key] = (typeof merged[key] === 'number' ? merged[key] : 0) + value
+          }
+        }
+
+        if (updates.$push) {
+          for (const [key, value] of Object.entries(updates.$push)) {
+            if (!Array.isArray(merged[key])) merged[key] = []
+            merged[key].push(value)
+          }
+        }
+
+        if (updates.$pull) {
+          for (const [key, value] of Object.entries(updates.$pull)) {
+            if (Array.isArray(merged[key])) {
+              merged[key] = merged[key].filter((item: any) => item !== value)
+            }
+          }
+        }
+
+        merged.updatedAt = now
+
+        this._updateByIdStmt.run(JSON.stringify(merged), now, merged._id)
+        this.emit('change', 'update', { query, updates })
+        return 1
+      }
+
+      const { where, params: whereParams } = this.buildWhereClause(query)
+      const selectSql = `SELECT _id FROM ${this._quotedTable} WHERE ${where}`
+      const selectStmt = this._db.prepare(selectSql)
+      const rows = selectStmt.all(...whereParams)
+
+      if (rows.length === 0) return 0
+
+      const tx = this._db.transaction(() => {
+        for (const row of rows) {
+          this.updateAtomic({ _id: row._id }, updates)
+        }
+      })
+
+      tx()
+      return rows.length
+    } catch (error) {
+      this.emit('error', error)
+      throw error
+    }
+  }
+
   update(query: Query, updates: Partial<Document>): number {
     if (!query || Object.keys(query).length === 0) {
       throw new Error('Update query cannot be empty')
@@ -381,7 +452,6 @@ class SQLiteCollection extends EventEmitter {
     const now = new Date().toISOString()
 
     try {
-      // Single document update by ID (optimized path)
       if (query._id && Object.keys(query).length === 1) {
         const existing = this.findById(query._id as string)
         if (!existing) return 0
@@ -399,10 +469,7 @@ class SQLiteCollection extends EventEmitter {
         return 1
       }
 
-      // Bulk update with WHERE clause
       const { where, params } = this.buildWhereClause(query)
-
-      // First, get matching IDs and docs
       const selectSql = `SELECT _id, doc FROM ${this._quotedTable} WHERE ${where}`
       const selectStmt = this._db.prepare(selectSql)
       const rows = selectStmt.all(...params)
@@ -440,7 +507,6 @@ class SQLiteCollection extends EventEmitter {
     }
 
     try {
-      // Single document delete by ID (optimized path)
       if (query._id && Object.keys(query).length === 1) {
         const result = this._deleteByIdStmt.run(query._id)
         if (result.changes > 0) {
@@ -449,9 +515,7 @@ class SQLiteCollection extends EventEmitter {
         return result.changes
       }
 
-      // Bulk delete with WHERE clause
       const { where, params } = this.buildWhereClause(query)
-
       const deleteSql = `DELETE FROM ${this._quotedTable} WHERE ${where}`
       const deleteStmt = this._db.prepare(deleteSql)
       const result = deleteStmt.run(...params)
@@ -536,7 +600,6 @@ class SimpleDB extends EventEmitter {
     try {
       this._db = new Database(this._dbPath)
 
-      // Configure SQLite for performance
       if (process.isBun) {
         this._db.run('PRAGMA journal_mode = WAL')
         this._db.run('PRAGMA synchronous = NORMAL')

@@ -2,7 +2,7 @@ import process from 'node:process'
 import { lru } from 'tiny-lru'
 import { createEvent, Embed } from 'seyfert'
 import { getChannelIds, isTwentyFourSevenEnabled } from '../utils/db_helper'
-
+import { hasKaraokeSession, cleanupKaraokeSession } from '../commands/karaoke'
 // Constants
 const NO_SONG_TIMEOUT = 600000
 const REJOIN_DELAY = 5000
@@ -36,7 +36,8 @@ const clearTimer = (timer) => {
   return null
 }
 
-const safeDelete = (msg) => {
+const safeDelete = (msg, guildId) => {
+  if (hasKaraokeSession(guildId)) cleanupKaraokeSession(guildId)
   msg?.delete?.().catch(() => {})
 }
 
@@ -306,7 +307,7 @@ class VoiceManager {
 
       try {
         const msg = await client.messages.write(current.textChannel, { embeds: [embed] })
-        if (msg) this.setTimeout(`msg_${msg.id}`, () => safeDelete(msg), 10000)
+        if (msg) this.setTimeout(`msg_${msg.id}`, () => safeDelete(msg, player.guildId), 10000)
       } catch {}
 
       current.destroy()
