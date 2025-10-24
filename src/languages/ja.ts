@@ -143,6 +143,14 @@ export default {
         tts: {
             name: "TTS",
             description: "TTSメッセージを生成して送信"
+        },
+        karaoke: {
+            name: "カラオケ",
+            description: "同期された歌詞でカラオケセッションを開始"
+        },
+        roulette: {
+            name: "ルーレット",
+            description: "キューからランダムなトラックを再生"
         }
     },
     // 音楽プレイヤーメッセージ
@@ -307,6 +315,22 @@ export default {
     // TTSコマンド
     tts: {
         generated: "TTSメッセージを生成しました"
+    },
+    // karaokeコマンド
+    karaoke: {
+        error: "カラオケエラー",
+        sessionEnded: "カラオケセッションが終了しました",
+        noActivePlayer: "アクティブなプレイヤーが見つかりません",
+        sessionAlreadyActive: "このサーバーでは既にアクティブなカラオケセッションがあります。終了するまで待つか、現在のセッションを停止するためにコマンドを再度使用してください。",
+        noLyricsAvailable: "同期された歌詞が利用できません。別の曲を試してください。",
+        playing: "再生中",
+        paused: "一時停止",
+        noLyrics: "歌詞が利用できません"
+    },
+    // rouletteコマンド
+    roulette: {
+        playingRandom: "🎲 ランダムなトラックを再生中: **{title}** - **{author}**",
+        error: "ランダムなトラックの再生中にエラーが発生しました!"
     },
     // 音量コマンド
     volume: {

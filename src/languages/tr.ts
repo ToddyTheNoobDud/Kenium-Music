@@ -143,6 +143,14 @@ export default {
         tts: {
             name: "tts",
             description: "TTS mesajı oluştur ve gönder"
+        },
+        karaoke: {
+            name: "karaoke",
+            description: "Senkronize şarkı sözleri ile karaoke oturumu başlat"
+        },
+        roulette: {
+            name: "rulet",
+            description: "Kuyruktan rastgele bir parça çal"
         }
     },
     // Müzik oynatıcı mesajları
@@ -307,6 +315,22 @@ export default {
     // TTS komutu
     tts: {
         generated: "TTS mesajı oluşturuldu"
+    },
+    // Karaoke komutu
+    karaoke: {
+        error: "Karaoke Hatası",
+        sessionEnded: "Karaoke oturumu sona erdi",
+        noActivePlayer: "Aktif oynatıcı bulunamadı",
+        sessionAlreadyActive: "Bu sunucuda zaten aktif bir karaoke oturumu var. Bitmesini bekleyin veya mevcut oturumu durdurmak için komutu tekrar kullanın.",
+        noLyricsAvailable: "Senkronize şarkı sözü mevcut değil. Farklı bir şarkı deneyin.",
+        playing: "Oynatılıyor",
+        paused: "Duraklatıldı",
+        noLyrics: "Şarkı sözü mevcut değil"
+    },
+    // Roulette komutu
+    roulette: {
+        playingRandom: "🎲 Rastgele parça oynatılıyor: **{title}** - **{author}**",
+        error: "Rastgele parça oynatılırken bir hata oluştu!"
     },
     // Ses komutu (volume)
     volume: {

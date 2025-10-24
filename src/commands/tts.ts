@@ -10,7 +10,7 @@ import { getContextLanguage } from "../utils/i18n";
 
 @Options({
 	tts: createStringOption({
-		description: "Generate and send a TTS message",
+		description: "Generate and play a TTS message on the voice channel",
 		required: true,
 		max_length: 500,
 		min_length: 1,
@@ -19,7 +19,7 @@ import { getContextLanguage } from "../utils/i18n";
 @Middlewares(["checkVoice"])
 @Declare({
 	name: "tts",
-	description: "Generate and send a TTS message",
+	description: "Generate and play a TTS message",
 })
 export default class TTSCommand extends Command {
 	async run(ctx: CommandContext) {

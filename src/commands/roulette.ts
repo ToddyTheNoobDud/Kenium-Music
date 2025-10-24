@@ -10,6 +10,9 @@ import { getContextLanguage } from "../utils/i18n";
 export default class roulettecmds extends Command {
     public override async run(ctx: CommandContext) {
         try {
+            const lang = getContextLanguage(ctx);
+            const t = ctx.t.get(lang);
+
             const player = ctx.client.aqua.players.get(ctx.guildId!);
 
             const queue = player?.queue;
@@ -17,7 +20,7 @@ export default class roulettecmds extends Command {
                 return ctx.write({
                     embeds: [
                         new Embed()
-                            .setDescription('❌ The queue is empty!')
+                            .setDescription('❌ ' + t.player.queueEmpty)
                             .setColor(0xff0000)
                     ],
                     flags: 64,
@@ -50,7 +53,7 @@ export default class roulettecmds extends Command {
                 embeds: [
                     new Embed()
                         .setDescription(
-                            ('🎲 Playing random track: **{title}** by **{author}**')
+                            t.roulette.playingRandom
                                 .replace('{title}', trackTitle)
                                 .replace('{author}', trackAuthor)
                         )
@@ -69,7 +72,7 @@ export default class roulettecmds extends Command {
             return ctx.write({
                 embeds: [
                     new Embed()
-                        .setDescription('❌ An error occurred while playing random track!')
+                        .setDescription('❌ ' + t.roulette.error)
                         .setColor(0xff0000)
                 ],
                 flags: 64,

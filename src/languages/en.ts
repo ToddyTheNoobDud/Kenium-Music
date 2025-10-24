@@ -141,6 +141,14 @@ export default {
         tts: {
             name: "tts",
             description: "Generate and send a TTS message"
+        },
+        karaoke: {
+            name: "karaoke",
+            description: "Start a karaoke session with synced lyrics"
+        },
+        roulette: {
+            name: "roulette",
+            description: "Play a random track from the queue"
         }
     },
     // Music player messages
@@ -305,6 +313,22 @@ export default {
     // TTS command
     tts: {
         generated: "Generated TTS message"
+    },
+    // Karaoke command
+    karaoke: {
+        error: "Karaoke Error",
+        sessionEnded: "Karaoke session ended",
+        noActivePlayer: "No active player found",
+        sessionAlreadyActive: "There is already an active karaoke session in this server. Please wait for it to finish or use the command again to stop the current session.",
+        noLyricsAvailable: "No synced lyrics available. Try a different song.",
+        playing: "Playing",
+        paused: "Paused",
+        noLyrics: "No lyrics available"
+    },
+    // Roulette command
+    roulette: {
+        playingRandom: "🎲 Playing random track: **{title}** by **{author}**",
+        error: "An error occurred while playing random track!"
     },
     // Volume command
     volume: {

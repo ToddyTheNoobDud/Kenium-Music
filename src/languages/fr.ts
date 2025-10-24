@@ -143,6 +143,14 @@ export default {
         tts: {
             name: "tts",
             description: "Générer et envoyer un message TTS"
+        },
+        karaoke: {
+            name: "karaoke",
+            description: "Démarrer une session karaoké avec des paroles synchronisées"
+        },
+        roulette: {
+            name: "roulette",
+            description: "Jouer une piste aléatoire de la file"
         }
     },
     // Messages du lecteur de musique
@@ -307,6 +315,22 @@ export default {
     // Commande TTS
     tts: {
         generated: "Message TTS généré"
+    },
+    // Commande karaoke
+    karaoke: {
+        error: "Erreur Karaoke",
+        sessionEnded: "Session karaoke terminée",
+        noActivePlayer: "Aucun lecteur actif trouvé",
+        sessionAlreadyActive: "Une session karaoke est déjà active sur ce serveur. Attendez qu'elle se termine ou utilisez la commande à nouveau pour arrêter la session actuelle.",
+        noLyricsAvailable: "Aucune parole synchronisée disponible. Essayez une chanson différente.",
+        playing: "Lecture",
+        paused: "En pause",
+        noLyrics: "Aucune parole disponible"
+    },
+    // Commande roulette
+    roulette: {
+        playingRandom: "🎲 Lecture d'une piste aléatoire : **{title}** par **{author}**",
+        error: "Une erreur s'est produite lors de la lecture de la piste aléatoire !"
     },
     // Commande volume
     volume: {

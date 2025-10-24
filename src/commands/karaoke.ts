@@ -26,10 +26,13 @@ const MAX_SESSIONS = 100;
 const MAX_DRIFT_MS = 10000;
 
 // Helper functions
-const _createErrorEmbed = (message: string) => new Embed()
-  .setColor(ERROR_COLOR)
-  .setTitle('Karaoke Error')
-  .setDescription(message);
+const _createErrorEmbed = (message: string, lang: string, ctx: CommandContext) => {
+  const t = ctx.t.get(lang);
+  return new Embed()
+    .setColor(ERROR_COLOR)
+    .setTitle(t.karaoke.error)
+    .setDescription(message);
+};
 
 const _formatTimestamp = (ms: number) => {
   const totalSeconds = Math.floor(ms / 1000);
@@ -186,7 +189,6 @@ const _fetchKaraokeLyrics = async (query: string, currentTrack: any) => {
   if (!searchQuery) return null;
 
   try {
-    console.log(searchQuery);
     const result = await MUSIXMATCH.findLyrics(searchQuery);
     if (!result?.text && !result?.lines) return null;
 
@@ -232,8 +234,12 @@ class KaraokeSessionRegistry {
     if (session.message?.delete) {
       await session.message.delete().catch(() => null);
     } else if (session.message?.edit) {
+      // For cleanup, we don't have context, so use a simple embed
       await session.message.edit({
-        embeds: [_createErrorEmbed('Karaoke session ended')],
+        embeds: [new Embed()
+          .setColor(ERROR_COLOR)
+          .setTitle('Karaoke Error')
+          .setDescription('Karaoke session ended')],
         components: []
       }).catch(() => null);
     }
@@ -321,16 +327,19 @@ export default class KaraokeCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     await ctx.deferReply();
 
+    const lang = getContextLanguage(ctx);
+    const t = ctx.t.get(lang);
+
     const player = ctx.client.aqua.players.get(ctx.guildId);
     if (!player) {
-      await ctx.editOrReply({ embeds: [_createErrorEmbed('No active player found')] });
+      await ctx.editOrReply({ embeds: [_createErrorEmbed(t.karaoke.noActivePlayer, lang, ctx)] });
       return;
     }
 
     // Check if there's already an active karaoke session
     if (KaraokeSessionRegistry.has(ctx.guildId)) {
       await ctx.editOrReply({
-        embeds: [_createErrorEmbed('There is already an active karaoke session in this server. Please wait for it to finish or use the command again to stop the current session.')],
+        embeds: [_createErrorEmbed(t.karaoke.sessionAlreadyActive, lang, ctx)],
       });
       return;
     }
@@ -341,7 +350,7 @@ export default class KaraokeCommand extends Command {
 
     if (!result) {
       await ctx.editOrReply({
-        embeds: [_createErrorEmbed('No synced lyrics available. Try a different song.')]
+        embeds: [_createErrorEmbed(t.karaoke.noLyricsAvailable, lang, ctx)]
       });
       return;
     }
