@@ -23,29 +23,40 @@ const CONFIG = {
 		DEVELOPER: "mushroom0162",
 		CHANGELOG: `
 ### Added
-- Added turkish and thai languages
-- Added handling for all playlists buttons
-- Added new buttons for changelog command and a 2nd page.
-- Added a new command: roulette
-- Added queue size on the trackStart UI
-- Remade the bot color, uses a new type of black theme
-
+- Added all the missing translations from before
+- Added a new karaoke command
+- Added the ratelimited event
+- Added missing divider on grab and nowplaying
+- Added a embed to tell the user is not on a VC
 
 ### Changed
 - Updated dependencies
-- Rewrited the button handling system, way faster than before because of internal changes
-- Rewrited the nowplaying and grab with the new ui.
-- Improved the playlists overall performance
-- Converted Kenium to use bun.sh
-
+- Made the bot startup way faster
+- Improved the bot voice handling performance
+- Reworked the code style
+- Improved the lyrics/musixmatch speed on fetching
+- Full database rewrite
+  - The new implementation makes everything goes on a single instance, which should make everything WAY faster, and on a high-load thing can drop the memory usage by 80%
+  - All playlists command has been rewritten to use count and findOne methods, these remove the needs of fetching the entire playlist file, making it zero-memory overhead and 50% faster
+- Full playlists rewrite
+  - Rewritten most commands with atomic updates, meaning they will be way faster into fetching, editing, adding, creating and deleting
+- Changed the way buttons get checked, this makes it extremely fast to handle now
+- Changed the uptime on status command
 
 ### Removed
-- Shuffle button from queue
+- Nothing
 
 ### Fixed
-- Fixed some random bugs with checks
-- Fixed some texts escaping issues
-- Fixed the filters
+- Fixed the autoResume system
+- Fixed some bugs related to player restoring / node is down when 24/7 is enabled
+- Fixed some memory leaks
+- Fixed Search Buttons
+- Fixed some race conditions with update batching (especially 24/7)
+- Fixed loop only showing disabled
+- Fixed playlist play not passing the right requester (long-standing bug lol)
+- Fixed typos on the TTS command
+- Fixed non-connected the nodes making reset the 24/7 database
+- Fixed 'th' not being added to the languages
 `,
 	},
 	COLORS: {
