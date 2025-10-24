@@ -26,7 +26,7 @@ const CACHE_MAX = 1000
 const CACHE_TTL_MS = 600000
 const BATCH_INTERVAL_MS = 1000
 const GUILD_ID_RE = /^\d{17,20}$/
-const SUPPORTED_LANGS = new Set(['en', 'br', 'es', 'hi', 'fr', 'ar', 'bn', 'ru', 'ja', 'tr'])
+const SUPPORTED_LANGS = new Set(['en', 'br', 'es', 'hi', 'fr', 'ar', 'bn', 'ru', 'ja', 'tr', 'th'])
 
 export const _functions = {
   isValidGuildId: (guildId) => GUILD_ID_RE.test(guildId),
