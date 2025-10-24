@@ -34,18 +34,19 @@ export default class LoopCommand extends Command {
 			const { loop } = ctx.options as { loop: string };
 
 			const player = client.aqua.players.get(ctx.guildId!);
-			// @ts-expect-error
-			player.setLoop(loop);
+			const loopMap: Record<string, number> = { none: 0, track: 1, queue: 2 };
+			const loopValue = loopMap[loop] ?? 0;
+			(player as any).setLoop(loopValue);
 
-			const status = loop === "none"
+			const status = loopValue === 0
 				? (t.common?.disabled || "disabled")
-				: (player.loop ? (t.common?.enabled || "enabled") : (t.common?.disabled || "disabled"));
+				: (t.common?.enabled || "enabled");
 
 			let description: string;
-			if (loop === "none") {
+			if (player?.loop === 0) {
 				description = t?.player?.loopDisabled || `Looping has been ${status}.`;
 			} else {
-				description = t?.player?.loopDisabled?.replace('{mode}', loop) || `Current song loop has been ${status}.`;
+				description = t?.player?.loopEnabled?.replace('{mode}', loop) || `Current song loop has been ${status}.`;
 			}
 
 			await ctx.editOrReply({
@@ -57,7 +58,7 @@ export default class LoopCommand extends Command {
 				flags: 64,
 			});
 		} catch (error) {
-			if (error.code === 10065) return;
+			if ((error as any)?.code === 10065) return;
 		}
 	}
 }

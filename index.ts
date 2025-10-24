@@ -79,7 +79,7 @@ export const updatePresence = (clientInstance) => {
 
   let activityIndex = 0
   const activities = [
-    { name: '⚡ Kenium 4.8.0 ⚡', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
+    { name: '⚡ Kenium 4.9.0 ⚡', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
     { name: '{users} users', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
     { name: '{guilds} servers', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' },
     { name: 'Sponsor: https://links.triniumhost.com/', type: 1, url: 'https://www.youtube.com/watch?v=7aIjwQCEox8' }
@@ -155,7 +155,7 @@ aqua.on('trackStart', async (player, track) => {
     state.lastVoiceStatusUpdate = now
     const title = track.info?.title || track.title
     if (title) {
-      const status = `⭐ ${_functions.truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.8.0`
+      const status = `⭐ ${_functions.truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.9.0`
       client.channels.setVoiceStatus(player.voiceChannel, status).catch(() => {})
     }
   }
