@@ -41,36 +41,11 @@ const SEPARATORS = [' - ', ' – ', ' — ', ' ~ ', '-']
 
 const DEFAULT_HEADERS = Object.freeze({
   accept: 'application/json',
-  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+  'cookie': 'AWSELB=unknown; x-mxm-user-id=undefined; x-mxm-token-guid=undefined; mxm-encrypted-token='
 })
 
-// Module-level fetch caches
-let defaultFetch = null
-let cookieFetch = null
-
-const getFetch = async (withCookies = true) => {
-  if (withCookies) {
-    if (!cookieFetch) {
-      const fetchCookie = await import('fetch-cookie').then(m => m.default || m)
-      if (typeof fetchCookie !== 'function') throw new Error('Invalid fetch-cookie export')
-      cookieFetch = fetchCookie(globalThis.fetch)
-    }
-    return cookieFetch
-  }
-
-  if (!defaultFetch) {
-    if (typeof globalThis.fetch === 'function') {
-      defaultFetch = globalThis.fetch
-    } else {
-      throw new Error('No global fetch available')
-    }
-  }
-  return defaultFetch
-}
-
-const resetCookieFetch = () => {
-  cookieFetch = null
-}
+const COOKIE_HEADER = 'AWSELB=unknown; x-mxm-user-id=undefined; x-mxm-token-guid=undefined; mxm-encrypted-token='
 
 interface MusixmatchOptions {
   requestTimeoutMs?: number;
@@ -121,13 +96,17 @@ export class Musixmatch {
     } catch {}
   }
 
-  async apiGet(url) {
-    const fetch = await getFetch(true)
+  async apiGet(url, withCookies = false) {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs)
 
     try {
-      const response = await fetch(url, { headers: DEFAULT_HEADERS, signal: controller.signal })
+      const headers = { ...DEFAULT_HEADERS }
+      if (withCookies) {
+        headers.cookie = COOKIE_HEADER
+      }
+
+      const response = await fetch(url, { headers, signal: controller.signal })
       if (!response.ok) throw new HttpError(response.status)
 
       const data = await response.json()
@@ -145,7 +124,7 @@ export class Musixmatch {
 
   async fetchToken(withCookies = true): Promise<string> {
     const url = this.buildUrl(ENDPOINTS.TOKEN, { app_id: APP_ID })
-    const body = await this.apiGet(url)
+    const body = await this.apiGet(url, withCookies)
     return body.user_token as string
   }
 
@@ -196,7 +175,6 @@ export class Musixmatch {
     } catch (err) {
       if (err instanceof MxmApiError && (err.code === 401 || err.code === 403)) {
         await this.resetToken(true)
-        resetCookieFetch()
         const token = await this.fetchToken(true)
         const expires = Date.now() + TOKEN_TTL
         this.tokenData = { value: token, expires }
@@ -216,7 +194,6 @@ export class Musixmatch {
       if (err instanceof MxmApiError && (err.code === 401 || err.code === 403)) {
         const isCaptcha = err.hint?.toLowerCase().includes('captcha')
         await this.resetToken(isCaptcha)
-        if (isCaptcha) resetCookieFetch()
         const newToken = await this.getToken(true)
         const url = this.buildUrl(endpoint, { ...params, app_id: APP_ID, usertoken: newToken })
         return await this.apiGet(url)
