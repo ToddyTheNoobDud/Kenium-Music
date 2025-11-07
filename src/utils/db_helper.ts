@@ -49,6 +49,8 @@ class DatabaseManager {
   updateQueue = new Map<string, any>()
   updateTimer: NodeJS.Timeout | null = null
   isProcessing = false
+  consecutiveFailures = 0
+  maxFailuresBeforeDrop = 5
 
   static getInstance(): DatabaseManager {
     if (!DatabaseManager.instance) {
@@ -125,14 +127,26 @@ class DatabaseManager {
         tx()
       }
 
+      // success: reset failure counter and clear queue
+      this.consecutiveFailures = 0
       this.updateQueue.clear()
     } catch (error) {
       console.error('Batch update failed:', error)
+      this.consecutiveFailures++
+
       if (this.updateTimer) {
         clearTimeout(this.updateTimer)
         this.updateTimer = null
       }
-      setTimeout(() => this.scheduleBatch(), BATCH_INTERVAL_MS * 2)
+
+      if (this.consecutiveFailures >= this.maxFailuresBeforeDrop) {
+        console.error(
+          `Persistent batch update failure (${this.consecutiveFailures} attempts). Dropping ${this.updateQueue.size} pending updates to prevent memory leak.`,
+        )
+        this.updateQueue.clear()
+      } else {
+        setTimeout(() => this.scheduleBatch(), BATCH_INTERVAL_MS * 2)
+      }
     } finally {
       this.isProcessing = false
     }
@@ -288,6 +302,5 @@ export const cleanupDatabase = () => dbManager.cleanup()
 
 export const getCacheStats = () => ({
   size: dbManager.cache.size,
-  evictions: dbManager.cache.evictions,
   pendingUpdates: dbManager.updateQueue.size
 })
