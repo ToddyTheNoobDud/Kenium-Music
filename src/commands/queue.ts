@@ -342,6 +342,9 @@ async function handleShowQueue(
 	const collector = message.createComponentCollector?.({
 		idle: 180000,
 		filter: (i: any) => i.user.id === ctx.interaction.user.id,
+		onStop: () => {
+			message.edit({ components: [] }).catch(() => null);
+		},
 	});
 
 	if (collector) {
