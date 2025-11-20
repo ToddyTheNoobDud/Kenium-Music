@@ -175,18 +175,16 @@ const _fetchKaraokeLyrics = async (query: string, currentTrack: any) => {
   let searchQuery = query;
 
 
-  if (!searchQuery && currentTrack) {
-    const title = currentTrack.title ?? '';
-    const author = currentTrack.author ?? '';
-    searchQuery = `${title} ${author}`.trim();
-  }
+	if (!searchQuery && currentTrack) {
+		searchQuery = currentTrack.title || "";
+		if (!searchQuery && currentTrack.author) {
+			searchQuery =
+				`${currentTrack.title || ""} ${currentTrack.author || ""}`.trim();
+		}
+	}
 
-  if (!searchQuery && currentTrack) {
-    searchQuery = currentTrack.title ?? '';
-  }
+	if (!searchQuery) return null;
 
-
-  if (!searchQuery) return null;
 
   try {
     const result = await MUSIXMATCH.findLyrics(searchQuery);
@@ -370,6 +368,7 @@ export default class KaraokeCommand extends Command {
     const timeout = setTimeout(() => {
       KaraokeSessionRegistry.cleanup(ctx.guildId);
     }, SESSION_TIMEOUT_MS);
+    if (timeout.unref) timeout.unref();
 
     KaraokeSessionRegistry.add(ctx.guildId, {
       message,

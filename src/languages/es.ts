@@ -4,6 +4,7 @@ export default {
     hello: "hola",
     ping: {
         description: "**Gateway**: {wsPing}ms\n**Shard**: {shardPing}ms\n**Reproductor**: {playerPing}ms",
+        descriptionNoPlayer: "**Gateway**: {wsPing}ms\n**Shard**: {shardPing}ms",
         title: "Información de Ping"
     },
     language: {
@@ -95,6 +96,10 @@ export default {
         lyrics: {
             name: "letra",
             description: "Obtener la letra de la canción actual"
+        },
+        loadlyrics: {
+            name: "cargar-letra",
+            description: "Cargar letra para una pista codificada específica"
         },
         export: {
             name: "exportar",

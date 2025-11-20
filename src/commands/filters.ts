@@ -104,7 +104,7 @@ export default class filtersss extends Command {
 					break;
 				default:
 					return ctx.write({
-						content: t.player?.filterInvalid|| "Invalid filter selected.",
+						content: t.player?.filterInvalid || "Invalid filter selected.",
 						flags: 64,
 					});
 			}

@@ -2,6 +2,7 @@ export default {
     hello: "hello",
     ping: {
         description: "**Gateway**: {wsPing}ms\n**Shard**: {shardPing}ms\n**Player**: {playerPing}ms",
+        descriptionNoPlayer: "**Gateway**: {wsPing}ms\n**Shard**: {shardPing}ms",
         title: "Ping Information"
     },
     language: {
@@ -93,6 +94,10 @@ export default {
         lyrics: {
             name: "lyrics",
             description: "Get lyrics for the current song"
+        },
+        loadlyrics: {
+            name: "loadlyrics",
+            description: "Load lyrics for a specific encoded track"
         },
         export: {
             name: "export",

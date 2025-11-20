@@ -2,16 +2,23 @@ import { Command, type CommandContext, Declare, Embed, LocalesT } from 'seyfert'
 import { getContextLanguage } from '../utils/i18n';
 
 const _functions = {
-  createPingEmbed: (t: any, wsPing: number, shardPing: number, playerPing: number, shardId: number, avatarURL?: string): Embed =>
-    new Embed()
-      .setColor(0x100e09)
-      .setTitle(t.ping.title)
-      .setDescription(t.ping.description
+  createPingEmbed: (t: any, wsPing: number, shardPing: number, playerPing: number, shardId: number, avatarURL?: string): Embed => {
+    const description = playerPing === 0
+      ? t.ping.descriptionNoPlayer
         .replace('{wsPing}', wsPing.toString())
         .replace('{shardPing}', shardPing.toString())
-        .replace('{playerPing}', playerPing.toString()))
+      : t.ping.description
+        .replace('{wsPing}', wsPing.toString())
+        .replace('{shardPing}', shardPing.toString())
+        .replace('{playerPing}', playerPing.toString());
+
+    return new Embed()
+      .setColor(0x100e09)
+      .setTitle(t.ping.title)
+      .setDescription(description)
       .setTimestamp()
-      .setFooter({ text: `Shard ${shardId}`, iconUrl: avatarURL }),
+      .setFooter({ text: `Shard ${shardId}`, iconUrl: avatarURL });
+  },
 
   getPlayerPing: (client: any, guildId: string): number => {
     const player = client.aqua.players.get(guildId);

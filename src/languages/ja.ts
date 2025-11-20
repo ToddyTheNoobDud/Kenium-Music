@@ -4,6 +4,7 @@ export default {
     hello: "こんにちは",
     ping: {
         description: "**ゲートウェイ**: {wsPing}ms\n**シャード**: {shardPing}ms\n**プレイヤー**: {playerPing}ms",
+        descriptionNoPlayer: "**ゲートウェイ**: {wsPing}ms\n**シャード**: {shardPing}ms",
         title: "Ping情報"
     },
     language: {
@@ -95,6 +96,10 @@ export default {
         lyrics: {
             name: "歌詞",
             description: "現在の曲の歌詞を取得"
+        },
+        loadlyrics: {
+            name: "歌詞を読み込む",
+            description: "特定のエンコードされたトラックの歌詞を読み込む"
         },
         export: {
             name: "エクスポート",

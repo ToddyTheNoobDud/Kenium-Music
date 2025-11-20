@@ -4,6 +4,7 @@ export default {
     hello: "привет",
     ping: {
         description: "**Шлюз**: {wsPing}ms\n**Шард**: {shardPing}ms\n**Плеер**: {playerPing}ms",
+        descriptionNoPlayer: "**Шлюз**: {wsPing}ms\n**Шард**: {shardPing}ms",
         title: "Информация о пинге"
     },
     language: {
@@ -95,6 +96,10 @@ export default {
         lyrics: {
             name: "текст",
             description: "Получить текст текущей песни"
+        },
+        loadlyrics: {
+            name: "загрузить-текст",
+            description: "Загрузить текст для определенного закодированного трека"
         },
         export: {
             name: "экспорт",

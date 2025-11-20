@@ -4,6 +4,7 @@ export default {
     hello: "bonjour",
     ping: {
         description: "**Passerelle**: {wsPing}ms\n**Fragment**: {shardPing}ms\n**Lecteur**: {playerPing}ms",
+        descriptionNoPlayer: "**Passerelle**: {wsPing}ms\n**Fragment**: {shardPing}ms",
         title: "Informations de Ping"
     },
     language: {
@@ -95,6 +96,10 @@ export default {
         lyrics: {
             name: "paroles",
             description: "Obtenir les paroles de la chanson actuelle"
+        },
+        loadlyrics: {
+            name: "charger-paroles",
+            description: "Charger les paroles pour une piste encodée spécifique"
         },
         export: {
             name: "exporter",

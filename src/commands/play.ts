@@ -191,11 +191,11 @@ const _handleAutocomplete = async (interaction: any): Promise<void> => {
       try {
         await _processAutocomplete(interaction, userId, query, resolve)
       } catch (e) {
-        console.error('autocomplete process error', e)
         resolve(interaction.respond([]))
       }
     }, 200)
 
+    if (timer.unref) timer.unref()
     debounceTimers.set(userId, timer)
   })
 }
@@ -303,13 +303,12 @@ export default class Play extends Command {
         try {
           player.play()
         } catch (e) {
-          console.error('play start error', e)
+          // Silently handle play start errors
         }
       }
     } catch (err: any) {
       if (err?.code === 10065) return
 
-      console.error('Play error:', err)
       try {
         await ctx.editResponse({ content: t.errors?.general || 'An error occurred. Please try again.' })
       } catch {}
