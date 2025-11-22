@@ -100,30 +100,29 @@ const shutdown = async () => {
   process.exit(0);
 };
 
+aqua.on('debug', (message) => {
+  client.logger.debug(`[Aqua] ${message}`);
+});
+
 export const updatePresence = (clientInstance) => {
   if (state.presenceInterval) clearInterval(state.presenceInterval);
 
   let activityIndex = 0;
   const activities = [
     {
-      name: "⚡ Kenium 4.9.0 ⚡",
+      name: "⚡ Kenium 4.9.1 ⚡",
       type: 1,
-      url: "https://www.youtube.com/watch?v=7aIjwQCEox8",
+      url: "https://www.youtube.com/watch?v=tSFp2ESLxyU",
     },
     {
       name: "{users} users",
       type: 1,
-      url: "https://www.youtube.com/watch?v=7aIjwQCEox8",
+      url: "https://www.youtube.com/watch?v=tSFp2ESLxyU",
     },
     {
       name: "{guilds} servers",
       type: 1,
-      url: "https://www.youtube.com/watch?v=7aIjwQCEox8",
-    },
-    {
-      name: "Sponsor: https://links.triniumhost.com/",
-      type: 1,
-      url: "https://www.youtube.com/watch?v=7aIjwQCEox8",
+      url: "https://www.youtube.com/watch?v=tSFp2ESLxyU",
     },
   ];
 
@@ -205,7 +204,7 @@ aqua.on("trackStart", async (player, track) => {
     state.lastVoiceStatusUpdate = now;
     const title = track.info?.title || track.title;
     if (title) {
-      const status = `⭐ ${_functions.truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.9.0`;
+      const status = `⭐ ${_functions.truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.9.1`;
       client.channels
         .setVoiceStatus(player.voiceChannel, status)
         .catch(() => {});

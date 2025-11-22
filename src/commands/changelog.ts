@@ -19,7 +19,7 @@ const CONFIG = {
 		ISSUES_URL: "https://github.com/ToddyTheNoobDud/Kenium-Music/issues/new",
 	},
 	BOT: {
-		VERSION: "4.9.0",
+		VERSION: "4.9.1",
 		DEVELOPER: "mushroom0162",
 		CHANGELOG: `
 ### Added

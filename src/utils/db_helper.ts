@@ -20,7 +20,6 @@ export class ValidationError extends Error {
   }
 }
 
-
 const COLLECTION_NAME = 'guildSettings'
 const CACHE_MAX = 1000
 const CACHE_TTL_MS = 600000
@@ -64,11 +63,9 @@ class DatabaseManager {
       const db = getDatabase()
       this.settingsCollection = db.collection(COLLECTION_NAME)
 
+      // FIX: Replaced raw SQL with the class method for better compatibility
       try {
-        this.settingsCollection._db.prepare(
-          `CREATE INDEX IF NOT EXISTS idx_guild_settings_guild
-           ON "col_${COLLECTION_NAME}"(json_extract(doc, '$.guildId'))`
-        ).run()
+        this.settingsCollection.createIndex('guildId')
       } catch (err) {
         console.warn('Failed to create guild settings index:', err)
       }
@@ -106,7 +103,9 @@ class DatabaseManager {
 
     try {
       for (const chunk of chunks) {
-        const tx = collection._db.transaction(() => {
+        // Accessing private _db for transaction is necessary here.
+        // Cast to 'any' allows access to private property _db
+        const tx = (collection as any)._db.transaction(() => {
           for (const [guildId, updateData] of chunk) {
             const existing = collection.findOne({ guildId })
 
@@ -127,7 +126,6 @@ class DatabaseManager {
         tx()
       }
 
-      // success: reset failure counter and clear queue
       this.consecutiveFailures = 0
       this.updateQueue.clear()
     } catch (error) {
