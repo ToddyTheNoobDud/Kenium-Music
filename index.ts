@@ -64,8 +64,6 @@ const aqua = new Aqua(
 
 aqua.init(id);
 Object.assign(client, { aqua });
-aqua.on("debug", (msg) => client.logger.debug(msg));
-
 // State management
 const state = {
   presenceInterval: null,
