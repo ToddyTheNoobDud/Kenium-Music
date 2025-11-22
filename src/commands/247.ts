@@ -54,8 +54,6 @@ export default class twentcmds extends Command {
             const currentEnabled = guildSettings.twentyFourSevenEnabled === true;
             const newEnabled = !currentEnabled;
 
-            console.log(`Setting 24/7 mode to ${currentVoiceId} for guild ${guildId}`);
-
             // 4. Update DB (THE FIX)
             // We check 'newEnabled'. If true, we use the IDs. If false, we use null.
             // Crucially: We add '?? null' again just in case ctx.channelId is undefined.
