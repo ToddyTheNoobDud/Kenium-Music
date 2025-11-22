@@ -20,7 +20,7 @@ interface QueryOperator {
 }
 interface Query { [k: string]: any | QueryOperator }
 interface FindOptions { limit?: number; skip?: number; sort?: Record<string, 1 | -1>; fields?: string[] }
-interface Document { _id: string; createdAt: string; updatedAt: string; [k: string]: any }
+interface Document { _id: string; createdAt: string; updatedAt: string;[k: string]: any }
 interface AtomicUpdate {
   $set?: Record<string, any>
   $inc?: Record<string, number>
@@ -69,7 +69,7 @@ class SQLiteCollection extends EventEmitter {
     try {
       this._db.prepare(`CREATE INDEX IF NOT EXISTS "${this._tableName}_updated_idx" ON ${this._quotedTable}(updatedAt)`).run()
       this._db.prepare(`CREATE INDEX IF NOT EXISTS "${this._tableName}_created_idx" ON ${this._quotedTable}(createdAt)`).run()
-    } catch {}
+    } catch { }
 
     this._insertStmt = this._db.prepare(`INSERT INTO ${this._quotedTable} (_id, doc, createdAt, updatedAt)
       VALUES (?, ?, ?, ?) ON CONFLICT(_id) DO UPDATE SET doc=excluded.doc, updatedAt=excluded.updatedAt`)
@@ -201,7 +201,8 @@ class SQLiteCollection extends EventEmitter {
     if (!query || !Object.keys(query).length) throw new Error('Update query cannot be empty')
 
     const complex = updates.$inc || updates.$push || updates.$pull || updates.$addToSet || updates.$pullAll ||
-      (updates.$set && Object.keys(updates.$set).some(k => k.includes('.')))
+      (updates.$set && Object.keys(updates.$set).some(k => k.includes('.'))) ||
+      (updates.$set && Object.values(updates.$set).some(v => typeof v === 'boolean'))
 
     return complex ? this.performJsUpdate(query, updates) : this.performNativeSqlUpdate(query, updates.$set!)
   }
@@ -276,6 +277,7 @@ class SQLiteCollection extends EventEmitter {
     return this.getCachedStmt(`SELECT COUNT(*) as c FROM ${this._quotedTable} WHERE ${where}`).get(...params).c ?? 0
   }
 
+  // FINAL FIX: No parameters in DDL expressions (works on Bun + better-sqlite3)
   addGeneratedColumn(field: string, type = 'TEXT') {
     const colName = field.split('.').pop()!
     validateIdentifier(colName)
@@ -339,7 +341,7 @@ class SimpleDB extends EventEmitter {
   close() {
     this._collections.forEach(c => c.destroy())
     this._collections.clear()
-    try { this._db.close() } catch {}
+    try { this._db.close() } catch { }
   }
 }
 
