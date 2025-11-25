@@ -26,8 +26,8 @@ export function getPlaylistsCollection() {
   const collection = db.collection('playlists')
 
   try {
-    // Accessing private _db requires casting to any, or making _db public in SimpleDB
-    (collection as any)._db.prepare(
+    // Accessing private db requires casting to any, or making db public in SimpleDB
+    (collection as any).db.prepare(
       `CREATE INDEX IF NOT EXISTS idx_playlists_user_name
        ON "col_playlists"(
          json_extract(doc, '$.userId'),
