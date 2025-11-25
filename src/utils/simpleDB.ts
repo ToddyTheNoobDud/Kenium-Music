@@ -1,447 +1,312 @@
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 
-let Database: any
-if (process.isBun) {
-  const mod = require('bun:sqlite')
-  Database = mod.default || mod
-} else {
-  Database = require('better-sqlite3')
-}
+const IS_BUN = !!(process as any).isBun
+const Database: any = (() => {
+  try {
+    return IS_BUN ? require('bun:sqlite').default || require('bun:sqlite') : require('better-sqlite3')
+  } catch {
+    return require('better-sqlite3')
+  }
+})()
 
-// Constants
-const VALID_IDENTIFIER = /^[A-Za-z0-9_]+$/
-const JSON_PATH_COMPONENT = /^[A-Za-z0-9_]+$/
+const VALID_NAME = /^[A-Za-z0-9_]+$/
+const VALID_PATH = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/
 
-// Types
-interface QueryOperator {
-  $gt?: any
-  $gte?: any
-  $lt?: any
-  $lte?: any
-  $ne?: any
-  $in?: any[]
-  $nin?: any[]
-}
-
-type QueryValue = any | QueryOperator
-
-interface Query {
-  [key: string]: QueryValue
-}
-
+interface Query { [key: string]: any }
 interface FindOptions {
   limit?: number
   skip?: number
   sort?: { [key: string]: 1 | -1 }
   fields?: string[]
 }
-
 interface Document {
   _id?: string
   createdAt?: string
   updatedAt?: string
   [key: string]: any
 }
-
 interface AtomicUpdate {
-  $set?: { [key: string]: any }
-  $inc?: { [key: string]: number }
-  $push?: { [key: string]: any }
-  $pull?: { [key: string]: any }
+  $set?: Record<string, any>
+  $inc?: Record<string, number>
+  $push?: Record<string, any>
+  $pull?: Record<string, any>
 }
-
-// Utility functions
-const ensureDir = (dir: string): void => {
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-}
-
-const validateIdentifier = (name: string): void => {
-  if (!VALID_IDENTIFIER.test(name)) {
-    throw new Error(`Invalid identifier: ${name}`)
-  }
-}
-
-const buildJsonPath = (key: string): string => {
-  const parts = key.split('.')
-  for (const part of parts) {
-    if (!JSON_PATH_COMPONENT.test(part)) {
-      throw new Error(`Invalid key component: ${part}`)
-    }
-  }
-  return `$.${parts.join('.')}`
-}
-
-const generateId = (): string => {
-  const timestamp = Date.now().toString(36)
-  const random = randomBytes(6).toString('hex')
-  return `${timestamp}_${random}`
+interface SimpleDBOptions {
+  dbPath?: string
+  cacheSize?: number
 }
 
 class SQLiteCollection extends EventEmitter {
-  private _db: any
-  private _tableName: string
-  private _quotedTable: string
-  private _cacheSize: number
-  private _stmtCache: Map<string, any>
-  private _insertStmt: any
-  private _selectAllStmt: any
-  private _selectByIdStmt: any
-  private _updateByIdStmt: any
-  private _deleteByIdStmt: any
-  private _countAllStmt: any
+  private readonly db: any
+  private readonly table: string
+  private readonly qtable: string
+  private readonly cacheSize: number
+  private readonly stmtCache = new Map<string, any>()
+
+  private _insert?: any
+  private _byId?: any
+  private _updateById?: any
+  private _deleteById?: any
+  private _countAll?: any
 
   constructor(db: any, name: string, cacheSize = 50) {
     super()
-    validateIdentifier(name)
-    this._db = db
-    this._tableName = `col_${name}`
-    this._quotedTable = `"${this._tableName}"`
-    this._cacheSize = Math.max(0, cacheSize)
-    this._stmtCache = new Map()
 
-    this._db.prepare(
-      `CREATE TABLE IF NOT EXISTS ${this._quotedTable} (
+    if (!VALID_NAME.test(name)) {
+      throw new Error(`Invalid collection name: ${name}`)
+    }
+
+    this.db = db
+    this.table = `col_${name}`
+    this.qtable = `"${this.table}"`
+    this.cacheSize = Math.max(0, cacheSize)
+
+    this.db.prepare(`
+      CREATE TABLE IF NOT EXISTS ${this.qtable} (
         _id TEXT PRIMARY KEY,
         doc TEXT NOT NULL,
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL
-      )`
-    ).run()
+      )
+    `).run()
 
     try {
-      this._db.prepare(
-        `CREATE INDEX IF NOT EXISTS "${this._tableName}_updated_idx"
-         ON ${this._quotedTable}(updatedAt)`
-      ).run()
-      this._db.prepare(
-        `CREATE INDEX IF NOT EXISTS "${this._tableName}_created_idx"
-         ON ${this._quotedTable}(createdAt)`
-      ).run()
-    } catch (err) {
-      console.warn(`Failed to create indexes for ${name}:`, err)
+      this.db.prepare(`CREATE INDEX IF NOT EXISTS "${this.table}_updated" ON ${this.qtable}(updatedAt)`).run()
+      this.db.prepare(`CREATE INDEX IF NOT EXISTS "${this.table}_created" ON ${this.qtable}(createdAt)`).run()
+    } catch {}
+  }
+
+  private get insertStmt() {
+    return (this._insert ??= this.db.prepare(`
+      INSERT INTO ${this.qtable} (_id, doc, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(_id) DO UPDATE SET doc = excluded.doc, updatedAt = excluded.updatedAt
+    `))
+  }
+
+  private get byIdStmt() {
+    return (this._byId ??= this.db.prepare(`SELECT doc FROM ${this.qtable} WHERE _id = ?`))
+  }
+
+  private get updateStmt() {
+    return (this._updateById ??= this.db.prepare(`UPDATE ${this.qtable} SET doc = ?, updatedAt = ? WHERE _id = ?`))
+  }
+
+  private get deleteStmt() {
+    return (this._deleteById ??= this.db.prepare(`DELETE FROM ${this.qtable} WHERE _id = ?`))
+  }
+
+  private get countAllStmt() {
+    return (this._countAll ??= this.db.prepare(`SELECT COUNT(*) AS c FROM ${this.qtable}`))
+  }
+
+  private now(): string {
+    return new Date().toISOString()
+  }
+
+  private jsonPath(key: string): string {
+    if (!VALID_PATH.test(key)) {
+      throw new Error(`Invalid field path: ${key}`)
     }
-
-    this._insertStmt = this._db.prepare(
-      `INSERT INTO ${this._quotedTable} (_id, doc, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(_id) DO UPDATE SET
-         doc = excluded.doc,
-         updatedAt = excluded.updatedAt`
-    )
-
-    this._selectAllStmt = this._db.prepare(
-      `SELECT _id, doc FROM ${this._quotedTable}`
-    )
-
-    this._selectByIdStmt = this._db.prepare(
-      `SELECT _id, doc FROM ${this._quotedTable} WHERE _id = ?`
-    )
-
-    this._updateByIdStmt = this._db.prepare(
-      `UPDATE ${this._quotedTable} SET doc = ?, updatedAt = ? WHERE _id = ?`
-    )
-
-    this._deleteByIdStmt = this._db.prepare(
-      `DELETE FROM ${this._quotedTable} WHERE _id = ?`
-    )
-
-    this._countAllStmt = this._db.prepare(
-      `SELECT COUNT(*) as c FROM ${this._quotedTable}`
-    )
+    return `$.${key}`
   }
 
-  normalizeDoc(doc: any): Document {
-    if (!doc || typeof doc !== 'object') doc = {}
-    if (!doc._id) doc._id = generateId()
-    const now = new Date().toISOString()
-    if (!doc.createdAt) doc.createdAt = now
-    doc.updatedAt = now
-    return doc
-  }
-
-  parseRow(row: any): Document | null {
+  private parseDoc(raw: string): Document | null {
     try {
-      const parsed = JSON.parse(row.doc)
-      if (typeof parsed === 'object' && parsed !== null) {
-        if (!parsed._id) parsed._id = row._id
-        return parsed
-      }
-      return null
+      const doc = JSON.parse(raw)
+      return (doc && typeof doc === 'object') ? doc : null
     } catch {
       return null
     }
   }
 
-  buildWhereClause(query: Query): { where: string; params: any[] } {
-    const conditions: string[] = []
+  private buildWhere(query: Query): { sql: string; params: any[] } {
+    const parts: string[] = []
     const params: any[] = []
 
     for (const [key, value] of Object.entries(query)) {
-      const path = buildJsonPath(key)
+      const path = this.jsonPath(key)
 
-      if (value === null || value === undefined) {
-        conditions.push(`json_extract(doc, ?) IS NULL`)
+      if (value == null) {
+        parts.push('json_extract(doc, ?) IS NULL')
         params.push(path)
-      } else if (typeof value === 'object' && !Array.isArray(value)) {
-        for (const [op, opValue] of Object.entries(value)) {
+        continue
+      }
+
+      if (typeof value === 'object' && !Array.isArray(value)) {
+        for (const [op, opVal] of Object.entries(value)) {
           switch (op) {
             case '$gt':
-              conditions.push(`json_extract(doc, ?) > ?`)
-              params.push(path, opValue)
+              parts.push('json_extract(doc, ?) > ?')
+              params.push(path, opVal)
               break
             case '$gte':
-              conditions.push(`json_extract(doc, ?) >= ?`)
-              params.push(path, opValue)
+              parts.push('json_extract(doc, ?) >= ?')
+              params.push(path, opVal)
               break
             case '$lt':
-              conditions.push(`json_extract(doc, ?) < ?`)
-              params.push(path, opValue)
+              parts.push('json_extract(doc, ?) < ?')
+              params.push(path, opVal)
               break
             case '$lte':
-              conditions.push(`json_extract(doc, ?) <= ?`)
-              params.push(path, opValue)
+              parts.push('json_extract(doc, ?) <= ?')
+              params.push(path, opVal)
               break
             case '$ne':
-              conditions.push(`json_extract(doc, ?) != ?`)
-              params.push(path, opValue)
+              parts.push('json_extract(doc, ?) != ?')
+              params.push(path, opVal)
               break
             case '$in':
-              if (Array.isArray(opValue) && opValue.length > 0) {
-                const placeholders = opValue.map(() => '?').join(',')
-                conditions.push(`json_extract(doc, ?) IN (${placeholders})`)
-                params.push(path, ...opValue)
-              }
-              break
             case '$nin':
-              if (Array.isArray(opValue) && opValue.length > 0) {
-                const placeholders = opValue.map(() => '?').join(',')
-                conditions.push(`json_extract(doc, ?) NOT IN (${placeholders})`)
-                params.push(path, ...opValue)
+              if (Array.isArray(opVal) && opVal.length > 0) {
+                const ph = opVal.map(() => '?').join(', ')
+                parts.push(`json_extract(doc, ?) ${op === '$in' ? 'IN' : 'NOT IN'} (${ph})`)
+                params.push(path, ...opVal)
               }
               break
           }
         }
-      } else if (typeof value === 'boolean') {
-        conditions.push(`CAST(json_extract(doc, ?) AS INTEGER) = ?`)
-        params.push(path, value ? 1 : 0)
-      } else if (typeof value === 'number' || typeof value === 'string') {
-        conditions.push(`json_extract(doc, ?) = ?`)
-        params.push(path, value)
-      } else {
-        conditions.push(`json_extract(doc, ?) = json(?)`)
-        params.push(path, JSON.stringify(value))
+        continue
       }
+
+      if (value === true) {
+        parts.push('json_extract(doc, ?) = 1')
+        params.push(path)
+        continue
+      }
+
+      if (value === false) {
+        parts.push('json_extract(doc, ?) = 0')
+        params.push(path)
+        continue
+      }
+
+      parts.push('json_extract(doc, ?) = ?')
+      params.push(path, value)
     }
 
     return {
-      where: conditions.length > 0 ? conditions.join(' AND ') : '1=1',
+      sql: parts.length > 0 ? parts.join(' AND ') : '1=1',
       params
     }
   }
 
-  getSelectStmt(query: Query, options: FindOptions = {}): { stmt: any; params: any[] } {
-    const { where, params } = this.buildWhereClause(query)
-
-    let sql = `SELECT _id, doc FROM ${this._quotedTable}`
-
-    if (where !== '1=1') {
-      sql += ` WHERE ${where}`
+  private getStmt(sql: string, cacheKey?: string): any {
+    if (!cacheKey || this.cacheSize === 0) {
+      return this.db.prepare(sql)
     }
 
-    if (options.sort) {
-      const sortClauses = Object.entries(options.sort).map(([key, direction]) => {
-        const path = buildJsonPath(key)
-        return `json_extract(doc, '${path}') ${direction === 1 ? 'ASC' : 'DESC'}`
-      })
-      if (sortClauses.length > 0) {
-        sql += ` ORDER BY ${sortClauses.join(', ')}`
+    const cached = this.stmtCache.get(cacheKey)
+    if (cached) {
+      return cached
+    }
+
+    if (this.stmtCache.size >= this.cacheSize) {
+      const oldest = this.stmtCache.keys().next().value
+      if (oldest) {
+        this.stmtCache.delete(oldest)
       }
     }
 
-    if (options.limit) {
-      sql += ` LIMIT ${options.limit}`
-    }
-    if (options.skip) {
-      sql += ` OFFSET ${options.skip}`
-    }
-
-    if (!options.limit && !options.skip && !options.sort) {
-      const cacheKey = where
-      if (this._cacheSize > 0 && this._stmtCache.has(cacheKey)) {
-        return { stmt: this._stmtCache.get(cacheKey), params }
-      }
-
-      const stmt = this._db.prepare(sql)
-
-      if (this._cacheSize > 0) {
-        if (this._stmtCache.size >= this._cacheSize) {
-          const firstKey = this._stmtCache.keys().next().value
-          if (firstKey) this._stmtCache.delete(firstKey)
-        }
-        this._stmtCache.set(cacheKey, stmt)
-      }
-
-      return { stmt, params }
-    }
-
-    return { stmt: this._db.prepare(sql), params }
-  }
-
-  getCountStmt(query: Query): { stmt: any; params: any[] } {
-    const { where, params } = this.buildWhereClause(query)
-
-    let sql = `SELECT COUNT(*) as c FROM ${this._quotedTable}`
-
-    if (where !== '1=1') {
-      sql += ` WHERE ${where}`
-    }
-
-    const stmt = this._db.prepare(sql)
-    return { stmt, params }
+    const stmt = this.db.prepare(sql)
+    this.stmtCache.set(cacheKey, stmt)
+    return stmt
   }
 
   insert(docs: Document | Document[]): Document | Document[] {
-    const arr = Array.isArray(docs) ? docs : [docs]
-    const normalized = arr.map(d => this.normalizeDoc(d))
+    const isArray = Array.isArray(docs)
+    const items = isArray ? docs : [docs]
+    const now = this.now()
+    const result: Document[] = []
 
-    try {
-      const tx = this._db.transaction(() => {
-        for (const doc of normalized) {
-          this._insertStmt.run(
-            doc._id,
-            JSON.stringify(doc),
-            doc.createdAt,
-            doc.updatedAt
-          )
+    this.db.transaction(() => {
+      for (const doc of items) {
+        const full: Document = {
+          ...doc,
+          _id: doc._id || randomUUID(),
+          createdAt: doc.createdAt || now,
+          updatedAt: now
         }
-      })
-      tx()
-      this.emit('change', 'insert', normalized)
-      return Array.isArray(docs) ? normalized : normalized[0]
-    } catch (error) {
-      this.emit('error', error)
-      throw error
-    }
+        this.insertStmt.run(full._id, JSON.stringify(full), full.createdAt, full.updatedAt)
+        result.push(full)
+      }
+    })()
+
+    this.emit('change', 'insert', isArray ? result : result[0])
+    return isArray ? result : result[0]
   }
 
-  find(query: Query = {}, options: FindOptions = {}): Document[] {
-    try {
-      const { stmt, params } = this.getSelectStmt(query, options)
-      const rows = stmt.all(...params)
-      const results: Document[] = []
+  find(query: Query = {}, opts: FindOptions = {}): Document[] {
+    const { sql, params } = this.buildWhere(query)
+    let querySql = `SELECT doc FROM ${this.qtable} WHERE ${sql}`
 
-      for (const row of rows) {
-        const doc = this.parseRow(row)
-        if (doc) {
-          if (options.fields && options.fields.length > 0) {
-            const projected: any = { _id: doc._id }
-            for (const field of options.fields) {
-              if (field in doc) projected[field] = doc[field]
-            }
-            results.push(projected)
-          } else {
-            results.push(doc)
-          }
-        }
+    if (opts.sort) {
+      const clauses = Object.entries(opts.sort).map(([field, dir]) => {
+        const path = this.jsonPath(field)
+        return `json_extract(doc, '${path}') ${dir === 1 ? 'ASC' : 'DESC'}`
+      })
+      if (clauses.length > 0) {
+        querySql += ` ORDER BY ${clauses.join(', ')}`
+      }
+    }
+
+    if (typeof opts.limit === 'number') {
+      if (opts.limit < 0) {
+        throw new Error('limit must be >= 0')
+      }
+      querySql += ` LIMIT ${opts.limit}`
+    }
+
+    if (typeof opts.skip === 'number') {
+      if (opts.skip < 0) {
+        throw new Error('skip must be >= 0')
+      }
+      querySql += ` OFFSET ${opts.skip}`
+    }
+
+    const cacheKey = (!opts.limit && !opts.skip && !opts.sort) ? sql : undefined
+    const stmt = this.getStmt(querySql, cacheKey)
+    const rows = stmt.all(...params)
+
+    const fields = opts.fields?.length ? new Set(opts.fields) : null
+    const result: Document[] = []
+
+    for (const row of rows) {
+      const doc = this.parseDoc(row.doc)
+      if (!doc) {
+        continue
       }
 
-      return results
-    } catch (error) {
-      this.emit('error', error)
-      throw error
+      if (fields) {
+        const proj: Document = { _id: doc._id }
+        for (const f of fields) {
+          if (Object.prototype.hasOwnProperty.call(doc, f)) {
+            proj[f] = doc[f]
+          }
+        }
+        result.push(proj)
+      } else {
+        result.push(doc)
+      }
     }
+
+    return result
   }
 
-  findOne(query: Query = {}, options: FindOptions = {}): Document | null {
-    const results = this.find(query, { ...options, limit: 1 })
-    return results.length > 0 ? results[0] : null
+  findOne(query: Query = {}, opts?: FindOptions): Document | null {
+    const results = this.find(query, { ...opts, limit: 1 })
+    return results[0] ?? null
   }
 
   findById(id: string): Document | null {
-    if (!id) return null
-    try {
-      const row = this._selectByIdStmt.get(id)
-      return row ? this.parseRow(row) : null
-    } catch (error) {
-      this.emit('error', error)
-      throw error
+    if (!id) {
+      return null
     }
-  }
-
-  updateAtomic(query: Query, updates: AtomicUpdate): number {
-    if (!query || Object.keys(query).length === 0) {
-      throw new Error('Update query cannot be empty')
-    }
-
-    const now = new Date().toISOString()
-
-    try {
-      if (query._id && Object.keys(query).length === 1) {
-        const id = query._id as string
-        const row = this._selectByIdStmt.get(id)
-        if (!row) return 0
-
-        const doc = this.parseRow(row)
-        if (!doc) return 0
-
-        const merged: any = { ...doc }
-
-        if (updates.$set) {
-          for (const [key, value] of Object.entries(updates.$set)) {
-            merged[key] = value
-          }
-        }
-
-        if (updates.$inc) {
-          for (const [key, value] of Object.entries(updates.$inc)) {
-            merged[key] = (typeof merged[key] === 'number' ? merged[key] : 0) + value
-          }
-        }
-
-        if (updates.$push) {
-          for (const [key, value] of Object.entries(updates.$push)) {
-            if (!Array.isArray(merged[key])) merged[key] = []
-            merged[key].push(value)
-          }
-        }
-
-        if (updates.$pull) {
-          for (const [key, value] of Object.entries(updates.$pull)) {
-            if (Array.isArray(merged[key])) {
-              merged[key] = merged[key].filter((item: any) => item !== value)
-            }
-          }
-        }
-
-        merged.updatedAt = now
-
-        this._updateByIdStmt.run(JSON.stringify(merged), now, merged._id)
-        this.emit('change', 'update', { query, updates })
-        return 1
-      }
-
-      const { where, params: whereParams } = this.buildWhereClause(query)
-      const selectSql = `SELECT _id FROM ${this._quotedTable} WHERE ${where}`
-      const selectStmt = this._db.prepare(selectSql)
-      const rows = selectStmt.all(...whereParams)
-
-      if (rows.length === 0) return 0
-
-      const tx = this._db.transaction(() => {
-        for (const row of rows) {
-          this.updateAtomic({ _id: row._id }, updates)
-        }
-      })
-
-      tx()
-      return rows.length
-    } catch (error) {
-      this.emit('error', error)
-      throw error
-    }
+    const row = this.byIdStmt.get(id)
+    return row ? this.parseDoc(row.doc) : null
   }
 
   update(query: Query, updates: Partial<Document>): number {
@@ -449,56 +314,99 @@ class SQLiteCollection extends EventEmitter {
       throw new Error('Update query cannot be empty')
     }
 
-    const now = new Date().toISOString()
+    const { sql, params } = this.buildWhere(query)
+    const rows = this.db.prepare(`SELECT _id, doc FROM ${this.qtable} WHERE ${sql}`).all(...params)
 
-    try {
-      if (query._id && Object.keys(query).length === 1) {
-        const existing = this.findById(query._id as string)
-        if (!existing) return 0
+    if (rows.length === 0) {
+      return 0
+    }
 
-        const merged = {
-          ...existing,
+    const now = this.now()
+
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const doc = this.parseDoc(row.doc)
+        if (!doc) {
+          continue
+        }
+
+        const next: Document = {
+          ...doc,
           ...updates,
-          _id: existing._id,
-          createdAt: existing.createdAt,
+          _id: row._id,
+          createdAt: doc.createdAt,
           updatedAt: now
         }
 
-        this._updateByIdStmt.run(JSON.stringify(merged), now, merged._id)
-        this.emit('change', 'update', { query, doc: merged })
-        return 1
+        this.updateStmt.run(JSON.stringify(next), now, row._id)
       }
+    })()
 
-      const { where, params } = this.buildWhereClause(query)
-      const selectSql = `SELECT _id, doc FROM ${this._quotedTable} WHERE ${where}`
-      const selectStmt = this._db.prepare(selectSql)
-      const rows = selectStmt.all(...params)
+    this.emit('change', 'update', { count: rows.length })
+    return rows.length
+  }
 
-      if (rows.length === 0) return 0
+  updateAtomic(query: Query, ops: AtomicUpdate): number {
+    if (!query || Object.keys(query).length === 0) {
+      throw new Error('Update query cannot be empty')
+    }
 
-      const tx = this._db.transaction(() => {
-        for (const row of rows) {
-          const doc = this.parseRow(row)
-          if (doc) {
-            const merged = {
-              ...doc,
-              ...updates,
-              _id: doc._id,
-              createdAt: doc.createdAt,
-              updatedAt: now
-            }
-            this._updateByIdStmt.run(JSON.stringify(merged), now, merged._id)
+    const { sql, params } = this.buildWhere(query)
+    const rows = this.db.prepare(`SELECT _id, doc FROM ${this.qtable} WHERE ${sql}`).all(...params)
+
+    if (rows.length === 0) {
+      return 0
+    }
+
+    const now = this.now()
+
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const doc = this.parseDoc(row.doc)
+        if (!doc) {
+          continue
+        }
+
+        const next: Document = {
+          ...doc,
+          _id: row._id,
+          createdAt: doc.createdAt,
+          updatedAt: now
+        }
+
+        if (ops.$set) {
+          Object.assign(next, ops.$set)
+        }
+
+        if (ops.$inc) {
+          for (const [k, v] of Object.entries(ops.$inc)) {
+            next[k] = (typeof next[k] === 'number' ? next[k] : 0) + v
           }
         }
-      })
 
-      tx()
-      this.emit('change', 'update', { query, updates, count: rows.length })
-      return rows.length
-    } catch (error) {
-      this.emit('error', error)
-      throw error
-    }
+        if (ops.$push) {
+          for (const [k, v] of Object.entries(ops.$push)) {
+            if (!Array.isArray(next[k])) {
+              next[k] = []
+            }
+            next[k].push(v)
+          }
+        }
+
+        if (ops.$pull) {
+          for (const [k, v] of Object.entries(ops.$pull)) {
+            if (Array.isArray(next[k])) {
+              next[k] = next[k].filter((x: any) => x !== v)
+            }
+          }
+        }
+
+        this.updateStmt.run(JSON.stringify(next), now, row._id)
+      }
+    })()
+
+    this.emit('change', 'update', { count: rows.length })
+    return rows.length
   }
 
   delete(query: Query): number {
@@ -506,157 +414,112 @@ class SQLiteCollection extends EventEmitter {
       throw new Error('Delete query cannot be empty')
     }
 
-    try {
-      if (query._id && Object.keys(query).length === 1) {
-        const result = this._deleteByIdStmt.run(query._id)
-        if (result.changes > 0) {
-          this.emit('change', 'delete', { _id: query._id })
-        }
-        return result.changes
-      }
+    const { sql, params } = this.buildWhere(query)
+    const res = this.db.prepare(`DELETE FROM ${this.qtable} WHERE ${sql}`).run(...params)
 
-      const { where, params } = this.buildWhereClause(query)
-      const deleteSql = `DELETE FROM ${this._quotedTable} WHERE ${where}`
-      const deleteStmt = this._db.prepare(deleteSql)
-      const result = deleteStmt.run(...params)
-
-      if (result.changes > 0) {
-        this.emit('change', 'delete', { query, count: result.changes })
-      }
-
-      return result.changes
-    } catch (error) {
-      this.emit('error', error)
-      throw error
+    if (res.changes > 0) {
+      this.emit('change', 'delete', { count: res.changes })
     }
+
+    return res.changes
   }
 
   count(query: Query = {}): number {
-    try {
-      if (!query || Object.keys(query).length === 0) {
-        const row = this._countAllStmt.get()
-        return row?.c || 0
-      }
-
-      const { stmt, params } = this.getCountStmt(query)
-      const row = stmt.get(...params)
-      return row?.c || 0
-    } catch (error) {
-      this.emit('error', error)
-      throw error
+    if (Object.keys(query).length === 0) {
+      return this.countAllStmt.get().c || 0
     }
+
+    const { sql, params } = this.buildWhere(query)
+    const row = this.db.prepare(`SELECT COUNT(*) AS c FROM ${this.qtable} WHERE ${sql}`).get(...params)
+    return row?.c || 0
   }
 
   createIndex(field: string, name?: string): void {
-    validateIdentifier(field)
-    const indexName = name || `${this._tableName}_${field}_idx`
-    validateIdentifier(indexName)
+    const path = this.jsonPath(field)
+    const idxName = name || `${this.table}_${field.replace(/\./g, '_')}_idx`
 
-    const path = buildJsonPath(field)
-    const sql = `CREATE INDEX IF NOT EXISTS "${indexName}"
-                 ON ${this._quotedTable}(json_extract(doc, '${path}'))`
-
-    try {
-      this._db.prepare(sql).run()
-    } catch (error) {
-      console.warn(`Failed to create index ${indexName}:`, error)
-      throw error
+    if (!VALID_NAME.test(idxName)) {
+      throw new Error(`Invalid index name: ${idxName}`)
     }
+
+    this.db.prepare(`CREATE INDEX IF NOT EXISTS "${idxName}" ON ${this.qtable}(json_extract(doc, '${path}'))`).run()
   }
 
   getStats(): { documentCount: number; tableName: string } {
-    const row = this._countAllStmt.get()
     return {
-      documentCount: row?.c || 0,
-      tableName: this._tableName
+      documentCount: this.countAllStmt.get()?.c || 0,
+      tableName: this.table
     }
   }
 
   destroy(): void {
-    this._stmtCache.clear()
+    this.stmtCache.clear()
     this.removeAllListeners()
   }
 }
 
-interface SimpleDBOptions {
-  dbPath?: string
-  cacheSize?: number
-  enableWAL?: boolean
-}
-
-class SimpleDB extends EventEmitter {
-  private _dbPath: string
-  private _cacheSize: number
-  private _collections: Map<string, SQLiteCollection>
-  private _db: any
+export class SimpleDB extends EventEmitter {
+  private readonly db: any
+  private readonly collections = new Map<string, SQLiteCollection>()
+  private readonly cacheSize: number
 
   constructor(options: SimpleDBOptions = {}) {
     super()
-    this._dbPath = options.dbPath || join(process.cwd(), 'db', 'sey.sqlite')
-    ensureDir(join(process.cwd(), 'db'))
-    this._cacheSize = typeof options.cacheSize === 'number' ? Math.max(0, options.cacheSize) : 50
-    this._collections = new Map()
 
-    try {
-      this._db = new Database(this._dbPath)
+    const dir = join(process.cwd(), 'db')
+    const path = options.dbPath || join(dir, 'sey.sqlite')
+    this.cacheSize = options.cacheSize ?? 50
 
-      if (process.isBun) {
-        this._db.run('PRAGMA journal_mode = WAL')
-        this._db.run('PRAGMA synchronous = NORMAL')
-        this._db.run('PRAGMA cache_size = 10000')
-        this._db.run('PRAGMA temp_store = MEMORY')
-        this._db.run('PRAGMA mmap_size = 268435456')
-        this._db.run('PRAGMA foreign_keys = ON')
-        this._db.run('PRAGMA busy_timeout = 30000')
-      } else {
-        this._db.pragma('journal_mode = WAL')
-        this._db.pragma('synchronous = NORMAL')
-        this._db.pragma('cache_size = 10000')
-        this._db.pragma('temp_store = MEMORY')
-        this._db.pragma('mmap_size = 268435456')
-        this._db.pragma('foreign_keys = ON')
-        this._db.pragma('busy_timeout = 30000')
-      }
-    } catch (error) {
-      this.emit('error', error)
-      throw error
+    mkdirSync(dir, { recursive: true })
+    this.db = new Database(path)
+
+    const pragmas = [
+      'journal_mode = WAL',
+      'synchronous = NORMAL',
+      'cache_size = -10000',
+      'temp_store = MEMORY',
+      'mmap_size = 268435456',
+      'foreign_keys = ON',
+      'busy_timeout = 30000'
+    ]
+
+    for (const p of pragmas) {
+      try {
+        if (IS_BUN) {
+          this.db.run(`PRAGMA ${p}`)
+        } else {
+          this.db.pragma(p)
+        }
+      } catch {}
     }
   }
 
   collection(name: string): SQLiteCollection {
-    let col = this._collections.get(name)
-    if (col) return col
+    const existing = this.collections.get(name)
+    if (existing) {
+      return existing
+    }
 
-    col = new SQLiteCollection(this._db, name, this._cacheSize)
-    col.on('change', (type, data) => this.emit('change', type, data))
-    col.on('error', (error) => this.emit('error', error))
-    this._collections.set(name, col)
+    const col = new SQLiteCollection(this.db, name, this.cacheSize)
+    col.on('change', (...args) => this.emit('change', ...args))
+    col.on('error', (err) => this.emit('error', err))
+    this.collections.set(name, col)
 
     return col
   }
 
   transaction(fn: () => void): void {
-    try {
-      const tx = this._db.transaction(fn)
-      tx()
-    } catch (error) {
-      this.emit('error', error)
-      throw error
-    }
+    this.db.transaction(fn)()
   }
 
   close(): void {
-    for (const col of this._collections.values()) {
+    for (const col of this.collections.values()) {
       col.destroy()
     }
-    this._collections.clear()
+    this.collections.clear()
 
     try {
-      this._db.close()
-    } catch (error) {
-      console.warn('Error closing database:', error)
-    }
+      this.db.close()
+    } catch {}
   }
 }
-
-export { SimpleDB }
