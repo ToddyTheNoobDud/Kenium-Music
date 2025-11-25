@@ -63,9 +63,11 @@ class DatabaseManager {
       const db = getDatabase()
       this.settingsCollection = db.collection(COLLECTION_NAME)
 
-      // FIX: Replaced raw SQL with the class method for better compatibility
       try {
-        this.settingsCollection.createIndex('guildId')
+        // Use the wrapper method, checking if it exists first to avoid crashes
+        if (this.settingsCollection.createIndex) {
+            this.settingsCollection.createIndex('guildId')
+        }
       } catch (err) {
         console.warn('Failed to create guild settings index:', err)
       }
@@ -103,10 +105,8 @@ class DatabaseManager {
 
     try {
       for (const chunk of chunks) {
-        // Accessing private _db for transaction is necessary here.
-        // Cast to 'any' allows access to private property _db
-        const tx = (collection as any)._db.transaction(() => {
-          for (const [guildId, updateData] of chunk) {
+
+        for (const [guildId, updateData] of chunk) {
             const existing = collection.findOne({ guildId })
 
             if (existing) {
@@ -120,10 +120,7 @@ class DatabaseManager {
               collection.insert(doc)
               this.cache.set(guildId, doc)
             }
-          }
-        })
-
-        tx()
+        }
       }
 
       this.consecutiveFailures = 0
