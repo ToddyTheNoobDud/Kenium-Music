@@ -26,7 +26,6 @@ import { closeDatabase } from "./src/utils/db";
 const PRESENCE_UPDATE_INTERVAL = 60000;
 const VOICE_STATUS_LENGTH = 30;
 const VOICE_STATUS_THROTTLE = 5000;
-const ERROR_LOG_THROTTLE = 5000;
 const COUNT_CACHE_TTL = 30000;
 
 const { NODE_HOST, NODE_PASSWORD, NODE_PORT, NODE_NAME, NODE_SECURE, id } =
@@ -97,10 +96,6 @@ const shutdown = async () => {
   closeDatabase();
   process.exit(0);
 };
-
-aqua.on('debug', (message) => {
-  client.logger.debug(`[Aqua] ${message}`);
-});
 
 export const updatePresence = (clientInstance) => {
   if (state.presenceInterval) clearInterval(state.presenceInterval);
@@ -230,11 +225,7 @@ aqua.on("queueEnd", cleanupHandler);
 aqua.on("trackEnd", cleanupHandler);
 
 aqua.on("nodeError", (node, error) => {
-  const now = Date.now();
-  if (now - state.lastErrorLog > ERROR_LOG_THROTTLE) {
-    client.logger.error(`Node [${node.name}] error: ${error.message}`);
-    state.lastErrorLog = now;
-  }
+  console.error(`Node [${node.name}] error: ${error.message}`);
 });
 
 aqua.on("socketClosed", (player, payload) => {

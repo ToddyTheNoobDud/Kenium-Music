@@ -1,6 +1,8 @@
 import { getDatabase } from './db'
 import { lru } from 'tiny-lru'
 
+const toBool = (v: any) => v === true || v === 1 || v === '1' || v === 'true';
+
 export class DatabaseError extends Error {
   constructor(message: string, cause?: unknown) {
     super(message)
@@ -64,9 +66,8 @@ class DatabaseManager {
       this.settingsCollection = db.collection(COLLECTION_NAME)
 
       try {
-        // Use the wrapper method, checking if it exists first to avoid crashes
         if (this.settingsCollection.createIndex) {
-            this.settingsCollection.createIndex('guildId')
+          this.settingsCollection.createIndex('guildId')
         }
       } catch (err) {
         console.warn('Failed to create guild settings index:', err)
@@ -89,6 +90,7 @@ class DatabaseManager {
 
   processBatchUpdates() {
     if (this.updateQueue.size === 0) return
+
     if (this.isProcessing) {
       this.scheduleBatch()
       return
@@ -96,38 +98,57 @@ class DatabaseManager {
 
     this.isProcessing = true
     const collection = this.getSettingsCollection()
-    const updates = Array.from(this.updateQueue.entries())
 
-    const chunks = []
+    const batch = this.updateQueue
+    this.updateQueue = new Map<string, any>()
+
+    const updates = Array.from(batch.entries())
+
+    const chunks: Array<Array<[string, any]>> = []
     for (let i = 0; i < updates.length; i += MAX_BATCH_SIZE) {
       chunks.push(updates.slice(i, i + MAX_BATCH_SIZE))
     }
 
     try {
       for (const chunk of chunks) {
+        const docsToUpsert: any[] = []
 
         for (const [guildId, updateData] of chunk) {
-            const existing = collection.findOne({ guildId })
+          const base =
+            this.cache.get(guildId) ??
+            collection.findById(guildId) ??
+            _functions.createDefaultSettings(guildId)
 
-            if (existing) {
-              collection.updateAtomic(
-                { _id: existing._id },
-                { $set: updateData }
-              )
-              this.cache.set(guildId, { ...existing, ...updateData })
-            } else {
-              const doc = { ..._functions.createDefaultSettings(guildId), ...updateData }
-              collection.insert(doc)
-              this.cache.set(guildId, doc)
-            }
+          const next = {
+            ...base,
+            ...updateData,
+            _id: guildId,
+            guildId,
+            createdAt: base.createdAt
+          }
+
+          next.twentyFourSevenEnabled = toBool(next.twentyFourSevenEnabled)
+
+          docsToUpsert.push(next)
+        }
+
+        const saved = collection.insert(docsToUpsert) as any[]
+
+        for (const doc of saved) {
+          if (doc?.guildId) this.cache.set(doc.guildId, doc)
+          else if (doc?._id) this.cache.set(doc._id, doc)
         }
       }
 
       this.consecutiveFailures = 0
-      this.updateQueue.clear()
     } catch (error) {
       console.error('Batch update failed:', error)
       this.consecutiveFailures++
+
+      for (const [k, v] of batch.entries()) {
+        const existing = this.updateQueue.get(k)
+        this.updateQueue.set(k, existing ? { ...v, ...existing } : v)
+      }
 
       if (this.updateTimer) {
         clearTimeout(this.updateTimer)
@@ -180,10 +201,15 @@ export const getGuildSettings = (guildId: string) => {
 
   try {
     const collection = dbManager.getSettingsCollection()
-    const found = collection.findOne({ guildId })
+
+    const found = collection.findById(guildId)
+
     const settings = found || _functions.createDefaultSettings(guildId)
 
+    settings.twentyFourSevenEnabled = toBool(settings.twentyFourSevenEnabled)
+
     if (!found) collection.insert(settings)
+
     dbManager.cache.set(guildId, settings)
     return settings
   } catch (error) {
@@ -196,11 +222,17 @@ export const updateGuildSettings = (guildId: string, updates: any) => {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
 
+  if (Object.prototype.hasOwnProperty.call(updates, 'twentyFourSevenEnabled')) {
+    updates.twentyFourSevenEnabled = toBool(updates.twentyFourSevenEnabled)
+  }
+
   const cached = dbManager.cache.get(guildId)
   if (cached) {
     Object.assign(cached, updates)
+    cached.twentyFourSevenEnabled = toBool(cached.twentyFourSevenEnabled)
     dbManager.cache.set(guildId, cached)
   }
+
   dbManager.queueUpdate(guildId, updates)
 }
 
@@ -211,19 +243,25 @@ export const updateGuildSettingsSync = (guildId: string, updates: any) => {
 
   try {
     const collection = dbManager.getSettingsCollection()
-    const existing = collection.findOne({ guildId })
 
-    if (existing) {
-      collection.updateAtomic({ _id: existing._id }, { $set: updates })
-      const updated = { ...existing, ...updates }
-      dbManager.cache.set(guildId, updated)
-      return updated
-    } else {
-      const doc = { ..._functions.createDefaultSettings(guildId), ...updates }
-      collection.insert(doc)
-      dbManager.cache.set(guildId, doc)
-      return doc
+    const base =
+      dbManager.cache.get(guildId) ??
+      collection.findById(guildId) ??
+      _functions.createDefaultSettings(guildId)
+
+    const next = {
+      ...base,
+      ...updates,
+      _id: guildId,
+      guildId,
+      createdAt: base.createdAt
     }
+
+    next.twentyFourSevenEnabled = toBool(next.twentyFourSevenEnabled)
+
+    const saved = collection.insert(next) as any
+    dbManager.cache.set(guildId, saved)
+    return saved
   } catch (error) {
     throw new DatabaseError('Failed to update guild settings', error)
   }
@@ -231,8 +269,7 @@ export const updateGuildSettingsSync = (guildId: string, updates: any) => {
 
 export const isTwentyFourSevenEnabled = (guildId: string): boolean => {
   try {
-    const settings = getGuildSettings(guildId)
-    return settings.twentyFourSevenEnabled === true
+    return toBool(getGuildSettings(guildId).twentyFourSevenEnabled)
   } catch {
     return false
   }
@@ -241,7 +278,7 @@ export const isTwentyFourSevenEnabled = (guildId: string): boolean => {
 export const getChannelIds = (guildId: string) => {
   try {
     const settings = getGuildSettings(guildId)
-    return settings.twentyFourSevenEnabled && settings.voiceChannelId && settings.textChannelId
+    return toBool(settings.twentyFourSevenEnabled) && settings.voiceChannelId && settings.textChannelId
       ? { voiceChannelId: settings.voiceChannelId, textChannelId: settings.textChannelId }
       : null
   } catch {
@@ -276,17 +313,7 @@ export const setGuildLang = (guildId: string, lang: string): boolean => {
   }
 
   try {
-    const collection = dbManager.getSettingsCollection()
-    const existing = collection.findOne({ guildId })
-
-    if (existing) {
-      collection.updateAtomic({ _id: existing._id }, { $set: { lang } })
-      dbManager.cache.set(guildId, { ...existing, lang })
-    } else {
-      const doc = { ..._functions.createDefaultSettings(guildId), lang }
-      collection.insert(doc)
-      dbManager.cache.set(guildId, doc)
-    }
+    updateGuildSettingsSync(guildId, { lang })
     return true
   } catch {
     return false

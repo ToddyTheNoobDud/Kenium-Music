@@ -16,10 +16,9 @@ const RESOLVE_CONCURRENCY = 5
 // Optimized regex patterns
 const TITLE_SANITIZE_REGEX = /[^\w\s\-_.]/g
 const YT_ID_REGEX = /(?:youtube\.com\/.*[?&]v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/
-const NUMERIC_PATTERN = /^\d+$/
 
 // Platform lookup map for O(1) access
-const PLATFORM_MAP = new Map<string, any>([
+const PLATFORM_MAP = new Map([
   ['youtu', MUSIC_PLATFORMS.youtube],
   ['soundcloud', MUSIC_PLATFORMS.soundcloud],
   ['spotify', MUSIC_PLATFORMS.spotify],
@@ -33,10 +32,8 @@ const playlistsCollection = db.collection('playlists')
 export const _functions = {
   formatTime: (ms) => {
     const s = Math.floor(ms / 1000)
-    const h = Math.floor(s / 3600)
-    const m = Math.floor((s % 3600) / 60)
-    const sec = s % 60
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+    const pad = n => String(n).padStart(2, '0')
+    return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`
   },
 
   truncateText: (text, maxLength = MAX_TITLE_LENGTH) => {
@@ -64,27 +61,30 @@ export const _functions = {
     return ICONS.music
   },
 
-  extractYouTubeId: (uri) => {
-    if (!uri) return null
-    const match = YT_ID_REGEX.exec(uri)
-    return match?.[1] || null
-  },
+  extractYouTubeId: (uri) => uri ? YT_ID_REGEX.exec(uri)?.[1] ?? null : null,
 
-  setPlayerVolume: async (player, volume) => {
-    if (!player) return
-    await player.setVolume?.(volume)
-  },
+  setPlayerVolume: (player, volume) => player?.setVolume?.(volume),
 
   addToQueueFront: (queue, item) => {
     if (!queue) return
-    if (Array.isArray(queue)) {
-      queue.unshift(item)
-    } else if (typeof queue.unshift === 'function') {
-      queue.unshift(item)
-    } else if (typeof queue.add === 'function') {
-      queue.add(item).catch(() => {})
+    if (typeof queue.unshift === 'function') queue.unshift(item)
+    else queue.add?.(item)?.catch?.(() => {})
+  },
+
+  isNumeric: (str) => /^\d+$/.test(str),
+
+  safeDefer: async (interaction, flags = 64) => {
+    try {
+      await interaction.deferReply(flags)
+      return true
+    } catch {
+      return false
     }
-  }
+  },
+
+  safeReply: (interaction, content) => interaction.editOrReply({ content }).catch(() => {}),
+
+  getQueueLength: (queue) => queue?.length ?? queue?.size ?? 0
 }
 
 export const createNowPlayingEmbed = (player, track, client) => {
@@ -93,27 +93,17 @@ export const createNowPlayingEmbed = (player, track, client) => {
   const platform = _functions.getPlatform(uri)
   const volumeIcon = volume === 0 ? '🔇' : volume < 50 ? '🔈' : '🔊'
   const loopIcon = loop === 'track' ? '🔂' : loop === 'queue' ? '🔁' : '▶️'
-  const truncatedTitle = _functions.truncateText(title)
-  const capitalizedTitle = truncatedTitle.replace(/\b\w/g, l => l.toUpperCase())
+  const capitalizedTitle = _functions.truncateText(title).replace(/\b\w/g, l => l.toUpperCase())
 
   return new Container({
     components: [
-      {
-        type: 10,
-        content: `**${platform.emoji} Now Playing** | **Queue size**: ${player?.queue?.length || 0}`
-      },
+      { type: 10, content: `**${platform.emoji} Now Playing** | **Queue size**: ${_functions.getQueueLength(player?.queue)}` },
       { type: 14, divider: true, spacing: 1 },
       {
         type: 9,
         components: [
-          {
-            type: 10,
-            content: `## **[\`${capitalizedTitle}\`](${uri})**\n\`${_functions.formatTime(position)}\` / \`${_functions.formatTime(length)}\``
-          },
-          {
-            type: 10,
-            content: `${volumeIcon} \`${volume}%\` ${loopIcon} Requester: \`${requester?.username || 'Unknown'}\``
-          }
+          { type: 10, content: `## **[\`${capitalizedTitle}\`](${uri})**\n\`${_functions.formatTime(position)}\` / \`${_functions.formatTime(length)}\`` },
+          { type: 10, content: `${volumeIcon} \`${volume}%\` ${loopIcon} Requester: \`${requester?.username || 'Unknown'}\`` }
         ],
         accessory: {
           type: 11,
@@ -136,13 +126,17 @@ export const createNowPlayingEmbed = (player, track, client) => {
   })
 }
 
+// Volume adjustment helper
+const adjustVolume = async (player, delta) => {
+  const vol = Math.max(MIN_VOLUME, Math.min(MAX_VOLUME, (player.volume || 0) + delta))
+  await _functions.setPlayerVolume(player, vol)
+  return { message: `${delta > 0 ? '🔊' : '🔉'} Volume set to ${vol}%`, shouldUpdate: true }
+}
+
 // Action handlers
 const actionHandlers = {
-  volume_down: async (player) => {
-    const vol = Math.max(MIN_VOLUME, (player.volume || 0) - VOLUME_STEP)
-    await _functions.setPlayerVolume(player, vol)
-    return { message: `🔉 Volume set to ${vol}%`, shouldUpdate: true }
-  },
+  volume_down: (player) => adjustVolume(player, -VOLUME_STEP),
+  volume_up: (player) => adjustVolume(player, VOLUME_STEP),
 
   previous: (player) => {
     if (!player.previous) return { message: '❌ No previous track available', shouldUpdate: false }
@@ -163,17 +157,11 @@ const actionHandlers = {
   },
 
   skip: (player) => {
-    if (!player.queue?.length && !player.queue?.size) {
+    if (!_functions.getQueueLength(player.queue)) {
       return { message: '❌ No tracks in queue to skip to.', shouldUpdate: false }
     }
     player.skip?.()
     return { message: '⏭️ Skipped to the next track.', shouldUpdate: false }
-  },
-
-  volume_up: async (player) => {
-    const vol = Math.min(MAX_VOLUME, (player.volume || 0) + VOLUME_STEP)
-    await _functions.setPlayerVolume(player, vol)
-    return { message: `🔊 Volume set to ${vol}%`, shouldUpdate: true }
   }
 }
 
@@ -193,12 +181,10 @@ const buildPlaylistPage = (playlist, playlistName, userId, page) => {
     { name: `${ICONS.info} Plays`, value: String(playlist.playCount || 0), inline: true }
   )
 
-  if (tracks.length > 0) {
+  if (tracks.length) {
     const trackList = tracks.map((t, i) => {
       const pos = String(startIdx + i + 1).padStart(2, '0')
-      const duration = formatDuration(t.duration || 0)
-      const source = _functions.getSourceIcon(t.uri)
-      return `\`${pos}.\` **${t.title}**\n     ${ICONS.artist} ${t.author || 'Unknown'} • ${ICONS.duration} ${duration} ${source}`
+      return `\`${pos}.\` **${t.title}**\n     ${ICONS.artist} ${t.author || 'Unknown'} • ${ICONS.duration} ${formatDuration(t.duration || 0)} ${_functions.getSourceIcon(t.uri)}`
     }).join('\n\n')
 
     embed.addFields({ name: `${ICONS.music} Tracks (Page ${currentPage}/${totalPages})`, value: trackList, inline: false })
@@ -228,8 +214,7 @@ const buildPlaylistPage = (playlist, playlistName, userId, page) => {
 const resolveTracksWithLimit = async (tracks, resolveFn, limit = RESOLVE_CONCURRENCY) => {
   const results = []
   for (let i = 0; i < tracks.length; i += limit) {
-    const chunk = tracks.slice(i, i + limit)
-    const settled = await Promise.allSettled(chunk.map(resolveFn))
+    const settled = await Promise.allSettled(tracks.slice(i, i + limit).map(resolveFn))
     results.push(...settled)
   }
   return results
@@ -239,21 +224,19 @@ const resolveTracksWithLimit = async (tracks, resolveFn, limit = RESOLVE_CONCURR
 const playlistActionHandlers = {
   play_playlist: async (interaction, client, userId, playlistName) => {
     const playlist = playlistsCollection.findOne({ userId, name: playlistName })
-    if (!playlist || !playlist.tracks?.length) return { message: '❌ Playlist is empty', shouldUpdate: false }
+    if (!playlist?.tracks?.length) return { message: '❌ Playlist is empty', shouldUpdate: false }
 
     const voiceState = await interaction.member?.voice()
     if (!voiceState?.channelId) return { message: '❌ Join a voice channel first', shouldUpdate: false }
 
     let player = client.aqua.players.get(interaction.guildId)
-    if (!player) {
-      player = client.aqua.createConnection({
-        guildId: interaction.guildId,
-        voiceChannel: voiceState.channelId,
-        textChannel: interaction.channelId,
-        defaultVolume: 65,
-        deaf: true
-      })
-    }
+    player ??= client.aqua.createConnection({
+      guildId: interaction.guildId,
+      voiceChannel: voiceState.channelId,
+      textChannel: interaction.channelId,
+      defaultVolume: 65,
+      deaf: true
+    })
 
     const resolved = await resolveTracksWithLimit(
       playlist.tracks,
@@ -272,9 +255,9 @@ const playlistActionHandlers = {
     return { message: `▶️ Playing playlist "${playlistName}" with ${playlist.tracks.length} tracks`, shouldUpdate: false }
   },
 
-  shuffle_playlist: (interaction, client, userId, playlistName) => {
+  shuffle_playlist: (_interaction, client, userId, playlistName) => {
     const playlist = playlistsCollection.findOne({ userId, name: playlistName })
-    if (!playlist || !playlist.tracks?.length) return { message: '❌ Playlist is empty', shouldUpdate: false }
+    if (!playlist?.tracks?.length) return { message: '❌ Playlist is empty', shouldUpdate: false }
     playlistsCollection.update({ _id: playlist._id }, { ...playlist, tracks: shuffleArray([...playlist.tracks]) })
     return { message: `🔀 Shuffled playlist "${playlistName}"`, shouldUpdate: false }
   },
@@ -282,8 +265,7 @@ const playlistActionHandlers = {
   playlist_prev: async (interaction, client, userId, playlistName, page) => {
     const playlist = playlistsCollection.findOne({ userId, name: playlistName })
     if (!playlist) return { message: '❌ Playlist not found', shouldUpdate: false }
-    const newPage = Math.max(1, (page || 1) - 1)
-    const { embed, components } = buildPlaylistPage(playlist, playlistName, userId, newPage)
+    const { embed, components } = buildPlaylistPage(playlist, playlistName, userId, Math.max(1, (page || 1) - 1))
     await interaction.editOrReply({ embeds: [embed], components })
     return { message: '', shouldUpdate: false }
   },
@@ -291,13 +273,10 @@ const playlistActionHandlers = {
   playlist_next: async (interaction, client, userId, playlistName, page) => {
     const playlist = playlistsCollection.findOne({ userId, name: playlistName })
     if (!playlist) return { message: '❌ Playlist not found', shouldUpdate: false }
-    const newPage = (page || 1) + 1
-    const { embed, components } = buildPlaylistPage(playlist, playlistName, userId, newPage)
+    const { embed, components } = buildPlaylistPage(playlist, playlistName, userId, (page || 1) + 1)
     await interaction.editOrReply({ embeds: [embed], components })
     return { message: '', shouldUpdate: false }
   }
-
-
 }
 
 // Button ID parser
@@ -305,21 +284,27 @@ const parsePlaylistButtonId = (customId) => {
   const parts = customId.split('_')
   if (parts.length < 2) return null
 
-  const userId = parts[parts.length - 1]
+  const userId = parts.at(-1)
+  const { isNumeric } = _functions
 
   if (parts[0] === 'playlist' && (parts[1] === 'prev' || parts[1] === 'next')) {
-    const action = `playlist_${parts[1]}`
-    const page = NUMERIC_PATTERN.test(parts[2]) ? Number.parseInt(parts[2], 10) : undefined
-    const playlistName = parts.slice(3, -1).filter(p => !NUMERIC_PATTERN.test(p)).join('_')
-    return { action, playlistName, userId, page }
+    return {
+      action: `playlist_${parts[1]}`,
+      playlistName: parts.slice(3, -1).filter(p => !isNumeric(p)).join('_'),
+      userId,
+      page: isNumeric(parts[2]) ? Number.parseInt(parts[2], 10) : undefined
+    }
   }
 
   const knownActions = ['play_playlist', 'shuffle_playlist']
   for (let i = 1; i < parts.length; i++) {
     const potentialAction = parts.slice(0, i + 1).join('_')
     if (knownActions.includes(potentialAction)) {
-      const playlistName = parts.slice(i + 1, -1).filter(p => !NUMERIC_PATTERN.test(p)).join('_')
-      return { action: potentialAction, playlistName, userId }
+      return {
+        action: potentialAction,
+        playlistName: parts.slice(i + 1, -1).filter(p => !isNumeric(p)).join('_'),
+        userId
+      }
     }
   }
 
@@ -352,46 +337,38 @@ export default createEvent({
 
     if (parsed && playlistActionHandlers[parsed.action]) {
       if (parsed.userId !== interaction.user.id) return
-      try {
-        await interaction.deferReply(64)
-      } catch {
-        return
-      }
+      if (!(await _functions.safeDefer(interaction))) return
 
       try {
         const result = await playlistActionHandlers[parsed.action](interaction, client, parsed.userId, parsed.playlistName || '', parsed.page)
         if (result.message) await interaction.followup({ content: result.message }).catch(() => {})
       } catch {
-        await interaction.editOrReply({ content: '❌ An error occurred.' }).catch(() => {})
+        _functions.safeReply(interaction, '❌ An error occurred.')
       }
       return
     }
 
-    try {
-      await interaction.deferReply(64)
-    } catch {
-      return
-    }
+    if (!(await _functions.safeDefer(interaction))) return
 
     const player = client.aqua?.players?.get?.(interaction.guildId)
-    if (!player) return interaction.editOrReply({ content: '❌ There is no active music player in this server.' }).catch(() => {})
-    if (!player.current) return interaction.editOrReply({ content: '❌ There is no music playing right now.', flags: 64 }).catch(() => {})
+    if (!player) return _functions.safeReply(interaction, '❌ There is no active music player in this server.')
+    if (!player.current) return _functions.safeReply(interaction, '❌ There is no music playing right now.')
 
     const memberVoice = await interaction.member?.voice().catch(() => null)
-    if (!memberVoice) return interaction.editOrReply({ content: '❌ You must be in a voice channel to use this button.' }).catch(() => {})
-    if (interaction.user.id !== player.current.requester?.id) return interaction.editOrReply({ content: '❌ You are not allowed to use this button.' }).catch(() => {})
+    if (!memberVoice) return _functions.safeReply(interaction, '❌ You must be in a voice channel to use this button.')
+    if (interaction.user.id !== player.current.requester?.id) return _functions.safeReply(interaction, '❌ You are not allowed to use this button.')
 
     const handler = actionHandlers[interaction.customId]
-    if (!handler) return interaction.editOrReply({ content: '❌ This button action is not recognized.' }).catch(() => {})
+    if (!handler) return _functions.safeReply(interaction, '❌ This button action is not recognized.')
 
     try {
       const result = await handler(player)
       await interaction.followup({ content: result.message }).catch(() => {})
       if (result.shouldUpdate && player.current) queueMicrotask(() => updateNowPlayingEmbed(player, client))
     } catch {
-      await interaction.editOrReply({ content: '❌ An error occurred. Please try again.' }).catch(() => {})
+      _functions.safeReply(interaction, '❌ An error occurred. Please try again.')
     }
   }
 })
 
-export { _functions as formatTime, _functions as truncateText, _functions as getPlatform }
+export const { formatTime, truncateText, getPlatform } = _functions

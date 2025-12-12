@@ -4,12 +4,7 @@ let dbInstance: SimpleDB | null = null
 
 export function getDatabase(): SimpleDB {
   if (!dbInstance) {
-    dbInstance = new SimpleDB({
-      cacheSize: 100
-      // enableWAL is not a valid option in your SimpleDB constructor
-      // options (it accepts dbPath and cacheSize), but WAL is enabled
-      // by default in the class constructor anyway.
-    })
+    dbInstance = new SimpleDB()
   }
   return dbInstance
 }
@@ -26,7 +21,6 @@ export function getPlaylistsCollection() {
   const collection = db.collection('playlists')
 
   try {
-    // Accessing private db requires casting to any, or making db public in SimpleDB
     (collection as any).db.prepare(
       `CREATE INDEX IF NOT EXISTS idx_playlists_user_name
        ON "col_playlists"(
@@ -35,11 +29,22 @@ export function getPlaylistsCollection() {
        )`
     ).run()
   } catch (err) {
-    console.warn('Failed to create compound index:', err)
+    console.warn('Failed to create compound index (userId,name):', err)
   }
 
   try {
-    // FIX: createIndex only accepts the field name, not a custom index name
+    (collection as any).db.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_playlists_user_lastModified
+       ON "col_playlists"(
+         json_extract(doc, '$.userId'),
+         json_extract(doc, '$.lastModified')
+       )`
+    ).run()
+  } catch (err) {
+    console.warn('Failed to create compound index (userId,lastModified):', err)
+  }
+
+  try {
     collection.createIndex('userId')
   } catch (err) {
     console.warn('Failed to create userId index:', err)
@@ -53,7 +58,6 @@ export function getSettingsCollection() {
   const collection = db.collection('guildSettings')
 
   try {
-    // FIX: Use the native method instead of raw SQL
     collection.createIndex('guildId')
   } catch (err) {
     console.warn('Failed to create guildId index:', err)
