@@ -17,20 +17,53 @@ import {
 } from "../../shared/utils";
 import { getContextTranslations } from "../../utils/i18n";
 import { getPlaylistsCollection } from "../../utils/db";
+
 const playlistsCollection = getPlaylistsCollection();
 const MAX_RESOLVE_CONCURRENCY = 6;
 
-async function _resolveTrack(aqua: any, uri: string, requester: any) {
-	if (!uri) return null;
-	const res = await aqua.resolve({ query: uri, requester: requester });
-	if (
-		res &&
-		res.loadType !== "LOAD_FAILED" &&
-		Array.isArray(res.tracks) &&
-		res.tracks.length > 0
-	)
-		return res.tracks[0];
-	return null;
+async function _resolveTrack(aqua: any, track: any, requester: any) {
+	if (!track?.uri) {
+		console.warn('[Playlist Play] Track missing URI:', track);
+		return null;
+	}
+
+	try {
+		// Try to resolve using the stored identifier first (more reliable for YouTube)
+		const query = track.identifier || track.uri;
+
+		const res = await aqua.resolve({
+			query,
+			requester,
+			source: track.source?.toLowerCase().includes('youtube') ? 'ytsearch' : undefined
+		});
+
+		if (!res) {
+			console.warn('[Playlist Play] No response for track:', track.title);
+			return null;
+		}
+
+		const loadType = String(res.loadType || '').toUpperCase();
+
+		// Handle different load types
+		if (loadType === 'LOAD_FAILED' || loadType === 'NO_MATCHES') {
+			console.warn(`[Playlist Play] Failed to load track: ${track.title} (${loadType})`);
+			return null;
+		}
+
+		if (!Array.isArray(res.tracks) || res.tracks.length === 0) {
+			console.warn('[Playlist Play] No tracks in response for:', track.title);
+			return null;
+		}
+
+		// Return the first track from the response
+		const resolved = res.tracks[0];
+		console.log(`[Playlist Play] Successfully resolved: ${track.title}`);
+		return resolved;
+
+	} catch (error) {
+		console.error('[Playlist Play] Error resolving track:', track.title, error);
+		return null;
+	}
 }
 
 async function _mapLimit<T, R>(
@@ -92,6 +125,7 @@ export class PlayCommand extends SubCommand {
 			userId,
 			name: playlistName,
 		});
+
 		if (!playlistDb) {
 			return ctx.write({
 				embeds: [
@@ -104,6 +138,7 @@ export class PlayCommand extends SubCommand {
 				flags: 64,
 			});
 		}
+
 		if (!Array.isArray(playlistDb.tracks) || playlistDb.tracks.length === 0) {
 			return ctx.write({
 				embeds: [
@@ -136,25 +171,32 @@ export class PlayCommand extends SubCommand {
 
 		try {
 			let player = ctx.client.aqua.players.get(ctx.guildId!);
-			if (!player) player = ctx.client.aqua.createConnection({
-				guildId: ctx.guildId!,
-				voiceChannel: voiceState.channelId,
-				textChannel: ctx.channelId!,
-				defaultVolume: 65,
-				deaf: true,
-			});
+			if (!player) {
+				player = ctx.client.aqua.createConnection({
+					guildId: ctx.guildId!,
+					voiceChannel: voiceState.channelId,
+					textChannel: ctx.channelId!,
+					defaultVolume: 65,
+					deaf: true,
+				});
+			}
+
+			console.log(`[Playlist Play] Loading ${playlistDb.tracks.length} tracks from "${playlistName}"`);
 
 			const tracks = shuffle
 				? shuffleArray([...playlistDb.tracks])
 				: [...playlistDb.tracks];
+
 			const loadedTracks = await _mapLimit<any, any>(
 				tracks,
 				MAX_RESOLVE_CONCURRENCY,
 				async (t) => {
-					const tr = await _resolveTrack(ctx.client.aqua, t.uri, ctx.interaction.user);
+					const tr = await _resolveTrack(ctx.client.aqua, t, ctx.interaction.user);
 					return tr;
 				},
 			);
+
+			console.log(`[Playlist Play] Successfully loaded ${loadedTracks.length}/${playlistDb.tracks.length} tracks`);
 
 			if (loadedTracks.length === 0) {
 				return ctx.editOrReply({
@@ -162,24 +204,43 @@ export class PlayCommand extends SubCommand {
 						createEmbed(
 							"error",
 							t.playlist?.play?.loadFailed || "Load Failed",
-							t.playlist?.play?.loadFailedDesc || "Could not load any tracks from this playlist",
+							t.playlist?.play?.loadFailedDesc || "Could not load any tracks from this playlist. The tracks may no longer be available.",
 						),
 					],
 				});
 			}
 
-			for (const t of loadedTracks) player.queue.add(t);
-			playlistsCollection.updateAtomic({ _id: playlistDb._id }, {
-				$inc: { playCount: 1 },
-				$set: { lastPlayedAt: Date.now() }
-			});
+			// Add all loaded tracks to the queue
+			for (const t of loadedTracks) {
+				player.queue.add(t);
+			}
 
-			if (!player.playing && !player.paused && player.queue.size) player.play();
+			// Update playlist stats
+			try {
+				playlistsCollection.updateAtomic(
+					{ _id: playlistDb._id },
+					{
+						$inc: { playCount: 1 },
+						$set: { lastPlayedAt: new Date().toISOString() }
+					}
+				);
+			} catch (err) {
+				console.warn('[Playlist Play] Failed to update playlist stats:', err);
+			}
+
+			// Start playing if not already playing
+			if (!player.playing && !player.paused) {
+				player.play();
+			}
+
+			const warningMessage = loadedTracks.length < playlistDb.tracks.length
+				? `\n\n⚠️ ${playlistDb.tracks.length - loadedTracks.length} track(s) could not be loaded`
+				: '';
 
 			const embed = createEmbed(
 				"success",
 				shuffle ? (t.playlist?.play?.shuffling || "Shuffling Playlist") : (t.playlist?.play?.playing || "Playing Playlist"),
-				undefined,
+				warningMessage || undefined,
 				[
 					{
 						name: `${ICONS.playlist} ${t.playlist?.play?.playlist || "Playlist"}`,
@@ -206,17 +267,23 @@ export class PlayCommand extends SubCommand {
 						value: shuffle ? (t.playlist?.play?.shuffled || "Shuffled") : (t.playlist?.play?.sequential || "Sequential"),
 						inline: true,
 					},
+					{
+						name: `${ICONS.tracks} ${t.playlist?.play?.inQueue || "In Queue"}`,
+						value: `${player.queue.size} track(s)`,
+						inline: true,
+					},
 				],
 			);
 
 			return ctx.editOrReply({ embeds: [embed] });
-		} catch (_err) {
+		} catch (err) {
+			console.error('[Playlist Play] Fatal error:', err);
 			return ctx.editOrReply({
 				embeds: [
 					createEmbed(
 						"error",
 						t.playlist?.play?.playFailed || "Play Failed",
-						t.playlist?.play?.playFailedDesc || "Could not play playlist. Please try again later.",
+						`${t.playlist?.play?.playFailedDesc || "Could not play playlist. Please try again later."}\n\nError: ${err instanceof Error ? err.message : 'Unknown error'}`,
 					),
 				],
 			});
