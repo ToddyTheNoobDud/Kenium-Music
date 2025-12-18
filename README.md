@@ -1,4 +1,4 @@
-# Kenium 🎧 Your 2025 Music Bot BFF
+# Kenium 🎧 Your Friendly Discord Music Bot for 2025
 
 <p align="center">
   <a href="https://github.com/ToddyTheNoobDud/Kenium-Music">
@@ -15,21 +15,23 @@
   </a>
 </p>
 
-## What Is Kenium?
+## Hey, What's Kenium All About?
 
-Kenium is a **free**, **non-profit**, **fast**, and **open-source** Discord music bot for 2025. No paywalls. No vote spam. Just pure music vibes. Whether you want to queue up songs, drop lyrics, or throw on filters — Kenium handles it all with smoothness.
+Hey there! Kenium is my take on a totally free, open-source Discord music bot that's built for fun and simplicity in 2025. No sneaky paywalls, no annoying vote prompts—just you, your friends, and some great tunes. Whether you're queuing up your favorite tracks, pulling up lyrics, or tweaking the sound with filters, Kenium keeps things smooth and easy. It's non-profit and all about the vibes.
 
-## Why Kenium Stands Out 🚀
+## What Makes Kenium Special? 🚀
 
-| Feature | What It Means for You |
-|---------|----------------------|
-| **Free Vibes Only** | Play from YouTube, Spotify, SoundCloud, Vimeo, or local files. No premium paywalls, no ads. |
-| **Always On, Always Stable** | Hosted 24/7, designed to handle crashes gracefully. Built for uptime & reliability. |
-| **Commands That Work for You** | `/play [song]`, `/shuffle`, `/clear`, etc. Easy controls + smart autocomplete. |
-| **More Than Just Playing Songs** | Lyrics on demand, playlist exports, audio filters (bass, slow, etc.), etc. |
-| **Code You Can Trust** | Open-source (TypeScript & Seyfert), light on resources, built with modern tools. |
+I wanted to build something that feels effortless to use, so here's a quick rundown of why it might be your new go-to bot:
 
-## Live Growth
+| Feature                       | Why You'll Love It                                                                 |
+|-------------------------------|------------------------------------------------------------------------------------|
+| **Totally Free Sources**      | Pull music from YouTube, Spotify, SoundCloud, Vimeo, or even your own files. No ads, no upsells—just pure playback. |
+| **Simple, Intuitive Commands**| Stuff like `/play [song]`, `/shuffle`, or `/clear` queue. Plus, smart autocomplete to make your life easier. |
+| **Extra Goodies Beyond Basics**| Grab lyrics on the fly, export playlists, or slap on audio filters like bass boost or slow-mo for that perfect mood. |
+| **High-Performance Audio**    | Built with Aqualink  our own Lavalink/Nodelink wrapper, focused on pure performance, speed, and stability. |
+| **Built to Be Reliable**      | Crafted with TypeScript and Seyfert for a lightweight, crash-resistant setup that's easy on your resources. |
+
+## Project Growth Over Time
 
 <p align="center">
   <a href="https://star-history.com/#ToddyTheNoobDud/Kenium-Music&Date">
@@ -37,53 +39,55 @@ Kenium is a **free**, **non-profit**, **fast**, and **open-source** Discord musi
   </a>
 </p>
 
-See how the project has been growing over time in stars — a good sign we're heading somewhere cool!
+It's been awesome watching this little project pick up steam—check out the star history to see how it's evolving!
 
-## Setup (Get Jammin' in Minutes)
+## Get It Running in No Time
 
-1. **Ensure Node.js v20+ or Bun is installed**
+Setting up Kenium is straightforward, even if you're new to this. Here's how to get jamming:
+
+1. **Grab Node.js v20+ or Bun** – Whichever you prefer for running things.
 
 2. **Clone the repo:**
    ```bash
    git clone https://github.com/ToddyTheNoobDud/Kenium-Music.git
    ```
 
-3. **Move into the project folder:**
+3. **Hop into the folder:**
    ```bash
    cd Kenium-Music
    ```
 
-4. **Install dependencies (choose your package manager):**
+4. **Install the dependencies** (pick your fave package manager):
    ```bash
-   # Using Bun (recommended for speed)
+   # Bun's super fast, give it a try!
    bun install
-   
-   # Or using pnpm
+
+   # Or stick with pnpm
    pnpm install
-   
-   # Or using npm
+
+   # Classic npm works too
    npm install
    ```
 
-5. **Copy config example and fill your environment variables:**
+5. **Set up your config:**
    ```bash
    cp .env.example .env
-   # then edit .env with your Discord bot token and other settings
+   # Open .env in your editor and pop in your Discord bot token plus any other tweaks
    ```
 
-6. **Run the bot (choose your runtime):**
+6. **Fire it up:**
    ```bash
-   # Using Bun
+   # With Bun
    bun startBun
-   
-   # Or using pnpm
+
+   # Or pnpm
    pnpm startNode
-   
-   # Or using npm
+
+   # Good ol' npm
    npm start
    ```
 
-## Demo Video
+## Quick Demo Video
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=tSFp2ESLxyU" target="_blank">
@@ -91,45 +95,44 @@ See how the project has been growing over time in stars — a good sign we're he
   </a>
 </p>
 
-> **🎥 Click the image above to watch the tutorial on YouTube!**
+> **🎥 Tap the thumbnail to check out a quick tutorial on YouTube—it'll walk you through the basics!**
 
-## Community & Roadmap
+## Community Vibes & What's Next
 
-- Zero open issues so far — lots of clean-ups and feature work in motion
-- Maintained by **ToddyTheNoobDud/toddynnn**, and contributors are welcome  
-- **Upcoming features:** better error/crash handling, more filters, more platform support (some already in progress)
+- We've got zero open issues right now (knock on wood!), but there's always room for tweaks and new ideas.
+- **On the horizon:** More customizable options, improve the bot stability over long runtimes, etc!
 
-## How You Can Help
+## Ways to Pitch In
 
-- ⭐ **Star the repo** if you like what you see
-- 🍴 **Fork & customize** for your own needs
-- 🔧 **Submit issues or pull requests** — feedback makes Kenium better for *everyone*
+- ⭐ **Star the repo** if it clicks with you—it means a lot!
+- 🍴 **Fork it** and make it your own. Customize away.
+- 🔧 **Open issues or send pull requests**—your thoughts help make Kenium better for everyone.
 
 ## 🌐 Translations
 
 <p align="center">
 
-| Language | Flag | Status |
-|----------|------|--------|
-| **English (EN)** | 🇺🇸 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
-| **Brazilian Portuguese (BR)** | 🇧🇷 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
-| **Japanese (JA)** | 🇯🇵 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
-| **Russian (RU)** | 🇷🇺 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
-| **Arabic (AR)** | 🇸🇦 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
-| **Bengali (BN)** | 🇧🇩 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
-| **Spanish (ES)** | 🇪🇸 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
-| **French (FR)** | 🇫🇷 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
-| **Turkish (TR)** | 🇹🇷 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
-| **Thai (TH)** | 🇹🇭 | ![100%](https://img.shields.io/badge/100%25-brightgreen) |
+| Language                  | Flag | Status                                                                 |
+|---------------------------|------|------------------------------------------------------------------------|
+| **English (EN)**          | 🇺🇸   | ![100%](https://img.shields.io/badge/100%25-brightgreen)               |
+| **Brazilian Portuguese (BR)** | 🇧🇷   | ![100%](https://img.shields.io/badge/100%25-brightgreen)               |
+| **Japanese (JA)**         | 🇯🇵   | ![100%](https://img.shields.io/badge/100%25-brightgreen)               |
+| **Russian (RU)**          | 🇷🇺   | ![100%](https://img.shields.io/badge/100%25-brightgreen)               |
+| **Arabic (AR)**           | 🇸🇦   | ![100%](https://img.shields.io/badge/100%25-brightgreen)               |
+| **Bengali (BN)**          | 🇧🇩   | ![100%](https://img.shields.io/badge/100%25-brightgreen)               |
+| **Spanish (ES)**          | 🇪🇸   | ![100%](https://img.shields.io/badge/100%25-brightgreen)               |
+| **French (FR)**           | 🇫🇷   | ![100%](https://img.shields.io/badge/100%25-brightgreen)               |
+| **Turkish (TR)**          | 🇹🇷   | ![100%](https://img.shields.io/badge/100%25-brightgreen)               |
+| **Thai (TH)**             | 🇹🇭   | ![100%](https://img.shields.io/badge/100%25-brightgreen)               |
 
 </p>
 
 ## License
 
-Kenium is released under the **[MIT License](LICENSE)** — do what you want with it (just keep the credits ❤️).
+Kenium's under the **[MIT License](LICENSE)**—feel free to use, tweak, or share it (just keep the credits in there ❤️).
 
 ---
 
 <p align="center">
-Made with passion, code, and a love for music. Thanks for being part of the journey! 🎵
+  This project is made by a a solo developer, by the community, for the community. 
 </p>
