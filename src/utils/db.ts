@@ -1,67 +1,70 @@
-import { SimpleDB } from './simpleDB'
+import { SimpleDB } from "./simpleDB";
 
-let dbInstance: SimpleDB | null = null
+let dbInstance: SimpleDB | null = null;
+let _playlistsIndexed = false;
+let _settingsIndexed = false;
 
 export function getDatabase(): SimpleDB {
-  if (!dbInstance) {
-    dbInstance = new SimpleDB()
-  }
-  return dbInstance
+	return (dbInstance ??= new SimpleDB());
 }
 
 export function closeDatabase(): void {
-  if (dbInstance) {
-    dbInstance.close()
-    dbInstance = null
-  }
+	if (!dbInstance) return;
+	dbInstance.close();
+	dbInstance = null;
+	_playlistsIndexed = false;
+	_settingsIndexed = false;
 }
 
 export function getPlaylistsCollection() {
-  const db = getDatabase()
-  const collection = db.collection('playlists')
+	const db = getDatabase();
+	const collection = db.collection("playlists");
 
-  try {
-    (collection as any).db.prepare(
-      `CREATE INDEX IF NOT EXISTS idx_playlists_user_name
-       ON "col_playlists"(
-         json_extract(doc, '$.userId'),
-         json_extract(doc, '$.name')
-       )`
-    ).run()
-  } catch (err) {
-    console.warn('Failed to create compound index (userId,name):', err)
-  }
+	if (!_playlistsIndexed) {
+		_playlistsIndexed = true;
 
-  try {
-    (collection as any).db.prepare(
-      `CREATE INDEX IF NOT EXISTS idx_playlists_user_lastModified
-       ON "col_playlists"(
-         json_extract(doc, '$.userId'),
-         json_extract(doc, '$.lastModified')
-       )`
-    ).run()
-  } catch (err) {
-    console.warn('Failed to create compound index (userId,lastModified):', err)
-  }
+		try {
+			(collection as any).db
+				.prepare(
+					`CREATE INDEX IF NOT EXISTS idx_playlists_user_name
+					 ON "col_playlists"(
+						 json_extract(doc, '$.userId'),
+						 json_extract(doc, '$.name')
+					 )`,
+				)
+				.run();
+		} catch {}
 
-  try {
-    collection.createIndex('userId')
-  } catch (err) {
-    console.warn('Failed to create userId index:', err)
-  }
+		try {
+			(collection as any).db
+				.prepare(
+					`CREATE INDEX IF NOT EXISTS idx_playlists_user_lastModified
+					 ON "col_playlists"(
+						 json_extract(doc, '$.userId'),
+						 json_extract(doc, '$.lastModified')
+					 )`,
+				)
+				.run();
+		} catch {}
 
-  return collection
+		try {
+			collection.createIndex("userId");
+		} catch {}
+	}
+
+	return collection;
 }
 
 export function getSettingsCollection() {
-  const db = getDatabase()
-  const collection = db.collection('guildSettings')
+	const db = getDatabase();
+	const collection = db.collection("guildSettings");
 
-  try {
-    collection.createIndex('guildId')
-  } catch (err) {
-    console.warn('Failed to create guildId index:', err)
-  }
+	if (!_settingsIndexed) {
+		_settingsIndexed = true;
+		try {
+			collection.createIndex("guildId");
+		} catch {}
+	}
 
-  return collection
+	return collection;
 }
