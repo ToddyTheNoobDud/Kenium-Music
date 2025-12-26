@@ -17,29 +17,99 @@ const MAX_AUTOCOMPLETE_RESULTS = 4
 const THROTTLE_INTERVAL_MS = 250
 const SEARCH_TTL_MS = 25_000
 const EMBED_COLOR = 0x100e09
-const URL_REGEX = /^https?:\/\//i
 const MIN_QUERY_LENGTH = 2
 const MAX_TITLE_LENGTH = 70
 const MAX_AUTHOR_LENGTH = 18
 const MAX_CHOICE_LENGTH = 98
 const MAX_URI_LENGTH = 98
-
-const _isUrl = (query = ''): boolean => URL_REGEX.test(String(query).trim())
-
-const _truncate = (text = '', maxLength: number): string => {
-  const s = String(text)
-  if (s.length <= maxLength) return s
-  return s.slice(0, maxLength - 1) + '…'
-}
-
-const _formatChoice = (title: string, author?: string): string => {
-  const escapedTitle = _truncate(title, MAX_TITLE_LENGTH)
-  const authorSuffix = author ? ` - ${_truncate(author, MAX_AUTHOR_LENGTH)}` : ''
-  return _truncate(escapedTitle + authorSuffix, MAX_CHOICE_LENGTH)
-}
+const AUTOCOMPLETE_DEBOUNCE_MS = 200
 
 type TrackInfo = { title: string; uri: string }
 type SearchResult = { info?: TrackInfo; [key: string]: any }
+
+const _functions = {
+  isUrl(query: unknown): boolean {
+    const s = String(query ?? '').trim().toLowerCase()
+    return s.startsWith('http://') || s.startsWith('https://')
+  },
+
+  truncate(text: unknown, maxLength: number): string {
+    const s = String(text ?? '')
+    return s.length <= maxLength ? s : s.slice(0, maxLength - 1) + '…'
+  },
+
+  formatChoice(title: unknown, author?: unknown): string {
+    const t = _functions.truncate(title, MAX_TITLE_LENGTH)
+    const a = author ? ` - ${_functions.truncate(author, MAX_AUTHOR_LENGTH)}` : ''
+    return _functions.truncate(t + a, MAX_CHOICE_LENGTH)
+  },
+
+  cacheKey(query: string): string {
+    return query.toLowerCase().slice(0, 60)
+  },
+
+  safeUnref(timer: any): void {
+    try {
+      timer?.unref?.()
+    } catch {}
+  },
+
+  bindProcessCleanupOnce(cleanup: () => void): void {
+    const sym = Symbol.for('play.autocomplete.cleanup.bound')
+    const g = globalThis as any
+    if (g[sym]) return
+    g[sym] = true
+
+    process.once('exit', cleanup)
+    process.once('SIGINT', cleanup)
+    process.once('SIGTERM', cleanup)
+  },
+
+  addRecentFromTrack(userId: string, track: any): void {
+    const info = track?.info
+    if (info?.uri && info?.title) recentTracks.add(userId, info.title, info.uri)
+  },
+
+  async processAutocomplete(interaction: any, userId: string, query: string): Promise<any> {
+    if (!query || query.length < MIN_QUERY_LENGTH) {
+      const recent = recentTracks.getRecent(userId, MAX_AUTOCOMPLETE_RESULTS)
+      if (!recent.length) return interaction.respond([])
+
+      const choices = recent.map((track, index) => ({
+        name: `🕘 Recent ${index + 1}: ${_functions.truncate(track.title, MAX_TITLE_LENGTH)}`,
+        value: track.uri.slice(0, MAX_URI_LENGTH),
+      }))
+      return interaction.respond(choices)
+    }
+
+    if (_functions.isUrl(query)) return interaction.respond([])
+
+    const key = _functions.cacheKey(query)
+    let results = searchCache.get(key)
+
+    if (!results) {
+      const res = await interaction.client.aqua.resolve({ query, requester: interaction.user })
+      results = Array.isArray(res) ? res : res?.tracks || []
+      if (results.length) searchCache.set(key, results)
+    }
+
+    if (!results.length) return interaction.respond([])
+
+    const choices: Array<{ name: string; value: string }> = []
+    for (let i = 0; i < results.length && choices.length < MAX_AUTOCOMPLETE_RESULTS; i++) {
+      const item: any = results[i]
+      const info = item?.info || item
+      const uri = info?.uri
+      if (!uri) continue
+      choices.push({
+        name: _functions.formatChoice(info.title || 'Unknown', info.author),
+        value: String(uri).slice(0, MAX_URI_LENGTH),
+      })
+    }
+
+    return interaction.respond(choices)
+  },
+}
 
 class OptimizedRecentTracks {
   private userCaches = new Map<string, LRU<TrackInfo>>()
@@ -71,9 +141,11 @@ class OptimizedRecentTracks {
     const userCache = this.userCaches.get(userId)
     if (!userCache) return []
 
-    // Get entries and reverse to show most recent first
-    const entries = [...userCache.entries()].reverse().slice(0, Math.max(0, Math.min(limit, userCache.size)))
-    return entries.map(([, value]) => value)
+    const max = Math.max(0, Math.min(limit, userCache.size))
+    return [...userCache.entries()]
+      .reverse()
+      .slice(0, max)
+      .map(([, v]) => v)
   }
 }
 
@@ -85,24 +157,16 @@ class ThrottleMap {
 
   shouldThrottle(userId: string, intervalMs = THROTTLE_INTERVAL_MS): boolean {
     const now = Date.now()
-    const lastAccess = this.timestamps.get(userId) ?? 0
-
-    if (now - lastAccess < intervalMs) return true
+    const last = this.timestamps.get(userId) ?? 0
+    if (now - last < intervalMs) return true
 
     this.timestamps.set(userId, now)
-
     if (++this.cleanupCounter >= this.cleanupThreshold) {
       this.cleanupCounter = 0
-      this._cleanup(now - this.retentionMs)
+      const threshold = now - this.retentionMs
+      for (const [key, ts] of this.timestamps) if (ts < threshold) this.timestamps.delete(key)
     }
-
     return false
-  }
-
-  private _cleanup(threshold: number): void {
-    for (const [key, timestamp] of this.timestamps) {
-      if (timestamp < threshold) this.timestamps.delete(key)
-    }
   }
 }
 
@@ -115,87 +179,30 @@ const _cleanupTimers = (): void => {
   for (const timer of debounceTimers.values()) clearTimeout(timer)
   debounceTimers.clear()
 }
-
-process.once('exit', _cleanupTimers)
-process.once('SIGINT', _cleanupTimers)
-process.once('SIGTERM', _cleanupTimers)
-
-const _processAutocomplete = async (
-  interaction: any,
-  userId: string,
-  query: string,
-  resolve: (value: any) => void,
-): Promise<void> => {
-  if (!query || query.length < MIN_QUERY_LENGTH) {
-    const recent = recentTracks.getRecent(userId, MAX_AUTOCOMPLETE_RESULTS)
-    if (!recent.length) return resolve(interaction.respond([]))
-
-    const choices = recent.map((track, index) => ({
-      name: `🕘 Recent ${index + 1}: ${_truncate(track.title, MAX_TITLE_LENGTH)}`,
-      value: track.uri.slice(0, MAX_URI_LENGTH),
-    }))
-
-    return resolve(interaction.respond(choices))
-  }
-
-  if (_isUrl(query)) return resolve(interaction.respond([]))
-
-  const cacheKey = query.toLowerCase().slice(0, 60)
-  let results = searchCache.get(cacheKey)
-
-  if (!results) {
-    const searchResponse = await interaction.client.aqua.resolve({
-      query,
-      requester: interaction.user,
-    })
-
-    results = Array.isArray(searchResponse) ? searchResponse : searchResponse?.tracks || []
-
-    if (results.length) searchCache.set(cacheKey, results)
-  }
-
-  if (!results.length) return resolve(interaction.respond([]))
-
-  const choices = results
-    .slice(0, MAX_AUTOCOMPLETE_RESULTS)
-    .map((item: SearchResult) => {
-      const info = item.info || item
-      if (!info?.uri) return null
-
-      return {
-        name: _formatChoice(info.title || 'Unknown', (info as any).author),
-        value: info.uri.slice(0, MAX_URI_LENGTH),
-      }
-    })
-    .filter(Boolean)
-
-  resolve(interaction.respond(choices))
-}
+_functions.bindProcessCleanupOnce(_cleanupTimers)
 
 const _handleAutocomplete = async (interaction: any): Promise<void> => {
   const userId = interaction.user.id
+  const query = String(interaction.getInput?.() ?? '').trim()
 
-  if (throttleMap.shouldThrottle(userId)) return interaction.respond([])
-
-  const query = String(interaction.getInput() || '').trim()
-
-  const existingTimer = debounceTimers.get(userId)
-  if (existingTimer) {
-    clearTimeout(existingTimer)
+  const prev = debounceTimers.get(userId)
+  if (prev) {
+    clearTimeout(prev)
     debounceTimers.delete(userId)
   }
 
-  return new Promise(resolve => {
-    const timer = setTimeout(async () => {
-      debounceTimers.delete(userId)
-      try {
-        await _processAutocomplete(interaction, userId, query, resolve)
-      } catch (e) {
-        resolve(interaction.respond([]))
-      }
-    }, 200)
+  if (throttleMap.shouldThrottle(userId)) return interaction.respond([])
 
-    if (timer.unref) timer.unref()
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      debounceTimers.delete(userId)
+      _functions
+        .processAutocomplete(interaction, userId, query)
+        .then(resolve)
+        .catch(() => resolve(interaction.respond([])))
+    }, AUTOCOMPLETE_DEBOUNCE_MS)
+
+    _functions.safeUnref(timer)
     debounceTimers.set(userId, timer)
   })
 }
@@ -217,6 +224,7 @@ export default class Play extends Command {
     const lang = getContextLanguage(ctx)
     const t = ctx.t.get(lang)
 
+    let player: any
     try {
       await ctx.deferReply(true)
 
@@ -227,14 +235,6 @@ export default class Play extends Command {
         })
         return
       }
-
-      const player = ctx.client.aqua.createConnection({
-        guildId: ctx.guildId,
-        voiceChannel: voice.channelId,
-        textChannel: ctx.channelId,
-        deaf: true,
-        defaultVolume: 65,
-      })
 
       const result = await ctx.client.aqua.resolve({
         query,
@@ -248,47 +248,44 @@ export default class Play extends Command {
         return
       }
 
+      player = ctx.client.aqua.createConnection({
+        guildId: ctx.guildId,
+        voiceChannel: voice.channelId,
+        textChannel: ctx.channelId,
+        deaf: true,
+        defaultVolume: 65,
+      })
+
       const { loadType, tracks, playlistInfo } = result
       const embed = new Embed().setColor(EMBED_COLOR).setTimestamp()
       const userId = ctx.interaction.user.id
 
       if (loadType === 'track' || loadType === 'search') {
         const track = tracks[0]
-        const info = track?.info
         player.queue.add(track)
-        if (info?.uri && info?.title) {
-          recentTracks.add(userId, info.title, info.uri)
-        }
+        _functions.addRecentFromTrack(userId, track)
 
-        const title = _truncate(info?.title || 'Track', MAX_TITLE_LENGTH)
-        const addedText = t?.player?.trackAdded
-          ?.replace('{title}', title)
-          ?.replace('{uri}', info?.uri || '#') ||
-          `Added [**${title}**](${info?.uri || '#'}) to the queue.`
-
-        embed.setDescription(addedText)
+        const info = track?.info
+        const title = _functions.truncate(info?.title || 'Track', MAX_TITLE_LENGTH)
+        embed.setDescription(
+          t?.player?.trackAdded
+            ?.replace('{title}', title)
+            ?.replace('{uri}', info?.uri || '#') ||
+            `Added [**${title}**](${info?.uri || '#'}) to the queue.`,
+        )
       } else if (loadType === 'playlist' && playlistInfo?.name) {
-        for (const track of tracks) {
-          player.queue.add(track)
-        }
+        for (const track of tracks) player.queue.add(track)
+        for (let i = 0; i < tracks.length && i < 3; i++) _functions.addRecentFromTrack(userId, tracks[i])
 
-        const tracksToCache = tracks.slice(0, 3)
-        tracksToCache.forEach((track: any) => {
-          const info = track?.info
-          if (info?.uri && info?.title) {
-            recentTracks.add(userId, info.title, info.uri)
-          }
-        })
-
-        const playlistName = _truncate(playlistInfo.name, MAX_TITLE_LENGTH)
-        const firstTrack = tracks[0]
-        const playlistText = t.player?.playlistAdded
-          ?.replace('{name}', playlistName)
-          ?.replace('{count}', tracks.length.toString())
-          ?.replace('{uri}', firstTrack?.info?.uri || '#') ||
-          `Added **[\`${playlistName}\`](${firstTrack?.info?.uri || '#'})** playlist (${tracks.length} tracks) to the queue.`
-
-        embed.setDescription(playlistText)
+        const playlistName = _functions.truncate(playlistInfo.name, MAX_TITLE_LENGTH)
+        const firstUri = tracks[0]?.info?.uri || '#'
+        embed.setDescription(
+          t.player?.playlistAdded
+            ?.replace('{name}', playlistName)
+            ?.replace('{count}', String(tracks.length))
+            ?.replace('{uri}', firstUri) ||
+            `Added **[\`${playlistName}\`](${firstUri})** playlist (${tracks.length} tracks) to the queue.`,
+        )
         if (playlistInfo.thumbnail) embed.setThumbnail(playlistInfo.thumbnail)
       } else {
         await ctx.editResponse({
@@ -302,13 +299,10 @@ export default class Play extends Command {
       if (!player.playing && !player.paused && player.queue.size > 0) {
         try {
           player.play()
-        } catch (e) {
-          // Silently handle play start errors
-        }
+        } catch {}
       }
     } catch (err: any) {
       if (err?.code === 10065) return
-
       try {
         await ctx.editResponse({ content: t.errors?.general || 'An error occurred. Please try again.' })
       } catch {}
