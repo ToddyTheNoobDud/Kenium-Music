@@ -2,36 +2,56 @@ import { Cooldown, CooldownType } from '@slipher/cooldown';
 import {
   Command,
   type CommandContext,
-  createStringOption,
   Declare,
   Embed,
   Middlewares,
-  Options,
-  Container
+  Container,
 } from 'seyfert';
 import { lru } from 'tiny-lru';
 import { Musixmatch } from '../utils/musiclyrics';
 import { getContextLanguage } from '../utils/i18n';
 
-// Constants
 const MUSIXMATCH = new Musixmatch();
+
 const EMBED_COLOR = 0x100e09;
 const ERROR_COLOR = 0xe74c3c;
-const UPDATE_INTERVAL_MS = 1000;
+
 const SESSION_TIMEOUT_MS = 300000;
-const CONTEXT_LINES = 2;
-const PROGRESS_BAR_LENGTH = 10;
 const SONG_END_BUFFER_MS = 5000;
+
 const MAX_SESSIONS = 100;
 const MAX_DRIFT_MS = 10000;
 
-// Helper functions
+const MIN_EDIT_DELAY_MS = 150;
+const MAX_EDIT_DELAY_MS = 2000;
+const SCHEDULER_JITTER_MS = 25;
+
+const VIEW_PAST_LINES = 2;
+const VIEW_NEXT_LINES = 2;
+const PROGRESS_BAR_LENGTH = 14;
+
+type LyricLine = {
+  line: string;
+  timestamp?: number;
+  range?: { start: number; end?: number };
+};
+
+interface KaraokeSession {
+  message: any;
+  lines: LyricLine[];
+  player: any;
+
+  updateTimer: NodeJS.Timeout;
+  timeout: NodeJS.Timeout;
+
+  fallbackStartPosition: number;
+  fallbackStartTime: number;
+  title: string;
+}
+
 const _createErrorEmbed = (message: string, lang: string, ctx: CommandContext) => {
   const t = ctx.t.get(lang);
-  return new Embed()
-    .setColor(ERROR_COLOR)
-    .setTitle(t.karaoke.error)
-    .setDescription(message);
+  return new Embed().setColor(ERROR_COLOR).setTitle(t.karaoke.error).setDescription(message);
 };
 
 const _formatTimestamp = (ms: number) => {
@@ -41,216 +61,180 @@ const _formatTimestamp = (ms: number) => {
   return `${mins}:${secs}`;
 };
 
-const _findCurrentLineIndex = (lines: any[], currentTimeMs: number) => {
+const _lineStartMs = (line: LyricLine): number => line.range?.start ?? line.timestamp ?? 0;
+
+const _cleanLyricText = (text: string) => text.replace(/\s+/g, ' ').trim();
+
+const _findCurrentLineIndex = (lines: LyricLine[], currentTimeMs: number) => {
   let left = 0;
   let right = lines.length - 1;
   let result = -1;
 
   while (left <= right) {
     const mid = Math.floor((left + right) / 2);
-    const timestampMs = lines[mid].range?.start ?? lines[mid].timestamp ?? 0;
+    const ts = _lineStartMs(lines[mid]);
 
-    if (timestampMs <= currentTimeMs) {
+    if (ts <= currentTimeMs) {
       result = mid;
       left = mid + 1;
     } else {
       right = mid - 1;
     }
   }
-
   return result;
-};
-
-const _formatLine = (line: any, timestampMs: number, isCurrent: boolean, isPast: boolean) => {
-  const time = _formatTimestamp(timestampMs);
-  const text = line.line.trim();
-
-  if (isCurrent) return `**[${time}] ${text}**`;
-  if (isPast) return `✅ ~~[${time}] ${text}~~`;
-  return `⏸️ [${time}] ${text}`;
 };
 
 const _createProgressBar = (currentMs: number, startMs: number, endMs: number) => {
   const durationMs = endMs - startMs;
-  if (durationMs <= 0) return '🔴──────────';
+  if (durationMs <= 0) return `▰${'═'.repeat(PROGRESS_BAR_LENGTH)}`;
 
   const elapsedMs = currentMs - startMs;
   const progress = Math.max(0, Math.min(1, elapsedMs / durationMs));
   const filled = Math.round(progress * PROGRESS_BAR_LENGTH);
-  // ■■■■■■■■■▢ 90%
-  // [̲̅_̲̅_̲̅_̲̅_̲̅_̲̅] 10%
-  // ╞▰═════════╡ 10%
-  // https://copy-paste.net/en/loading-bar.php js saving lmao
-  return `🔴${'▰'.repeat(filled)}${'═'.repeat(PROGRESS_BAR_LENGTH - filled)}`;
+
+  return `▰${'▰'.repeat(filled)}${'═'.repeat(PROGRESS_BAR_LENGTH - filled)}`;
 };
 
-const _createKaraokeContainer = (title: string, lines: any[], currentTimeMs: number, isPaused: boolean) => {
+const _formatViewportLine = (line: LyricLine, kind: 'past' | 'current' | 'next') => {
+  const time = _formatTimestamp(_lineStartMs(line));
+  const text = _cleanLyricText(line.line) || '…';
+  const base = `\`${time}\` ${text}`;
+
+  if (kind === 'current') return `> **${base}**`;
+  if (kind === 'past') return `*${base}*`;
+  return base;
+};
+
+const _createKaraokeStageContainer = (
+  title: string,
+  lines: LyricLine[],
+  currentTimeMs: number,
+  isPaused: boolean,
+) => {
+  if (!lines.length) {
+    return new Container({
+      accent_color: EMBED_COLOR,
+      components: [
+        { type: 10, content: `🎙️ **Karaoke Stage**` },
+        { type: 14, divider: true, spacing: 1 },
+        { type: 10, content: `No time-synced lyrics available for this track.` },
+      ],
+    });
+  }
+
   const currentIdx = _findCurrentLineIndex(lines, currentTimeMs);
+  const safeIdx = Math.max(0, currentIdx);
 
-  // Get current line for header
-  const currentLine = lines[currentIdx];
-  const currentLineText = currentLine ? _formatLine(currentLine, currentLine.range?.start ?? currentLine.timestamp ?? 0, true, false) : 'No lyrics available';
+  const current = lines[safeIdx];
+  const next = lines[safeIdx + 1];
 
-  // Get upcoming lines (next 2 lines after current)
-  const upcomingLines = [];
-  for (let i = 1; i <= CONTEXT_LINES && currentIdx + i < lines.length; i++) {
-    const line = lines[currentIdx + i];
-    const timestampMs = line.range?.start ?? line.timestamp ?? 0;
-    upcomingLines.push(_formatLine(line, timestampMs, false, false));
-  }
+  const segStart = _lineStartMs(current);
+  const segEnd = next ? _lineStartMs(next) : segStart + 4000;
 
-  const statusIcon = isPaused ? '⏸️' : '▶️';
-  const statusText = isPaused ? 'Paused' : 'Playing';
+  const status = isPaused ? '⏸ Paused' : '▶ Playing';
+  const bar = _createProgressBar(currentTimeMs, segStart, segEnd);
 
-  // Get past lines that update dynamically based on current position
-  const pastLinesStart = Math.max(0, currentIdx - 2);
-  const pastLines = lines.slice(pastLinesStart, currentIdx);
+  const pastStart = Math.max(0, safeIdx - VIEW_PAST_LINES);
+  const past = lines.slice(pastStart, safeIdx);
+  const upcoming = lines.slice(safeIdx + 1, safeIdx + 1 + VIEW_NEXT_LINES);
 
-  const components = [
-    {
-      type: 10,
-      content: `**${title}** • ${statusIcon} ${statusText} • ${_formatTimestamp(currentTimeMs)}`
-    },
-    // Divider
-    { type: 14, divider: true, spacing: 2 },
-  ];
-
-  // Add past lines if they exist and update dynamically
-  if (pastLines.length > 0) {
-    components.push(
-      // Past lines
-      { type: 10, content: pastLines.map((line) => _formatLine(line, line.range?.start ?? line.timestamp ?? 0, false, true)).join('\n') },
-      // Divider
-      { type: 14, divider: true, spacing: 2 }
-    );
-  }
-
-  components.push(
-    // Header - Current lyrics line (h1 style)
-    { type: 10, content: `### ${currentLineText}` },
-    // Divider
-    { type: 14, divider: true, spacing: 2 }
-  );
-
-  // Add upcoming lines if any
-  if (upcomingLines.length > 0) {
-    components.push({ type: 10, content: upcomingLines.join('\n') });
-    // Another divider before footer
-    components.push({ type: 14, divider: true, spacing: 1 });
-  }
+  const viewport = [
+    ...past.map((l) => _formatViewportLine(l, 'past')),
+    _formatViewportLine(current, 'current'),
+    ...upcoming.map((l) => _formatViewportLine(l, 'next')),
+  ].join('\n');
 
   return new Container({
-    components,
     accent_color: EMBED_COLOR,
+    components: [
+      {
+        type: 10,
+        content: `🎙️ **Karaoke Stage**\n**${title}** • ${status}`,
+      },
+      { type: 14, divider: true, spacing: 1 },
+      {
+        type: 10,
+        content: `${bar}  \`${_formatTimestamp(currentTimeMs)}\``,
+      },
+      { type: 14, divider: true, spacing: 1 },
+      { type: 10, content: viewport },
+      { type: 14, divider: true, spacing: 1 },
+      { type: 10, content: `*Tip: the highlighted line is what you should sing right now.*` },
+    ],
   });
 };
 
-const _createKaraokeEmbed = (title: string, lines: any[], currentTimeMs: number, isPaused: boolean) => {
-  const currentIdx = _findCurrentLineIndex(lines, currentTimeMs);
-  const startIdx = Math.max(0, currentIdx - CONTEXT_LINES);
-  const endIdx = Math.min(lines.length, currentIdx + CONTEXT_LINES + 1);
+const _fetchKaraokeLyrics = async (query: string | undefined, currentTrack: any) => {
+  let searchQuery = query?.trim() ?? '';
 
-  const visibleLines = lines.slice(startIdx, endIdx);
-  const formatted = visibleLines.map((line, idx) => {
-    const timestampMs = line.range?.start ?? line.timestamp ?? 0;
-    const actualIdx = startIdx + idx;
-    return _formatLine(line, timestampMs, actualIdx === currentIdx, actualIdx < currentIdx);
-  });
+  if (!searchQuery && currentTrack) {
+    const title = (currentTrack.title ?? '').trim();
+    const author = (currentTrack.author ?? '').trim();
+    searchQuery = author ? `${title} ${author}`.trim() : title;
+  }
 
-  let description = formatted.join('\n');
-
-
-
-  const statusIcon = isPaused ? '⏸️' : '▶️';
-  const statusText = isPaused ? 'Paused' : 'Playing';
-
-  return new Embed()
-    .setColor(EMBED_COLOR)
-    .setTitle(`🎤 ${title}`)
-    .setDescription(description)
-    .setFooter({ text: `${statusIcon} ${statusText} • ${_formatTimestamp(currentTimeMs)}` });
-};
-
-const _fetchKaraokeLyrics = async (query: string, currentTrack: any) => {
-  let searchQuery = query;
-
-
-	if (!searchQuery && currentTrack) {
-		searchQuery = currentTrack.title || "";
-		if (!searchQuery && currentTrack.author) {
-			searchQuery =
-				`${currentTrack.title || ""} ${currentTrack.author || ""}`.trim();
-		}
-	}
-
-	if (!searchQuery) return null;
-
+  if (!searchQuery) return null;
 
   try {
     const result = await MUSIXMATCH.findLyrics(searchQuery);
-    if (!result?.text && !result?.lines) return null;
 
-    return {
-      lines: result.lines,
-      track: result.track,
-    };
+    const rawLines = (result?.lines ?? []) as LyricLine[];
+    const lines = rawLines
+      .map((l) => ({ ...l, line: (l.line ?? '').toString() }))
+      .filter((l) => _cleanLyricText(l.line).length > 0)
+      .sort((a, b) => _lineStartMs(a) - _lineStartMs(b));
+
+    if (!lines.length) return null;
+
+    return { lines, track: result?.track };
   } catch {
     return null;
   }
 };
 
-interface KaraokeSession {
-  message: any;
-  lines: any[];
-  player: any;
-  interval: NodeJS.Timeout;
-  timeout: NodeJS.Timeout;
-  fallbackStartPosition: number;
-  fallbackStartTime: number;
-  title: string;
-}
-
 class KaraokeSessionRegistry {
   private static cache = lru<KaraokeSession>(MAX_SESSIONS);
 
-  static add(guildId: string, session: KaraokeSession) {
-    this.cleanup(guildId);
-    this.cache.set(guildId, session);
-  }
-
   static get(guildId: string) {
     return this.cache.get(guildId);
-  }
-
-  static async cleanup(guildId: string) {
-    const session = this.cache.get(guildId);
-    if (!session) return;
-
-    clearInterval(session.interval);
-    clearTimeout(session.timeout);
-
-    if (session.message?.delete) {
-      await session.message.delete().catch(() => null);
-    } else if (session.message?.edit) {
-      // For cleanup, we don't have context, so use a simple embed
-      await session.message.edit({
-        embeds: [new Embed()
-          .setColor(ERROR_COLOR)
-          .setTitle('Karaoke Error')
-          .setDescription('Karaoke session ended')],
-        components: []
-      }).catch(() => null);
-    }
-
-    this.cache.delete(guildId);
   }
 
   static has(guildId: string) {
     const session = this.cache.get(guildId);
     if (!session) return false;
 
-    // Check if player still exists and is connected
     return session.player && session.player.connected;
+  }
+
+  static async add(guildId: string, session: KaraokeSession) {
+    await this.cleanup(guildId);
+    this.cache.set(guildId, session);
+  }
+
+  static async cleanup(guildId: string) {
+    const session = this.cache.get(guildId);
+    if (!session) return;
+
+    clearTimeout(session.updateTimer);
+    clearTimeout(session.timeout);
+
+    if (session.message?.delete) {
+      await session.message.delete().catch(() => null);
+    } else if (session.message?.edit) {
+      await session.message
+        .edit({
+          embeds: [
+            new Embed()
+              .setColor(ERROR_COLOR)
+              .setTitle('Karaoke session ended')
+              .setDescription('The karaoke display has been closed.'),
+          ],
+          components: [],
+        })
+        .catch(() => null);
+    }
+
+    this.cache.delete(guildId);
   }
 
   static async cleanupAll() {
@@ -265,24 +249,28 @@ class KaraokeSessionRegistry {
 @Cooldown({
   type: CooldownType.User,
   interval: 60000,
-  uses: { default: 2 }
+  uses: { default: 2 },
 })
-
 @Declare({
   name: 'karaoke',
-  description: 'Start a karaoke session with synced lyrics'
+  description: 'Start a karaoke session with synced lyrics',
 })
 @Middlewares(['cooldown', 'checkPlayer', 'checkVoice', 'checkTrack'])
 export default class KaraokeCommand extends Command {
   private _getCurrentTimeMs(session: KaraokeSession): number {
     const player = session.player;
-    if (player?.position !== undefined && player?.position !== null && player?.timestamp !== undefined && player?.timestamp !== null) {
+
+    if (
+      player?.position !== undefined &&
+      player?.position !== null &&
+      player?.timestamp !== undefined &&
+      player?.timestamp !== null
+    ) {
       const driftMs = Date.now() - player.timestamp;
 
       if (driftMs >= 0 && driftMs < MAX_DRIFT_MS) {
         return player.position + driftMs;
       }
-
       return player.position;
     }
 
@@ -298,28 +286,94 @@ export default class KaraokeCommand extends Command {
     return player?.paused === true || player?.playing === false;
   }
 
-  private async _updateDisplay(guildId: string) {
+  private _computeNextEditDelayMs(session: KaraokeSession, currentTimeMs: number, isPaused: boolean) {
+    if (isPaused) return 1500;
+
+    const lines = session.lines;
+    if (!lines.length) return 1000;
+
+    const idx = _findCurrentLineIndex(lines, currentTimeMs);
+    const safeIdx = Math.max(0, idx);
+
+    const current = lines[safeIdx];
+    const next = lines[safeIdx + 1];
+
+    const segStart = _lineStartMs(current);
+    const segEnd = next ? _lineStartMs(next) : segStart + 4000;
+
+    const duration = segEnd - segStart;
+    if (duration <= 0) return 500;
+
+    const rawProgress = (currentTimeMs - segStart) / duration;
+    const progress = Math.max(0, Math.min(0.999999, rawProgress));
+
+    const bucket = Math.floor(progress * PROGRESS_BAR_LENGTH);
+    const nextBucket = Math.min(PROGRESS_BAR_LENGTH, bucket + 1);
+
+    const nextBucketTime = segStart + (nextBucket / PROGRESS_BAR_LENGTH) * duration;
+    const nextLineTime = segEnd;
+
+    const nextEventTime = Math.min(nextBucketTime, nextLineTime);
+
+    let delay = nextEventTime - currentTimeMs + SCHEDULER_JITTER_MS;
+    if (!Number.isFinite(delay)) delay = 1000;
+
+    delay = Math.max(MIN_EDIT_DELAY_MS, Math.min(MAX_EDIT_DELAY_MS, delay));
+    return delay;
+  }
+
+  private _scheduleNextTick(guildId: string, delayMs: number) {
     const session = KaraokeSessionRegistry.get(guildId);
     if (!session) return;
-    if (!KaraokeSessionRegistry.has(guildId)) return await KaraokeSessionRegistry.cleanup(guildId);
+
+    clearTimeout(session.updateTimer);
+
+    session.updateTimer = setTimeout(() => {
+      this._tick(guildId).catch(() => KaraokeSessionRegistry.cleanup(guildId));
+    }, delayMs);
+
+    if (session.updateTimer.unref) session.updateTimer.unref();
+  }
+
+  private async _tick(guildId: string) {
+    const session = KaraokeSessionRegistry.get(guildId);
+    if (!session) return;
+
+    if (!KaraokeSessionRegistry.has(guildId)) {
+      await KaraokeSessionRegistry.cleanup(guildId);
+      return;
+    }
 
     const currentTimeMs = this._getCurrentTimeMs(session);
     const isPaused = this._isPlayerPaused(session.player);
 
-    // Check if song has ended
     const lastLine = session.lines[session.lines.length - 1];
-    const lastTimestampMs = lastLine?.range?.start ?? lastLine?.timestamp ?? 0;
+    const lastTimestampMs = lastLine ? _lineStartMs(lastLine) : 0;
 
     if (currentTimeMs > lastTimestampMs + SONG_END_BUFFER_MS) {
       await KaraokeSessionRegistry.cleanup(guildId);
       return;
     }
 
-    const container = _createKaraokeContainer(session.title, session.lines, currentTimeMs, isPaused);
+    const container = _createKaraokeStageContainer(
+      session.title,
+      session.lines,
+      currentTimeMs,
+      isPaused,
+    );
 
-    await session.message.edit({ components: [container] }).catch(async () => {
+    const edited = await session.message
+      .edit({ components: [container] })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!edited) {
       await KaraokeSessionRegistry.cleanup(guildId);
-    });
+      return;
+    }
+
+    const delay = this._computeNextEditDelayMs(session, currentTimeMs, isPaused);
+    this._scheduleNextTick(guildId, delay);
   }
 
   public override async run(ctx: CommandContext): Promise<void> {
@@ -334,7 +388,6 @@ export default class KaraokeCommand extends Command {
       return;
     }
 
-    // Check if there's already an active karaoke session
     if (KaraokeSessionRegistry.has(ctx.guildId)) {
       await ctx.editOrReply({
         embeds: [_createErrorEmbed(t.karaoke.sessionAlreadyActive, lang, ctx)],
@@ -345,10 +398,9 @@ export default class KaraokeCommand extends Command {
     await KaraokeSessionRegistry.cleanup(ctx.guildId);
 
     const result = await _fetchKaraokeLyrics(undefined, player.current);
-
     if (!result) {
       await ctx.editOrReply({
-        embeds: [_createErrorEmbed(t.karaoke.noLyricsAvailable, lang, ctx)]
+        embeds: [_createErrorEmbed(t.karaoke.noLyricsAvailable, lang, ctx)],
       });
       return;
     }
@@ -356,34 +408,35 @@ export default class KaraokeCommand extends Command {
     const title = player.current?.title ?? 'Karaoke';
     const initialPosition = player.position ?? 0;
     const isPaused = this._isPlayerPaused(player);
-    const container = _createKaraokeContainer(title, result.lines, initialPosition, isPaused);
+
+    const container = _createKaraokeStageContainer(title, result.lines, initialPosition, isPaused);
 
     const message = await ctx.editOrReply({ components: [container], flags: 32768 });
     if (!message) return;
-
-    const interval = setInterval(() => {
-      this._updateDisplay(ctx.guildId);
-    }, UPDATE_INTERVAL_MS);
 
     const timeout = setTimeout(() => {
       KaraokeSessionRegistry.cleanup(ctx.guildId);
     }, SESSION_TIMEOUT_MS);
     if (timeout.unref) timeout.unref();
 
-    KaraokeSessionRegistry.add(ctx.guildId, {
+    const updateTimer = setTimeout(() => {}, 0);
+    if (updateTimer.unref) updateTimer.unref();
+
+    await KaraokeSessionRegistry.add(ctx.guildId, {
       message,
       lines: result.lines,
       player,
-      interval,
+      updateTimer,
       timeout,
       fallbackStartPosition: initialPosition,
       fallbackStartTime: Date.now(),
-      title
+      title,
     });
+
+    this._scheduleNextTick(ctx.guildId, 0);
   }
 }
 
-// Export cleanup functions
 export const cleanupKaraokeSession = async (guildId: string) => {
   await KaraokeSessionRegistry.cleanup(guildId);
 };

@@ -10,6 +10,34 @@ import {
 import { getPlaylistsCollection } from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
+// Schema validation for imported playlists
+interface ImportedPlaylist {
+	name: string;
+	description?: string;
+	tracks: Array<{
+		title: string;
+		uri: string;
+		author: string;
+		duration: number;
+	}>;
+}
+
+interface PlaylistTrack {
+	title: string;
+	uri: string;
+	author: string;
+	duration: number;
+	addedAt: string;
+	addedBy: string;
+	source: string;
+	identifier: string;
+	isStream?: boolean;
+	isSeekable?: boolean;
+	position?: number;
+	artworkUrl?: string | null;
+	isrc?: string | null;
+}
+
 // Modern Emoji Set
 const ICONS = {
 	music: "🎵",
@@ -113,13 +141,49 @@ export class ImportCommand extends SubCommand {
 			const response = await fetch(attachment.url);
 			const data = await response.json();
 
-			if (!data.name || !Array.isArray(data.tracks)) {
+			// Validate imported playlist schema
+			if (!data.name || typeof data.name !== 'string') {
 				return await ctx.write({
 					embeds: [
 						createEmbed(
 							"error",
 							t.playlist?.import?.invalidFile || "Invalid File",
 							t.playlist?.import?.invalidFileDesc || "The file must contain a valid playlist with name and tracks array.",
+						),
+					],
+					flags: 64,
+				});
+			}
+
+			if (!Array.isArray(data.tracks)) {
+				return await ctx.write({
+					embeds: [
+						createEmbed(
+							"error",
+							t.playlist?.import?.invalidFile || "Invalid File",
+							"The file must contain a valid tracks array.",
+						),
+					],
+					flags: 64,
+				});
+			}
+
+			// Validate each track in the playlist
+			const validTracks = data.tracks.filter((track: any) => {
+				return track &&
+					   typeof track.title === 'string' &&
+					   typeof track.uri === 'string' &&
+					   typeof track.author === 'string' &&
+					   typeof track.duration === 'number';
+			});
+
+			if (validTracks.length === 0) {
+				return await ctx.write({
+					embeds: [
+						createEmbed(
+							"error",
+							t.playlist?.import?.invalidFile || "Invalid File",
+							"The playlist contains no valid tracks.",
 						),
 					],
 					flags: 64,
@@ -145,30 +209,48 @@ export class ImportCommand extends SubCommand {
 				});
 			}
 
-			// Create new playlist
-			const newPlaylist = {
-				userId,
-				name: playlistName,
-				description: data.description || "Imported playlist",
-				tracks: data.tracks.map((track: any) => ({
-					title: track.title,
-					uri: track.uri,
-					author: track.author,
-					duration: track.duration,
-					addedAt: new Date().toISOString(),
-					addedBy: userId,
-					source: determineSource(track.uri),
-				})),
-				createdAt: new Date().toISOString(),
-				lastModified: new Date().toISOString(),
-				playCount: 0,
-				totalDuration: data.tracks.reduce(
-					(sum: number, track: any) => sum + (track.duration || 0),
-					0,
-				),
-			};
+			let newPlaylist;
+			try {
+				newPlaylist = {
+					userId,
+					name: playlistName,
+					description: data.description || "Imported playlist",
+					tracks: validTracks.map((track: any) => ({
+						title: track.title,
+						uri: track.uri,
+						author: track.author,
+						duration: track.duration,
+						addedAt: new Date().toISOString(),
+						addedBy: userId,
+						source: determineSource(track.uri),
+					})),
+					createdAt: new Date().toISOString(),
+					lastModified: new Date().toISOString(),
+					playCount: 0,
+					totalDuration: validTracks.reduce(
+						(sum: number, track: any) => sum + (track.duration || 0),
+						0,
+					),
+				};
 
-			playlistsCollection.insert(newPlaylist);
+				const result = playlistsCollection.insert(newPlaylist);
+
+				if (!result) {
+					throw new Error("Failed to create playlist in database");
+				}
+			} catch (dbError) {
+				console.error("Database error creating playlist:", dbError);
+				return await ctx.write({
+					embeds: [
+						createEmbed(
+							"error",
+							t.playlist?.import?.importFailed || "Import Failed",
+							(t.playlist?.import?.importFailedDesc || "Could not save playlist: {error}").replace("{error}", dbError instanceof Error ? dbError.message : "Unknown error"),
+						),
+					],
+					flags: 64,
+				});
+			}
 
 			const embed = createEmbed(
 				"success",

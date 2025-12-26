@@ -95,10 +95,6 @@ export default {
             name: "lyrics",
             description: "Get lyrics for the current song"
         },
-        loadlyrics: {
-            name: "loadlyrics",
-            description: "Load lyrics for a specific encoded track"
-        },
         export: {
             name: "export",
             description: "Export the queue"

@@ -97,10 +97,6 @@ export default {
             name: "paroles",
             description: "Obtenir les paroles de la chanson actuelle"
         },
-        loadlyrics: {
-            name: "charger-paroles",
-            description: "Charger les paroles pour une piste encodée spécifique"
-        },
         export: {
             name: "exporter",
             description: "Exporter la file"

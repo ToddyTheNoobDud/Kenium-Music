@@ -87,16 +87,35 @@ export class RemoveCommand extends SubCommand {
 			(playlist.totalDuration || 0) - (removedTrack.duration || 0)
 		);
 
-		playlistsCollection.updateAtomic(
-			{ _id: playlist._id },
-			{
-				$set: {
-					tracks: updatedTracks,
-					lastModified: timestamp,
-					totalDuration: newTotalDuration
+		// Use atomic operation with proper error handling
+		try {
+			const result = playlistsCollection.updateAtomic(
+				{ _id: playlist._id },
+				{
+					$set: {
+						tracks: updatedTracks,
+						lastModified: timestamp,
+						totalDuration: newTotalDuration
+					}
 				}
+			);
+
+			if (!result) {
+				throw new Error("Database update failed");
 			}
-		);
+		} catch (dbError) {
+			console.error("Failed to update playlist after track removal:", dbError);
+			return ctx.write({
+				embeds: [
+					createEmbed(
+						"error",
+						t.playlist?.remove?.removeFailed || "Remove Failed",
+						(t.playlist?.remove?.removeFailedDesc || "Could not remove track: {error}").replace("{error}", dbError instanceof Error ? dbError.message : "Unknown error"),
+					),
+				],
+				flags: 64,
+			});
+		}
 
 		const embed = createEmbed(
 			"success",

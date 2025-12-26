@@ -21,7 +21,7 @@ import { getContextTranslations } from "../../utils/i18n";
 
 const playlistsCollection = getPlaylistsCollection();
 
-interface Track {
+interface PlaylistTrack {
 	title: string;
 	uri: string;
 	author: string;
@@ -30,12 +30,11 @@ interface Track {
 	addedBy: string;
 	source: string;
 	identifier: string;
-	isStream: boolean;
-	isSeekable: boolean;
-	position: number;
-	artworkUrl: string | null;
-	isrc: string | null;
-	userId: string;
+	isStream?: boolean;
+	isSeekable?: boolean;
+	position?: number;
+	artworkUrl?: string | null;
+	isrc?: string | null;
 }
 
 const TRACK_SEPARATOR_RE = /[,;\n]+/;
@@ -175,7 +174,7 @@ export class AddCommand extends SubCommand {
 			if (!uri || toAdd.length >= availableSlots) return;
 			const canonical = _functions.canonicalizeUri(uri);
 			if (existingCanonical.has(canonical)) return;
-			const newTrack: Track = {
+			const newTrack: PlaylistTrack = {
 				title: track.info.title || "Unknown",
 				uri,
 				author: track.info.author || "Unknown",
@@ -189,7 +188,6 @@ export class AddCommand extends SubCommand {
 				position: track.info.position || 0,
 				artworkUrl: track.info.artworkUrl || null,
 				isrc: track.info.isrc || null,
-				userId
 			};
 			toAdd.push(newTrack);
 			existingCanonical.add(canonical);
@@ -256,13 +254,30 @@ export class AddCommand extends SubCommand {
 				toAdd.reduce((sum, t) => sum + (t.duration || 0), 0);
 
 
-			playlistsCollection.updateAtomic({ _id: playlistDb._id }, {
-				$set: {
-					tracks: playlistDb.tracks,
-					lastModified: timestamp,
-					totalDuration: playlistDb.totalDuration
+			try {
+				const result = playlistsCollection.updateAtomic({ _id: playlistDb._id }, {
+					$set: {
+						tracks: playlistDb.tracks,
+						lastModified: timestamp,
+						totalDuration: playlistDb.totalDuration
+					}
+				});
+
+				if (!result) {
+					throw new Error("Database update failed");
 				}
-			});
+			} catch (dbError) {
+				console.error("Failed to update playlist:", dbError);
+				return ctx.editOrReply({
+					embeds: [
+						createEmbed(
+							"error",
+							t.playlist?.add?.addFailed || "Add Failed",
+							(t.playlist?.add?.addFailedDesc || "Could not save playlist changes: {error}").replace("{error}", dbError instanceof Error ? dbError.message : "Unknown error"),
+						),
+					],
+				});
+			}
 			const primary = toAdd[0];
 			const embed = createEmbed(
 				"success",

@@ -97,10 +97,6 @@ export default {
             name: "歌詞",
             description: "現在の曲の歌詞を取得"
         },
-        loadlyrics: {
-            name: "歌詞を読み込む",
-            description: "特定のエンコードされたトラックの歌詞を読み込む"
-        },
         export: {
             name: "エクスポート",
             description: "キューをエクスポート"

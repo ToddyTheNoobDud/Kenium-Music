@@ -4,6 +4,7 @@ export default {
     hello: "नमस्ते",
     ping: {
         description: "**गेटवे**: {wsPing}ms\n**शार्ड**: {shardPing}ms\n**प्लेयर**: {playerPing}ms",
+        descriptionNoPlayer: "**गेटवे**: {wsPing}ms\n**शार्ड**: {shardPing}ms",
         title: "पिंग जानकारी"
     },
     language: {

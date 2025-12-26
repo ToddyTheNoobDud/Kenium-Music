@@ -97,10 +97,6 @@ export default {
             name: "letra",
             description: "Obtener la letra de la canción actual"
         },
-        loadlyrics: {
-            name: "cargar-letra",
-            description: "Cargar letra para una pista codificada específica"
-        },
         export: {
             name: "exportar",
             description: "Exportar la cola"

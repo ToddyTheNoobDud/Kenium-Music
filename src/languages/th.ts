@@ -4,6 +4,7 @@ export default {
     hello: "สวัสดี",
     ping: {
         description: "**เกตเวย์**: {wsPing}ms\n**ชาร์ด**: {shardPing}ms\n**ผู้เล่น**: {playerPing}ms",
+        descriptionNoPlayer: "**เกตเวย์**: {wsPing}ms\n**ชาร์ด**: {shardPing}ms",
         title: "ข้อมูล Ping"
     },
     language: {
@@ -141,7 +142,7 @@ export default {
             description: "แสดงสถานะของบอท"
         },
         tts: {
-            name: "คาราโอเกะ",
+            name: "ทีทีเอส",
             description: "สร้างและส่งข้อความ TTS"
         },
         karaoke: {

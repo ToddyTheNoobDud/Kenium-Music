@@ -44,34 +44,36 @@ const _functions = {
 		}
 	},
 
-	async mapLimit<T, R>(
+	async resolveTracksConcurrently<T>(
 		items: T[],
 		limit: number,
-		fn: (item: T, index: number) => Promise<R | null>,
-	): Promise<R[]> {
+		fn: (item: T, index: number) => Promise<T | null>,
+	): Promise<T[]> {
 		const len = items.length;
 		if (!len) return [];
 
 		const cap = Math.min(limit > 0 ? limit : 1, len);
-		const out = new Array<R | null>(len);
-		let i = 0;
+		const results: (T | null)[] = new Array(len);
+		let currentIndex = 0;
 
-		await Promise.all(
-			Array.from({ length: cap }, async () => {
-				for (;;) {
-					const idx = i++;
-					if (idx >= len) break;
-					out[idx] = await fn(items[idx], idx);
+		const workers = Array.from({ length: cap }, async () => {
+			while (currentIndex < len) {
+				const idx = currentIndex++;
+				if (idx >= len) break;
+
+				try {
+					results[idx] = await fn(items[idx], idx);
+				} catch (error) {
+					console.error(`Track resolution failed for index ${idx}:`, error);
+					results[idx] = null;
 				}
-			}),
-		);
+			}
+		});
 
-		const res: R[] = [];
-		for (let j = 0; j < len; j++) {
-			const v = out[j];
-			if (v != null) res.push(v);
-		}
-		return res;
+		await Promise.all(workers);
+
+		// Filter out null results and return valid tracks
+		return results.filter((result): result is T => result !== null);
 	},
 
 	getChannelName(vc: any) {
@@ -161,7 +163,7 @@ export class PlayCommand extends SubCommand {
 			const total = dbTracks.length;
 			const tracks = shuffle ? shuffleArray(dbTracks.slice()) : dbTracks;
 
-			const loadedTracks = await _functions.mapLimit(
+			const loadedTracks = await _functions.resolveTracksConcurrently(
 				tracks,
 				MAX_RESOLVE_CONCURRENCY,
 				(track) => _functions.resolveTrack(ctx.client.aqua, track, ctx.interaction.user),
@@ -179,14 +181,19 @@ export class PlayCommand extends SubCommand {
 			for (const tr of loadedTracks) player.queue.add(tr);
 
 			try {
-				playlistsCollection.updateAtomic(
+				const result = playlistsCollection.updateAtomic(
 					{ _id: playlistDb._id },
 					{
 						$inc: { playCount: 1 },
 						$set: { lastPlayedAt: new Date().toISOString() },
 					},
 				);
-			} catch {
+
+				if (!result) {
+					console.warn("Failed to update playlist stats:", playlistDb._id);
+				}
+			} catch (dbError) {
+				console.error("Database error updating playlist stats:", dbError);
 				// stats update should never block playback
 			}
 

@@ -48,7 +48,33 @@ export function getPlaylistsCollection() {
 		} catch {}
 
 		try {
+			(collection as any).db
+				.prepare(
+					`CREATE INDEX IF NOT EXISTS idx_playlists_user_createdAt
+					 ON "col_playlists"(
+						 json_extract(doc, '$.userId'),
+						 json_extract(doc, '$.createdAt')
+					 )`,
+				)
+				.run();
+		} catch {}
+
+		try {
+			(collection as any).db
+				.prepare(
+					`CREATE INDEX IF NOT EXISTS idx_playlists_totalDuration
+					 ON "col_playlists"(
+						 json_extract(doc, '$.totalDuration')
+					 )`,
+				)
+				.run();
+		} catch {}
+
+		try {
 			collection.createIndex("userId");
+			collection.createIndex("name");
+			collection.createIndex("lastModified");
+			collection.createIndex("createdAt");
 		} catch {}
 	}
 

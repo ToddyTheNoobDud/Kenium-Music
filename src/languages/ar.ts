@@ -4,6 +4,7 @@ export default {
     hello: "مرحبا",
     ping: {
         description: "**البوابة**: {wsPing}ms\n**الشريحة**: {shardPing}ms\n**المشغل**: {playerPing}ms",
+        descriptionNoPlayer: "**البوابة**: {wsPing}ms\n**الشريحة**: {shardPing}ms",
         title: "معلومات البينغ"
     },
     language: {
@@ -93,7 +94,7 @@ export default {
             description: "أخذ الأغنية الحالية وإرسالها في رسالة خاصة"
         },
         lyrics: {
-            name: "كلمات",
+            name: "الكلمات",
             description: "الحصول على كلمات الأغنية الحالية"
         },
         export: {

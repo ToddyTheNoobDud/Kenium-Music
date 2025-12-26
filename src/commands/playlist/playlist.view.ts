@@ -17,9 +17,9 @@ import {
 	handlePlaylistAutocomplete,
 } from "../../shared/utils";
 import { getContextTranslations } from "../../utils/i18n";
-import { getPlaylistsCollection } from "../../utils/db"; // ✅ Use singleton
+import { getPlaylistsCollection } from "../../utils/db";
 
-const playlistsCollection = getPlaylistsCollection(); // ✅ Use singleton
+const playlistsCollection = getPlaylistsCollection();
 
 function createSelectMenu(
 	customId: string,
@@ -76,11 +76,14 @@ export class ViewCommand extends SubCommand {
 		const userId = ctx.author.id;
 
 		if (!playlistName) {
+			const page = 1;
+			const pageSize = 25;
 			const playlists = playlistsCollection.find(
 				{ userId },
 				{
 					sort: { lastModified: -1 },
-					limit: 25,
+					limit: pageSize,
+					skip: (page - 1) * pageSize,
 					fields: ['name', 'tracks', 'totalDuration', 'lastModified', 'createdAt', 'playCount']
 				}
 			);
@@ -185,6 +188,7 @@ export class ViewCommand extends SubCommand {
 		);
 		const startIdx = (page - 1) * pageSize;
 		const endIdx = Math.min(startIdx + pageSize, playlist.tracks.length);
+
 		const tracks = playlist.tracks.slice(startIdx, endIdx);
 
 		const embed = createEmbed(

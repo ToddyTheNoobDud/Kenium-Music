@@ -31,6 +31,7 @@ const COUNT_CACHE_TTL = 30000;
 const { NODE_HOST, NODE_PASSWORD, NODE_PORT, NODE_NAME, NODE_SECURE, id } =
   process.env;
 
+
 if (!id) {
   console.error("Bot token (id) is not defined in environment variables.");
   process.exit(1);
@@ -63,7 +64,7 @@ const aqua = new Aqua(
 
 aqua.init(id);
 Object.assign(client, { aqua });
-// State management
+
 const state = {
   presenceInterval: null,
   lastVoiceStatusUpdate: 0,

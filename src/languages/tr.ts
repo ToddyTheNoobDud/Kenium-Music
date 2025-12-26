@@ -4,6 +4,7 @@ export default {
     hello: "merhaba",
     ping: {
         description: "**Gateway**: {wsPing}ms\n**Shard**: {shardPing}ms\n**Oynatıcı**: {playerPing}ms",
+        descriptionNoPlayer: "**Gateway**: {wsPing}ms\n**Shard**: {shardPing}ms",
         title: "Ping Bilgileri"
     },
     language: {
@@ -437,7 +438,7 @@ Daha fazlasını istemiyor musun? [\`Beni davet etmek için buraya tıkla\`](htt
             gettingStartedDesc: "İlk oynatma listeni oluşturmak için `/playlist create` kullan!",
             createPlaylist: "Oynatma Listesi Oluştur",
             yourPlaylists: "Oynatma Listeleriniz",
-            yourPlaylistsDesc: "**{count}** oynatma listen{plural} var",
+            yourPlaylistsDesc: "**{count}** adet oynatma listeniz var",
             choosePlaylist: "Görüntülemek için bir oynatma listesi seç...",
             notFound: "Oynatma Listesi Bulunamadı",
             notFoundDesc: "\"{name}\" adında oynatma listesi yok!",
