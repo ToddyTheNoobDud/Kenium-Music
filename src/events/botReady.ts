@@ -1,161 +1,118 @@
-import { createEvent } from 'seyfert'
-import { updatePresence } from '../../index'
-import { getSettingsCollection } from '../utils/db'
+import { createEvent } from "seyfert";
+import { updatePresence } from "../../index";
+import { getSettingsCollection } from "../utils/db";
+import { disable247Sync } from "../utils/db_helper";
 
-const NICKNAME_SUFFIX = ' [24/7]'
-const BATCH_SIZE = 10
-const BATCH_DELAY = 500
-const UNKNOWN_VOICE_STATE_CODE = 10065
-const STARTUP_DELAY = 6000
-const VOICE_STATE_ROUTE_REGEX = /\/guilds\/(\d{17,20})\/voice-states/i
+const NICKNAME_SUFFIX = " [24/7]";
+const BATCH_SIZE = 10;
+const BATCH_DELAY = 500;
+const STARTUP_DELAY = 6000;
 
-const settingsCollection = getSettingsCollection()
-let clientInstance: any = null
-let errorHandlerRegistered = false
-
-const isUnknownVoiceStateError = (err: any): boolean => {
-  if (!err) return false
-  if (err.code === UNKNOWN_VOICE_STATE_CODE) return true
-
-  const errStr = String(err.message ?? err ?? '')
-  return errStr.includes('Unknown Voice State 10065') ||
-    (errStr.includes('/voice-states/') && (errStr.includes('404') || errStr.includes('Unknown')))
-}
-
-const extractGuildIdFromError = (err: any): string | null => {
-  const candidates = [
-    err?.path,
-    err?.route,
-    err?.request?.path,
-    err?.stack,
-    err?.message,
-    String(err)
-  ]
-
-  for (const candidate of candidates) {
-    if (!candidate) continue
-    const match = VOICE_STATE_ROUTE_REGEX.exec(String(candidate))
-    if (match?.[1]) return match[1]
-  }
-
-  return null
-}
-
-const cleanup247ForGuild = async (guildId: string) => {
-  try {
-    const docs = settingsCollection.findOne({ guildId })
-    if (!docs) return
-
-    settingsCollection.delete({ guildId })
-
-    const player = clientInstance?.aqua?.players?.get(guildId)
-    if (player?.destroy) player.destroy()
-
-    clientInstance?.logger?.info(`[24/7] Removed settings for guild ${guildId} due to Unknown Voice State`)
-  } catch (err) {
-    clientInstance?.logger?.error('[24/7] Cleanup failed:', err)
-  }
-}
-
-const processGuild = async (client: any, settings: any) => {
-  const { guildId, voiceChannelId, textChannelId, _id } = settings
-
-  if (!voiceChannelId || !textChannelId) {
-    settingsCollection.delete({ _id })
-    return
-  }
-
-  try {
-    const guild = await client.guilds.fetch(guildId).catch(() => null)
-    if (!guild) {
-      settingsCollection.delete({ _id })
-      return
-    }
-
-    const [voiceChannel, textChannel] = await Promise.all([
-      guild.channels.fetch(voiceChannelId).catch(() => null),
-      guild.channels.fetch(textChannelId).catch(() => null)
-    ])
-
-    if (!voiceChannel || voiceChannel.type !== 2) {
-      settingsCollection.delete({ _id })
-      return
-    }
-
-    if (!textChannel || (textChannel.type !== 0 && textChannel.type !== 5)) {
-      settingsCollection.delete({ _id })
-      return
-    }
-
-    await Promise.all([
-      client.aqua.createConnection({
-        guildId,
-        voiceChannel: voiceChannelId,
-        textChannel: textChannelId,
-        deaf: true,
-        defaultVolume: 65
-      }),
-      updateNickname(guild)
-    ])
-  } catch (error) {
-    if (isUnknownVoiceStateError(error)) await cleanup247ForGuild(guildId)
-  }
-}
-
-const processAutoJoin = async (client: any) => {
-  const guildsWithTwentyFourSeven = settingsCollection.find({
-    twentyFourSevenEnabled: true
-  })
-
-  if (!guildsWithTwentyFourSeven?.length) return
-
-  const totalGuilds = guildsWithTwentyFourSeven.length
-
-  for (let i = 0; i < totalGuilds; i += BATCH_SIZE) {
-    const batch = guildsWithTwentyFourSeven.slice(i, i + BATCH_SIZE)
-    await Promise.allSettled(batch.map(settings => processGuild(client, settings)))
-
-    if (i + BATCH_SIZE < totalGuilds) {
-      await new Promise(resolve => setTimeout(resolve, BATCH_DELAY))
-    }
-  }
-}
+const settingsCollection = getSettingsCollection();
+let clientInstance: any = null;
 
 const updateNickname = async (guild: any) => {
-  const botMember = guild.members?.me
-  if (!botMember) return
+  const botMember = guild.members?.me;
+  if (!botMember) return;
 
-  const currentNick = botMember.nickname || botMember.user?.username || ''
-  if (currentNick.includes(NICKNAME_SUFFIX)) return
+  const currentNick = botMember.nickname || botMember.user?.username || "";
+  if (currentNick.includes(NICKNAME_SUFFIX)) return;
 
   try {
-    await botMember.edit({ nick: currentNick + NICKNAME_SUFFIX })
-  } catch {
+    await botMember.edit({ nick: currentNick + NICKNAME_SUFFIX });
+  } catch {}
+};
+
+const disable247ForGuild = async (guildId: string, reason: string) => {
+  try {
+    disable247Sync(guildId, reason);
+
+    const player = clientInstance?.aqua?.players?.get(guildId);
+    if (player?.destroy) player.destroy();
+
+    clientInstance?.logger?.info(`[24/7] Disabled for guild ${guildId}: ${reason}`);
+  } catch (err) {
+    clientInstance?.logger?.error("[24/7] Disable failed:", err);
   }
-}
+};
 
-const setupGlobalErrorHandler = (client: any) => {
-  if (errorHandlerRegistered) return
-  errorHandlerRegistered = true
+const processGuild = async (client: any, settings: any) => {
+  const guildId = String(settings?._id || settings?.guildId || "");
+  if (!guildId) return;
 
-  process.on('unhandledRejection', async (reason) => {
-    if (!isUnknownVoiceStateError(reason)) return
-    const guildId = extractGuildIdFromError(reason)
-    if (guildId) await cleanup247ForGuild(guildId)
-  })
-}
+  const voiceChannelId = settings.voiceChannelId;
+  const textChannelId = settings.textChannelId;
+
+  if (!voiceChannelId || !textChannelId) {
+    await disable247ForGuild(guildId, "missing voice/text channel ids");
+    return;
+  }
+
+  const guild = await client.guilds.fetch(guildId).catch(() => null);
+  if (!guild) {
+    await disable247ForGuild(guildId, "guild not found");
+    return;
+  }
+
+  const [voiceChannel, textChannel] = await Promise.all([
+    guild.channels.fetch(voiceChannelId).catch(() => null),
+    guild.channels.fetch(textChannelId).catch(() => null),
+  ]);
+
+  if (!voiceChannel || voiceChannel.type !== 2) {
+    await disable247ForGuild(guildId, "voice channel invalid");
+    return;
+  }
+
+  if (!textChannel || (textChannel.type !== 0 && textChannel.type !== 5)) {
+    await disable247ForGuild(guildId, "text channel invalid");
+    return;
+  }
+
+  await Promise.all([
+    client.aqua.createConnection({
+      guildId,
+      voiceChannel: voiceChannelId,
+      textChannel: textChannelId,
+      deaf: true,
+      defaultVolume: 65,
+    }),
+    updateNickname(guild),
+  ]);
+};
+
+const processAutoJoin = async (client: any) => {
+  const enabled = settingsCollection.find(
+    {
+      twentyFourSevenEnabled: true,
+      voiceChannelId: { $ne: null },
+      textChannelId: { $ne: null },
+    },
+    { fields: ["_id", "guildId", "voiceChannelId", "textChannelId", "twentyFourSevenEnabled"] },
+  );
+
+  if (!enabled?.length) return;
+
+  for (let i = 0; i < enabled.length; i += BATCH_SIZE) {
+    const batch = enabled.slice(i, i + BATCH_SIZE);
+    await Promise.allSettled(batch.map((s: any) => processGuild(client, s)));
+
+    if (i + BATCH_SIZE < enabled.length) {
+      await new Promise((r) => setTimeout(r, BATCH_DELAY));
+    }
+  }
+};
 
 export default createEvent({
-  data: { once: true, name: 'botReady' },
+  data: { once: true, name: "botReady" },
   run: (user, client) => {
-    clientInstance = client
-    if (!client.botId) client.botId = user.id
+    clientInstance = client;
+    if (!client.botId) client.botId = user.id;
 
-    client.aqua.init(client.botId)
-    updatePresence(client as any)
-    setupGlobalErrorHandler(client)
-    client.logger.info(`${user.username} is ready`)
+    client.aqua.init(client.botId);
+    updatePresence(client as any);
+    client.logger.info(`${user.username} is ready`);
 
-    setTimeout(() => processAutoJoin(client), STARTUP_DELAY)
-  }
-})
+    setTimeout(() => processAutoJoin(client), STARTUP_DELAY);
+  },
+});

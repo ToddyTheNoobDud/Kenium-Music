@@ -1,328 +1,361 @@
-import { getDatabase } from './db'
-import { lru } from 'tiny-lru'
+import { getDatabase } from "./db";
+import { lru } from "tiny-lru";
 
-const toBool = (v: any) => v === true || v === 1 || v === '1' || v === 'true';
+const toBool = (v: any) => v === true || v === 1 || v === "1" || v === "true";
 
 export class DatabaseError extends Error {
   constructor(message: string, cause?: unknown) {
-    super(message)
-    this.name = 'DatabaseError'
-    this.cause = cause
+    super(message);
+    this.name = "DatabaseError";
+    (this as any).cause = cause;
   }
 }
 
 export class ValidationError extends Error {
-  field: string | null = null
-  value: unknown = null
+  field: string | null = null;
+  value: unknown = null;
   constructor(message: string, field?: string, value?: unknown) {
-    super(message)
-    this.name = 'ValidationError'
-    this.field = field || null
-    this.value = value
+    super(message);
+    this.name = "ValidationError";
+    this.field = field || null;
+    this.value = value;
   }
 }
 
-const COLLECTION_NAME = 'guildSettings'
-const CACHE_MAX = 1000
-const CACHE_TTL_MS = 600000
-const BATCH_INTERVAL_MS = 100
-const MAX_BATCH_SIZE = 50
-const GUILD_ID_RE = /^\d{17,20}$/
-const SUPPORTED_LANGS = new Set(['en', 'br', 'es', 'hi', 'fr', 'ar', 'bn', 'ru', 'ja', 'tr', 'th'])
+const COLLECTION_NAME = "guildSettings";
+
+const CACHE_MAX = 5000;
+const CACHE_TTL_MS = 600000;
+
+const BATCH_INTERVAL_MS = 100;
+const MAX_BATCH_SIZE = 50;
+
+const GUILD_ID_RE = /^\d{17,20}$/;
+const SUPPORTED_LANGS = new Set(["en", "br", "es", "hi", "fr", "ar", "bn", "ru", "ja", "tr", "th"]);
 
 export const _functions = {
   isValidGuildId: (guildId: string) => GUILD_ID_RE.test(guildId),
   isValidLang: (lang: string) => SUPPORTED_LANGS.has(lang),
+
   createDefaultSettings: (guildId: string) => ({
     _id: guildId,
     guildId,
     twentyFourSevenEnabled: false,
     voiceChannelId: null,
     textChannelId: null,
-    lang: 'en'
-  })
-}
+    lang: "en",
+  }),
+};
+
+type AnyDoc = Record<string, any>;
 
 class DatabaseManager {
-  static instance: DatabaseManager | null = null
-  settingsCollection: any = null
-  cache = lru(CACHE_MAX, CACHE_TTL_MS, false)
-  updateQueue = new Map<string, any>()
-  updateTimer: NodeJS.Timeout | null = null
-  isProcessing = false
-  consecutiveFailures = 0
-  maxFailuresBeforeDrop = 5
+  static instance: DatabaseManager | null = null;
+
+  settingsCollection: any = null;
+
+  cache = lru(CACHE_MAX, CACHE_TTL_MS, true);
+
+  updateQueue = new Map<string, AnyDoc>();
+  updateTimer: NodeJS.Timeout | null = null;
+  isProcessing = false;
+
+  consecutiveFailures = 0;
+  maxFailuresBeforeDrop = 5;
 
   static getInstance(): DatabaseManager {
-    if (!DatabaseManager.instance) {
-      DatabaseManager.instance = new DatabaseManager()
-    }
-    return DatabaseManager.instance
+    return (DatabaseManager.instance ??= new DatabaseManager());
   }
 
   getSettingsCollection() {
     if (!this.settingsCollection) {
-      const db = getDatabase()
-      this.settingsCollection = db.collection(COLLECTION_NAME)
+      const db = getDatabase();
+      const col = db.collection(COLLECTION_NAME);
 
       try {
-        if (this.settingsCollection.createIndex) {
-          this.settingsCollection.createIndex('guildId')
-        }
-      } catch (err) {
-        console.warn('Failed to create guild settings index:', err)
-      }
+        col.createIndex?.("twentyFourSevenEnabled");
+      } catch {}
+      try {
+        col.createIndex?.("guildId");
+      } catch {}
+
+      this.settingsCollection = col;
     }
-    return this.settingsCollection
+    return this.settingsCollection;
   }
 
   scheduleBatch() {
-    if (this.updateTimer) return
+    if (this.updateTimer) return;
 
     const timer = setTimeout(() => {
-      this.processBatchUpdates()
-      this.updateTimer = null
-    }, BATCH_INTERVAL_MS)
+      this.processBatchUpdates();
+      this.updateTimer = null;
+    }, BATCH_INTERVAL_MS);
 
-    if (timer.unref) timer.unref()
-    this.updateTimer = timer
+    (timer as any)?.unref?.();
+    this.updateTimer = timer;
   }
 
   processBatchUpdates() {
-    if (this.updateQueue.size === 0) return
+    if (this.updateQueue.size === 0) return;
 
     if (this.isProcessing) {
-      this.scheduleBatch()
-      return
+      this.scheduleBatch();
+      return;
     }
 
-    this.isProcessing = true
-    const collection = this.getSettingsCollection()
+    this.isProcessing = true;
+    const collection = this.getSettingsCollection();
 
-    const batch = this.updateQueue
-    this.updateQueue = new Map<string, any>()
+    const batch = this.updateQueue;
+    this.updateQueue = new Map<string, AnyDoc>();
 
-    const updates = Array.from(batch.entries())
+    const updates = Array.from(batch.entries());
 
-    const chunks: Array<Array<[string, any]>> = []
+    const chunks: Array<Array<[string, AnyDoc]>> = [];
     for (let i = 0; i < updates.length; i += MAX_BATCH_SIZE) {
-      chunks.push(updates.slice(i, i + MAX_BATCH_SIZE))
+      chunks.push(updates.slice(i, i + MAX_BATCH_SIZE));
     }
 
     try {
       for (const chunk of chunks) {
-        const docsToUpsert: any[] = []
+        const idsToFetch: string[] = [];
+        for (const [guildId] of chunk) {
+          if (!this.cache.get(guildId)) idsToFetch.push(guildId);
+        }
+
+        let existingMap = new Map<string, AnyDoc>();
+        if (idsToFetch.length) {
+          const existingDocs = collection.find({ _id: { $in: idsToFetch } }) as AnyDoc[];
+          existingMap = new Map(existingDocs.map((d) => [String(d._id), d]));
+        }
+
+        const nowIso = new Date().toISOString();
+        const docsToUpsert: AnyDoc[] = [];
 
         for (const [guildId, updateData] of chunk) {
           const base =
             this.cache.get(guildId) ??
-            collection.findById(guildId) ??
-            _functions.createDefaultSettings(guildId)
+            existingMap.get(guildId) ??
+            _functions.createDefaultSettings(guildId);
+
+          const createdAt = base.createdAt ?? nowIso;
 
           const next = {
             ...base,
             ...updateData,
             _id: guildId,
             guildId,
-            createdAt: base.createdAt
-          }
+            createdAt,
+            updatedAt: nowIso,
+          };
 
-          next.twentyFourSevenEnabled = toBool(next.twentyFourSevenEnabled)
-
-          docsToUpsert.push(next)
+          next.twentyFourSevenEnabled = toBool(next.twentyFourSevenEnabled);
+          docsToUpsert.push(next);
         }
 
-        const saved = collection.insert(docsToUpsert) as any[]
+        const saved = collection.insert(docsToUpsert) as AnyDoc[];
 
         for (const doc of saved) {
-          if (doc?.guildId) this.cache.set(doc.guildId, doc)
-          else if (doc?._id) this.cache.set(doc._id, doc)
+          const key = String(doc._id ?? doc.guildId);
+          if (key) this.cache.set(key, doc);
         }
       }
 
-      this.consecutiveFailures = 0
+      this.consecutiveFailures = 0;
     } catch (error) {
-      console.error('Batch update failed:', error)
-      this.consecutiveFailures++
+      console.error("Batch update failed:", error);
+      this.consecutiveFailures++;
 
       for (const [k, v] of batch.entries()) {
-        const existing = this.updateQueue.get(k)
-        this.updateQueue.set(k, existing ? { ...v, ...existing } : v)
+        const existing = this.updateQueue.get(k);
+        this.updateQueue.set(k, existing ? { ...existing, ...v } : v);
       }
 
       if (this.updateTimer) {
-        clearTimeout(this.updateTimer)
-        this.updateTimer = null
+        clearTimeout(this.updateTimer);
+        this.updateTimer = null;
       }
 
       if (this.consecutiveFailures >= this.maxFailuresBeforeDrop) {
         console.error(
           `Persistent batch update failure (${this.consecutiveFailures} attempts). Dropping ${this.updateQueue.size} pending updates to prevent memory leak.`,
-        )
-        this.updateQueue.clear()
+        );
+        this.updateQueue.clear();
       } else {
-        setTimeout(() => this.scheduleBatch(), BATCH_INTERVAL_MS * 2)
+        setTimeout(() => this.scheduleBatch(), BATCH_INTERVAL_MS * 2);
       }
     } finally {
-      this.isProcessing = false
+      this.isProcessing = false;
     }
   }
 
-  queueUpdate(guildId: string, updates: any) {
-    const existing = this.updateQueue.get(guildId)
-    this.updateQueue.set(guildId, existing ? { ...existing, ...updates } : updates)
-    this.scheduleBatch()
+  queueUpdate(guildId: string, updates: AnyDoc) {
+    const existing = this.updateQueue.get(guildId);
+    this.updateQueue.set(guildId, existing ? { ...existing, ...updates } : updates);
+    this.scheduleBatch();
   }
 
   flushUpdates() {
     if (this.updateTimer) {
-      clearTimeout(this.updateTimer)
-      this.updateTimer = null
+      clearTimeout(this.updateTimer);
+      this.updateTimer = null;
     }
-    this.processBatchUpdates()
+    this.processBatchUpdates();
   }
 
   cleanup() {
-    this.flushUpdates()
-    this.cache.clear()
-    this.settingsCollection = null
+    this.flushUpdates();
+    this.cache.clear();
+    this.settingsCollection = null;
   }
 }
 
-const dbManager = DatabaseManager.getInstance()
+const dbManager = DatabaseManager.getInstance();
+
 
 export const getGuildSettings = (guildId: string) => {
   if (!_functions.isValidGuildId(guildId)) {
-    throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
+    throw new ValidationError("Invalid guild ID format", "guildId", guildId);
   }
 
-  const cached = dbManager.cache.get(guildId)
-  if (cached) return cached
+  const cached = dbManager.cache.get(guildId);
+  if (cached) return cached;
 
   try {
-    const collection = dbManager.getSettingsCollection()
+    const collection = dbManager.getSettingsCollection();
+    const found = collection.findById(guildId);
 
-    const found = collection.findById(guildId)
+    const settings = found || _functions.createDefaultSettings(guildId);
+    settings.twentyFourSevenEnabled = toBool(settings.twentyFourSevenEnabled);
 
-    const settings = found || _functions.createDefaultSettings(guildId)
-
-    settings.twentyFourSevenEnabled = toBool(settings.twentyFourSevenEnabled)
-
-    if (!found) collection.insert(settings)
-
-    dbManager.cache.set(guildId, settings)
-    return settings
+    dbManager.cache.set(guildId, settings);
+    return settings;
   } catch (error) {
-    throw new DatabaseError('Failed to retrieve guild settings', error)
+    throw new DatabaseError("Failed to retrieve guild settings", error);
   }
-}
+};
 
-export const updateGuildSettings = (guildId: string, updates: any) => {
+export const updateGuildSettings = (guildId: string, updates: AnyDoc) => {
   if (!_functions.isValidGuildId(guildId)) {
-    throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
+    throw new ValidationError("Invalid guild ID format", "guildId", guildId);
   }
 
-  if (Object.prototype.hasOwnProperty.call(updates, 'twentyFourSevenEnabled')) {
-    updates.twentyFourSevenEnabled = toBool(updates.twentyFourSevenEnabled)
+  if (Object.prototype.hasOwnProperty.call(updates, "twentyFourSevenEnabled")) {
+    updates.twentyFourSevenEnabled = toBool(updates.twentyFourSevenEnabled);
   }
 
-  const cached = dbManager.cache.get(guildId)
+  const cached = dbManager.cache.get(guildId);
   if (cached) {
-    Object.assign(cached, updates)
-    cached.twentyFourSevenEnabled = toBool(cached.twentyFourSevenEnabled)
-    dbManager.cache.set(guildId, cached)
+    Object.assign(cached, updates);
+    cached.twentyFourSevenEnabled = toBool(cached.twentyFourSevenEnabled);
+    dbManager.cache.set(guildId, cached);
   }
 
-  dbManager.queueUpdate(guildId, updates)
-}
+  dbManager.queueUpdate(guildId, updates);
+};
 
-export const updateGuildSettingsSync = (guildId: string, updates: any) => {
+export const updateGuildSettingsSync = (guildId: string, updates: AnyDoc) => {
   if (!_functions.isValidGuildId(guildId)) {
-    throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
+    throw new ValidationError("Invalid guild ID format", "guildId", guildId);
   }
 
   try {
-    const collection = dbManager.getSettingsCollection()
-
+    const collection = dbManager.getSettingsCollection();
     const base =
       dbManager.cache.get(guildId) ??
       collection.findById(guildId) ??
-      _functions.createDefaultSettings(guildId)
+      _functions.createDefaultSettings(guildId);
+
+    const nowIso = new Date().toISOString();
+    const createdAt = base.createdAt ?? nowIso;
 
     const next = {
       ...base,
       ...updates,
       _id: guildId,
       guildId,
-      createdAt: base.createdAt
-    }
+      createdAt,
+      updatedAt: nowIso,
+    };
 
-    next.twentyFourSevenEnabled = toBool(next.twentyFourSevenEnabled)
+    next.twentyFourSevenEnabled = toBool(next.twentyFourSevenEnabled);
 
-    const saved = collection.insert(next) as any
-    dbManager.cache.set(guildId, saved)
-    return saved
+    const saved = collection.insert(next) as AnyDoc;
+    dbManager.cache.set(guildId, saved);
+    return saved;
   } catch (error) {
-    throw new DatabaseError('Failed to update guild settings', error)
+    throw new DatabaseError("Failed to update guild settings", error);
   }
-}
+};
+
 
 export const isTwentyFourSevenEnabled = (guildId: string): boolean => {
   try {
-    return toBool(getGuildSettings(guildId).twentyFourSevenEnabled)
+    return toBool(getGuildSettings(guildId).twentyFourSevenEnabled);
   } catch {
-    return false
+    return false;
   }
-}
+};
 
 export const getChannelIds = (guildId: string) => {
   try {
-    const settings = getGuildSettings(guildId)
+    const settings = getGuildSettings(guildId);
     return toBool(settings.twentyFourSevenEnabled) && settings.voiceChannelId && settings.textChannelId
       ? { voiceChannelId: settings.voiceChannelId, textChannelId: settings.textChannelId }
-      : null
+      : null;
   } catch {
-    return null
+    return null;
   }
-}
+};
 
 export const setChannelIds = (guildId: string, voiceChannelId: string, textChannelId: string) => {
   if (!_functions.isValidGuildId(guildId)) {
-    throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
+    throw new ValidationError("Invalid guild ID format", "guildId", guildId);
   }
   if (!voiceChannelId || !textChannelId) {
-    throw new ValidationError('Channel IDs are required', 'channelIds', { voiceChannelId, textChannelId })
+    throw new ValidationError("Channel IDs are required", "channelIds", { voiceChannelId, textChannelId });
   }
-  updateGuildSettingsSync(guildId, { voiceChannelId, textChannelId })
-}
+  updateGuildSettingsSync(guildId, { voiceChannelId, textChannelId });
+};
 
 export const getGuildLang = (guildId: string): string => {
   try {
-    return getGuildSettings(guildId).lang || 'en'
+    const lang = String(getGuildSettings(guildId).lang || "en");
+    return _functions.isValidLang(lang) ? lang : "en";
   } catch {
-    return 'en'
+    return "en";
   }
-}
+};
 
 export const setGuildLang = (guildId: string, lang: string): boolean => {
   if (!_functions.isValidGuildId(guildId)) {
-    throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
+    throw new ValidationError("Invalid guild ID format", "guildId", guildId);
   }
   if (!_functions.isValidLang(lang)) {
-    throw new ValidationError('Invalid language code', 'lang', lang)
+    throw new ValidationError("Invalid language code", "lang", lang);
   }
 
   try {
-    updateGuildSettingsSync(guildId, { lang })
-    return true
+    updateGuildSettingsSync(guildId, { lang });
+    return true;
   } catch {
-    return false
+    return false;
   }
-}
+};
 
-export const cleanupDatabase = () => dbManager.cleanup()
+export const disable247Sync = (guildId: string, reason?: string) => {
+  return updateGuildSettingsSync(guildId, {
+    twentyFourSevenEnabled: false,
+    voiceChannelId: null,
+    textChannelId: null,
+    ...(reason ? { last247DisableReason: reason } : null),
+  });
+};
+
+export const cleanupDatabase = () => dbManager.cleanup();
 
 export const getCacheStats = () => ({
   size: dbManager.cache.size,
-  pendingUpdates: dbManager.updateQueue.size
-})
+  pendingUpdates: dbManager.updateQueue.size,
+});

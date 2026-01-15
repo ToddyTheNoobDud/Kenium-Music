@@ -29,10 +29,12 @@ const _functions = {
 
 		try {
 			const sourceStr = String(track?.source || "").toLowerCase();
+			const query = track?.identifier || uri;
+			const isUrl = /^https?:\/\//.test(query);
 			const res = await aqua.resolve({
-				query: track?.identifier || uri,
+				query,
 				requester,
-				source: sourceStr.includes("youtube") ? "ytsearch" : undefined,
+				source: (sourceStr.includes("youtube") && !isUrl) ? "ytsearch" : undefined,
 			});
 
 			const loadType = String(res?.loadType || "").toUpperCase();

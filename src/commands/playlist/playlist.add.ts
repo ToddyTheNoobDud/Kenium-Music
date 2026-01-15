@@ -182,7 +182,7 @@ export class AddCommand extends SubCommand {
 				addedAt: new Date(baseTime + toAdd.length).toISOString(),
 				addedBy: userId,
 				source: determineSource(uri),
-				identifier: track.info.identifier || uri,
+				identifier: uri || track.info.identifier,
 				isStream: track.info.isStream || false,
 				isSeekable: track.info.isSeekable || true,
 				position: track.info.position || 0,
