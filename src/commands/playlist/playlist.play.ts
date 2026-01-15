@@ -16,9 +16,10 @@ import {
 	shuffleArray,
 } from "../../shared/utils";
 import { getContextTranslations } from "../../utils/i18n";
-import { getPlaylistsCollection } from "../../utils/db";
+import { getPlaylistsCollection, getTracksCollection } from "../../utils/db";
 
 const playlistsCollection = getPlaylistsCollection();
+const tracksCollection = getTracksCollection();
 const MAX_RESOLVE_CONCURRENCY = 6;
 
 const _functions = {
@@ -44,6 +45,7 @@ const _functions = {
 		}
 	},
 
+	// Improved concurrent track resolution with better error handling
 	async resolveTracksConcurrently<T>(
 		items: T[],
 		limit: number,
@@ -56,6 +58,7 @@ const _functions = {
 		const results: (T | null)[] = new Array(len);
 		let currentIndex = 0;
 
+		// Create worker functions that process items in order
 		const workers = Array.from({ length: cap }, async () => {
 			while (currentIndex < len) {
 				const idx = currentIndex++;
@@ -113,6 +116,7 @@ export class PlayCommand extends SubCommand {
 
 		const tp = getContextTranslations(ctx).playlist?.play;
 
+		// Your SimpleDB findOne() is synchronous; leaving this sync is correct.
 		const playlistDb = playlistsCollection.findOne({
 			userId: ctx.author.id,
 			name: playlistName,
@@ -129,7 +133,7 @@ export class PlayCommand extends SubCommand {
 			);
 		}
 
-		const dbTracks = playlistDb.tracks;
+		const dbTracks = tracksCollection.find({ playlistId: playlistDb._id }, { sort: { addedAt: 1 } });
 		if (!Array.isArray(dbTracks) || dbTracks.length === 0) {
 			return _functions.writeError(
 				ctx,
@@ -181,17 +185,13 @@ export class PlayCommand extends SubCommand {
 			for (const tr of loadedTracks) player.queue.add(tr);
 
 			try {
-				const result = playlistsCollection.updateAtomic(
+				playlistsCollection.update(
 					{ _id: playlistDb._id },
 					{
-						$inc: { playCount: 1 },
-						$set: { lastPlayedAt: new Date().toISOString() },
+						playCount: ((playlistDb as any).playCount || 0) + 1,
+						lastPlayedAt: new Date().toISOString(),
 					},
 				);
-
-				if (!result) {
-					console.warn("Failed to update playlist stats:", playlistDb._id);
-				}
 			} catch (dbError) {
 				console.error("Database error updating playlist stats:", dbError);
 				// stats update should never block playback
@@ -224,7 +224,7 @@ export class PlayCommand extends SubCommand {
 							},
 							{
 								name: `${ICONS.duration} ${tp?.duration || "Duration"}`,
-								value: formatDuration(playlistDb.totalDuration || 0),
+								value: formatDuration((playlistDb as any).totalDuration || 0),
 								inline: true,
 							},
 							{

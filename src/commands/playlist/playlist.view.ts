@@ -17,9 +17,10 @@ import {
 	handlePlaylistAutocomplete,
 } from "../../shared/utils";
 import { getContextTranslations } from "../../utils/i18n";
-import { getPlaylistsCollection } from "../../utils/db";
+import { getPlaylistsCollection, getTracksCollection, getPlaylistTracks } from "../../utils/db";
 
 const playlistsCollection = getPlaylistsCollection();
+const tracksCollection = getTracksCollection();
 
 function createSelectMenu(
 	customId: string,
@@ -84,7 +85,7 @@ export class ViewCommand extends SubCommand {
 					sort: { lastModified: -1 },
 					limit: pageSize,
 					skip: (page - 1) * pageSize,
-					fields: ['name', 'tracks', 'totalDuration', 'lastModified', 'createdAt', 'playCount']
+					fields: ['name', 'totalDuration', 'lastModified', 'createdAt', 'playCount']
 				}
 			);
 			if (!Array.isArray(playlists) || playlists.length === 0) {
@@ -115,14 +116,15 @@ export class ViewCommand extends SubCommand {
 				"Your Playlists",
 				`You have **${playlists.length}** playlist${playlists.length !== 1 ? "s" : ""}`,
 			);
-			playlists.slice(0, 10).forEach((p) => {
+			playlists.slice(0, 10).forEach((p: any) => {
 				const duration = formatDuration(p.totalDuration || 0);
 				const lastMod = new Date(
 					p.lastModified || p.createdAt,
 				).toLocaleDateString();
+                const trackCount = p.trackCount || 0;
 				embed.addFields({
 					name: `${ICONS.playlist} ${p.name}`,
-					value: `${ICONS.tracks} ${p.tracks.length} tracks • ${ICONS.duration} ${duration}\n${ICONS.info} Modified: ${lastMod}`,
+					value: `${ICONS.tracks} ${trackCount} tracks • ${ICONS.duration} ${duration}\n${ICONS.info} Modified: ${lastMod}`,
 					inline: true,
 				});
 			});
@@ -130,7 +132,7 @@ export class ViewCommand extends SubCommand {
 			const selectOptions = playlists.slice(0, 25).map((p) => ({
 				label: p.name,
 				value: p.name,
-				description: `${p.tracks.length} tracks • ${formatDuration(p.totalDuration || 0)}`,
+				description: `${p.trackCount || 0} tracks • ${formatDuration((p as any).totalDuration || 0)}`,
 				emoji: ICONS.playlist,
 			}));
 			const components =
@@ -164,7 +166,11 @@ export class ViewCommand extends SubCommand {
 			});
 		}
 
-		if (!Array.isArray(playlist.tracks) || playlist.tracks.length === 0) {
+        const totalTracks = typeof playlist.trackCount === 'number'
+            ? playlist.trackCount
+            : tracksCollection.count({ playlistId: playlist._id });
+
+		if (totalTracks === 0) {
 			const embed = createEmbed(
 				"info",
 				`Playlist: ${playlistName}`,
@@ -172,7 +178,7 @@ export class ViewCommand extends SubCommand {
 				[
 					{
 						name: `${ICONS.info} Description`,
-						value: playlist.description || "No description",
+						value: (playlist as any).description || "No description",
 					},
 				],
 			);
@@ -180,16 +186,14 @@ export class ViewCommand extends SubCommand {
 			return ctx.write({ embeds: [embed], flags: 64 });
 		}
 
+		// Implement server-side pagination for better performance
 		const page = 1;
 		const pageSize = LIMITS.PAGE_SIZE || 10;
-		const totalPages = Math.max(
-			1,
-			Math.ceil(playlist.tracks.length / pageSize),
-		);
+		const totalPages = Math.max(1, Math.ceil(totalTracks / pageSize));
 		const startIdx = (page - 1) * pageSize;
-		const endIdx = Math.min(startIdx + pageSize, playlist.tracks.length);
 
-		const tracks = playlist.tracks.slice(startIdx, endIdx);
+		// Only load the tracks for the current page to save memory
+		const tracks = getPlaylistTracks(playlist._id as string, { limit: pageSize, skip: startIdx });
 
 		const embed = createEmbed(
 			"primary",
@@ -198,22 +202,22 @@ export class ViewCommand extends SubCommand {
 			[
 				{
 					name: `${ICONS.info} Info`,
-					value: playlist.description || "No description",
+					value: (playlist as any).description || "No description",
 					inline: false,
 				},
 				{
 					name: `${ICONS.tracks} Tracks`,
-					value: String(playlist.tracks.length),
+					value: String(totalTracks),
 					inline: true,
 				},
 				{
 					name: `${ICONS.duration} Duration`,
-					value: formatDuration(playlist.totalDuration || 0),
+					value: formatDuration((playlist as any).totalDuration || 0),
 					inline: true,
 				},
 				{
 					name: `${ICONS.info} Plays`,
-					value: String(playlist.playCount || 0),
+					value: String((playlist as any).playCount || 0),
 					inline: true,
 				},
 			],

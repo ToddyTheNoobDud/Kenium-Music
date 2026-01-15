@@ -13,10 +13,11 @@ import {
 	handlePlaylistAutocomplete,
 	handleTrackIndexAutocomplete,
 } from "../../shared/utils";
-import { getPlaylistsCollection } from "../../utils/db";
+import { getPlaylistsCollection, getTracksCollection, getPlaylistTracks, getDatabase } from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
 const playlistsCollection = getPlaylistsCollection();
+const tracksCollection = getTracksCollection();
 
 @Declare({
 	name: "remove",
@@ -66,43 +67,59 @@ export class RemoveCommand extends SubCommand {
 			});
 		}
 
-		if (index < 1 || index > playlist.tracks.length) {
+        const totalTracks = typeof playlist.trackCount === 'number'
+            ? playlist.trackCount
+            : getTracksCollection().count({ playlistId: playlist._id });
+
+		if (index < 1 || index > totalTracks) {
 			return ctx.write({
 				embeds: [
 					createEmbed(
 						"error",
 						t.playlist?.remove?.invalidIndex || "Invalid Index",
-						(t.playlist?.remove?.invalidIndexDesc || "Track index must be between 1 and {max}").replace("{max}", String(playlist.tracks.length)),
+						(t.playlist?.remove?.invalidIndexDesc || "Track index must be between 1 and {max}").replace("{max}", String(totalTracks)),
 					),
 				],
 				flags: 64,
 			});
 		}
 
-		const removedTrack = playlist.tracks[index - 1];
+        // Fetch just the track at that index (Deterministic due to addedAt sort in getPlaylistTracks)
+        const tracks = getPlaylistTracks(playlist._id as string, { limit: 1, skip: index - 1 });
+		const removedTrack = tracks[0];
+
+        if (!removedTrack) {
+            return ctx.write({
+                embeds: [
+                    createEmbed(
+                        "error",
+                        t.playlist?.remove?.notFound || "Track Not Found",
+                        "Could not find the track at that index."
+                    )
+                ],
+                flags: 64
+            });
+        }
+
 		const timestamp = new Date().toISOString();
-		const updatedTracks = playlist.tracks.filter((_, i) => i !== index - 1);
 		const newTotalDuration = Math.max(
 			0,
-			(playlist.totalDuration || 0) - (removedTrack.duration || 0)
+			((playlist as any).totalDuration || 0) - (removedTrack.duration || 0)
 		);
 
 		// Use atomic operation with proper error handling
 		try {
-			const result = playlistsCollection.updateAtomic(
-				{ _id: playlist._id },
-				{
-					$set: {
-						tracks: updatedTracks,
-						lastModified: timestamp,
-						totalDuration: newTotalDuration
-					}
-				}
-			);
-
-			if (!result) {
-				throw new Error("Database update failed");
-			}
+            getDatabase().transaction(() => {
+                tracksCollection.delete({ _id: removedTrack._id });
+                playlistsCollection.update(
+                    { _id: playlist._id },
+                    {
+                        lastModified: timestamp,
+                        totalDuration: newTotalDuration,
+                        trackCount: Math.max(0, totalTracks - 1)
+                    }
+                );
+            });
 		} catch (dbError) {
 			console.error("Failed to update playlist after track removal:", dbError);
 			return ctx.write({
@@ -139,7 +156,7 @@ export class RemoveCommand extends SubCommand {
 				},
 				{
 					name: `${ICONS.tracks} ${t.playlist?.remove?.remaining || "Remaining"}`,
-					value: `${updatedTracks.length} tracks`,
+					value: `${totalTracks - 1} tracks`,
 					inline: true,
 				},
 			],

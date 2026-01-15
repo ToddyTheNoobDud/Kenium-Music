@@ -73,11 +73,11 @@ export class CreateCommand extends SubCommand {
 		const playlist = {
 			userId,
 			name,
-			tracks: [],
 			createdAt: timestamp,
 			lastModified: timestamp,
 			playCount: 0,
 			totalDuration: 0,
+			trackCount: 0,
 		};
 
 		playlistsCollection.insert(playlist);

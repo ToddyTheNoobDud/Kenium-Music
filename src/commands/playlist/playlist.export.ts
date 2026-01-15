@@ -8,7 +8,7 @@ import {
 	SubCommand,
 } from "seyfert";
 import { handlePlaylistAutocomplete } from "../../shared/utils";
-import { getPlaylistsCollection } from "../../utils/db"; // ✅ Changed
+import { getPlaylistsCollection, getTracksCollection } from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
 // Modern Emoji Set
@@ -27,7 +27,8 @@ const COLORS = {
 	error: "#0x100e09",
 };
 
-const playlistsCollection = getPlaylistsCollection(); // ✅ Changed
+const playlistsCollection = getPlaylistsCollection();
+const tracksCollection = getTracksCollection();
 
 function createEmbed(
 	type: string,
@@ -120,7 +121,13 @@ export class ExportCommand extends SubCommand {
 			});
 		}
 
-		const content = JSON.stringify(playlist, null, 2);
+        const tracks = tracksCollection.find({ playlistId: playlist._id }, { sort: { addedAt: 1 } });
+        const exportData = {
+            ...playlist,
+            tracks
+        };
+
+		const content = JSON.stringify(exportData, null, 2);
 		const fileName = `${playlistName}.json`;
 		const buffer = Buffer.from(content, "utf-8");
 		const attachment = new AttachmentBuilder()

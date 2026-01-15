@@ -6,7 +6,7 @@ import {
 	SubCommand,
 } from "seyfert";
 import { createEmbed, handlePlaylistAutocomplete } from "../../shared/utils";
-import { getPlaylistsCollection } from "../../utils/db";
+import { getPlaylistsCollection, getTracksCollection, getDatabase } from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
 const playlistsCollection = getPlaylistsCollection();
@@ -47,7 +47,10 @@ export class DeleteCommand extends SubCommand {
 			});
 		}
 
-		playlistsCollection.delete({ userId, name: playlistName });
+		getDatabase().transaction(() => {
+			getTracksCollection().delete({ playlistId: playlist._id });
+			playlistsCollection.delete({ _id: playlist._id });
+		});
 
 		const embed = createEmbed(
 			"success",

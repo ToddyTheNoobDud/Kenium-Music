@@ -7,7 +7,7 @@ import {
 	Options,
 	SubCommand,
 } from "seyfert";
-import { getPlaylistsCollection } from "../../utils/db";
+import { getPlaylistsCollection, getTracksCollection, getDatabase } from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
 // Schema validation for imported playlists
@@ -19,23 +19,9 @@ interface ImportedPlaylist {
 		uri: string;
 		author: string;
 		duration: number;
+		source?: string;
+		identifier?: string;
 	}>;
-}
-
-interface PlaylistTrack {
-	title: string;
-	uri: string;
-	author: string;
-	duration: number;
-	addedAt: string;
-	addedBy: string;
-	source: string;
-	identifier: string;
-	isStream?: boolean;
-	isSeekable?: boolean;
-	position?: number;
-	artworkUrl?: string | null;
-	isrc?: string | null;
 }
 
 // Modern Emoji Set
@@ -48,12 +34,13 @@ const ICONS = {
 };
 
 const COLORS = {
-	primary: "#0x100e09",
-	success: "#0x100e09",
-	error: "#0x100e09",
+	primary: 0x100e09,
+	success: 0x100e09,
+	error: 0x100e09,
 };
 
 const playlistsCollection = getPlaylistsCollection();
+const tracksCollection = getTracksCollection();
 
 function createEmbed(
 	type: string,
@@ -141,8 +128,7 @@ export class ImportCommand extends SubCommand {
 			const response = await fetch(attachment.url);
 			const data = await response.json();
 
-			// Validate imported playlist schema
-			if (!data.name || typeof data.name !== 'string') {
+			if (!data.name || typeof data.name !== 'string' || !Array.isArray(data.tracks)) {
 				return await ctx.write({
 					embeds: [
 						createEmbed(
@@ -155,20 +141,6 @@ export class ImportCommand extends SubCommand {
 				});
 			}
 
-			if (!Array.isArray(data.tracks)) {
-				return await ctx.write({
-					embeds: [
-						createEmbed(
-							"error",
-							t.playlist?.import?.invalidFile || "Invalid File",
-							"The file must contain a valid tracks array.",
-						),
-					],
-					flags: 64,
-				});
-			}
-
-			// Validate each track in the playlist
 			const validTracks = data.tracks.filter((track: any) => {
 				return track &&
 					   typeof track.title === 'string' &&
@@ -209,37 +181,41 @@ export class ImportCommand extends SubCommand {
 				});
 			}
 
-			let newPlaylist;
+			const timestamp = new Date().toISOString();
+            const totalDuration = validTracks.reduce(
+                (sum: number, track: any) => sum + (track.duration || 0),
+                0,
+            );
+
 			try {
-				newPlaylist = {
-					userId,
-					name: playlistName,
-					description: data.description || "Imported playlist",
-					tracks: validTracks.map((track: any) => ({
-						title: track.title,
-						uri: track.uri,
-						author: track.author,
-						duration: track.duration,
-						addedAt: new Date().toISOString(),
-						addedBy: userId,
-						source: determineSource(track.uri),
-					})),
-					createdAt: new Date().toISOString(),
-					lastModified: new Date().toISOString(),
-					playCount: 0,
-					totalDuration: validTracks.reduce(
-						(sum: number, track: any) => sum + (track.duration || 0),
-						0,
-					),
-				};
+                getDatabase().transaction(() => {
+                    const insertedPlaylist = playlistsCollection.insert({
+                        userId,
+                        name: playlistName,
+                        description: data.description || "Imported playlist",
+                        createdAt: timestamp,
+                        lastModified: timestamp,
+                        playCount: 0,
+                        totalDuration: totalDuration,
+                        trackCount: validTracks.length
+                    }) as any;
 
-				const result = playlistsCollection.insert(newPlaylist);
+                    const tracksToInsert = validTracks.map((track: any) => ({
+                        playlistId: insertedPlaylist._id,
+                        title: track.title,
+                        uri: track.uri,
+                        author: track.author,
+                        duration: track.duration,
+                        addedAt: timestamp,
+                        addedBy: userId,
+                        source: track.source || determineSource(track.uri),
+                        identifier: track.identifier || "",
+                    }));
 
-				if (!result) {
-					throw new Error("Failed to create playlist in database");
-				}
+                    tracksCollection.insert(tracksToInsert);
+                });
 			} catch (dbError) {
-				console.error("Database error creating playlist:", dbError);
+				console.error("Database error importing playlist:", dbError);
 				return await ctx.write({
 					embeds: [
 						createEmbed(
@@ -249,7 +225,7 @@ export class ImportCommand extends SubCommand {
 						),
 					],
 					flags: 64,
-				});
+					});
 			}
 
 			const embed = createEmbed(
@@ -264,12 +240,12 @@ export class ImportCommand extends SubCommand {
 					},
 					{
 						name: `${ICONS.tracks} ${t.playlist?.import?.tracks || "Tracks"}`,
-						value: `${newPlaylist.tracks.length}`,
+						value: `${validTracks.length}`,
 						inline: true,
 					},
 					{
 						name: `${ICONS.duration} ${t.playlist?.import?.duration || "Duration"}`,
-						value: formatDuration(newPlaylist.totalDuration),
+						value: formatDuration(totalDuration),
 						inline: true,
 					},
 				],

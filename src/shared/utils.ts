@@ -1,6 +1,9 @@
 import { ActionRow, Button, Embed } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
 import { COLORS, ICONS } from './constants'
+import { getTracksCollection } from '../utils/db'
+
+// ... (rest of the imports/constants)
 
 // Constants
 const MAX_AUTOCOMPLETE_OPTIONS = 25
@@ -158,13 +161,21 @@ export const handleTrackIndexAutocomplete = async (interaction, playlistsCollect
     userId: interaction.user?.id,
     name: playlistName
   })
-  const tracks = playlist?.tracks || []
+
+  if (!playlist) {
+    return interaction.respond([{ name: 'Playlist not found', value: '0' }])
+  }
+
+  const tracks = getTracksCollection().find(
+    { playlistId: playlist._id },
+    { limit: MAX_AUTOCOMPLETE_OPTIONS }
+  )
 
   if (tracks.length === 0) {
     return interaction.respond([{ name: 'No Tracks', value: '0' }])
   }
 
-  const options = tracks.slice(0, MAX_AUTOCOMPLETE_OPTIONS).map((track, index) => ({
+  const options = tracks.map((track, index) => ({
     name: `${index + 1}. ${String(track.title || 'Untitled').slice(0, 80)}`,
     value: String(index + 1)
   }))

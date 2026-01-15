@@ -64,26 +64,26 @@ const _functions = {
 	finalize: (stmt: any) => {
 		try {
 			if (stmt && typeof stmt.finalize === "function") stmt.finalize();
-		} catch {}
+		} catch { }
 	},
 	makeTxRunner: (db: any) => {
 		try {
 			if (db && typeof db.transaction === "function") return db.transaction((fn: any) => fn());
-		} catch {}
+		} catch { }
 		return null as null | ((fn: () => any) => any);
 	},
 	runTx: <T>(runner: null | ((fn: () => T) => T), fn: () => T) => (runner ? runner(fn) : fn()),
 	ensureDirForFile: (filePath: string) => {
 		try {
 			mkdirSync(dirname(filePath), { recursive: true });
-		} catch {}
+		} catch { }
 	},
 	applyPragmas: (db: any, pragmas: string[]) => {
 		for (const p of pragmas) {
 			try {
 				if (IS_BUN) db.run(`PRAGMA ${p}`);
 				else db.pragma(p);
-			} catch {}
+			} catch { }
 		}
 	},
 };
@@ -101,6 +101,9 @@ class SQLiteCollection extends EventEmitter {
 	private _updateById?: any;
 	private _deleteById?: any;
 	private _countAll?: any;
+
+	public get tableName() { return this.table; }
+	public get database() { return this.db; }
 
 	constructor(db: any, name: string, cacheSize = 50) {
 		super();
@@ -124,25 +127,29 @@ class SQLiteCollection extends EventEmitter {
 			)
 			.run();
 
-		try {
-			this.db
-				.prepare(
-					`CREATE INDEX IF NOT EXISTS "${this.table}_updated" ON ${this.qtable}(updatedAt)`,
-				)
-				.run();
-			this.db
-				.prepare(
-					`CREATE INDEX IF NOT EXISTS "${this.table}_created" ON ${this.qtable}(createdAt)`,
-				)
-				.run();
-		} catch {}
+		this.db
+			.prepare(
+				`CREATE INDEX IF NOT EXISTS "${this.table}_updated" ON ${this.qtable}(updatedAt)`,
+			)
+			.run();
+		this.db
+			.prepare(
+				`CREATE INDEX IF NOT EXISTS "${this.table}_created" ON ${this.qtable}(createdAt)`,
+			)
+			.run();
 	}
 
 	private get insertStmt() {
 		return (this._insert ??= this.db.prepare(`
       INSERT INTO ${this.qtable} (_id, doc, createdAt, updatedAt)
       VALUES (?, ?, ?, ?)
-      ON CONFLICT(_id) DO UPDATE SET doc = excluded.doc, updatedAt = excluded.updatedAt
+      ON CONFLICT(_id) DO UPDATE SET
+        updatedAt = excluded.updatedAt,
+        doc = json_set(
+            excluded.doc,
+            '$.createdAt', ${this.qtable}.createdAt,
+            '$.updatedAt', excluded.updatedAt
+        )
     `));
 	}
 	private get byIdStmt() {
@@ -187,7 +194,6 @@ class SQLiteCollection extends EventEmitter {
 	private buildWhere(query: Query): { sql: string; params: any[] } {
 		const parts: string[] = [];
 		const params: any[] = [];
-		const extract = "json_extract(doc, ?)";
 
 		for (const [key, value] of Object.entries(query)) {
 			if (key === "_id") {
@@ -225,14 +231,13 @@ class SQLiteCollection extends EventEmitter {
 							case "$lt":
 							case "$lte":
 								parts.push(
-									`_id ${
-										op === "$gt"
-											? ">"
-											: op === "$gte"
-												? ">="
-												: op === "$lt"
-													? "<"
-													: "<="
+									`_id ${op === "$gt"
+										? ">"
+										: op === "$gte"
+											? ">="
+											: op === "$lt"
+												? "<"
+												: "<="
 									} ?`,
 								);
 								params.push(opVal);
@@ -246,11 +251,66 @@ class SQLiteCollection extends EventEmitter {
 				continue;
 			}
 
+			if (key === "createdAt" || key === "updatedAt") {
+				const col = key;
+
+				if (value == null) {
+					parts.push(`${col} IS NULL`);
+					continue;
+				}
+
+				if (_functions.isPlainObject(value)) {
+					for (const [op, opVal] of Object.entries(value)) {
+						switch (op) {
+							case "$gt":
+								parts.push(`${col} > ?`);
+								params.push(opVal);
+								break;
+							case "$gte":
+								parts.push(`${col} >= ?`);
+								params.push(opVal);
+								break;
+							case "$lt":
+								parts.push(`${col} < ?`);
+								params.push(opVal);
+								break;
+							case "$lte":
+								parts.push(`${col} <= ?`);
+								params.push(opVal);
+								break;
+							case "$ne":
+								parts.push(`${col} != ?`);
+								params.push(opVal);
+								break;
+							case "$in":
+							case "$nin": {
+								if (!Array.isArray(opVal)) break;
+								if (opVal.length === 0) {
+									if (op === "$in") parts.push("0=1");
+									break;
+								}
+								parts.push(
+									`${col} ${op === "$in" ? "IN" : "NOT IN"} (${opVal
+										.map(() => "?")
+										.join(", ")})`,
+								);
+								params.push(...opVal);
+								break;
+							}
+						}
+					}
+				} else {
+					parts.push(`${col} = ?`);
+					params.push(value);
+				}
+				continue;
+			}
+
 			const path = _functions.jsonPath(key);
+			const extract = `json_extract(doc, '${path}')`;
 
 			if (value == null) {
 				parts.push(`${extract} IS NULL`);
-				params.push(path);
 				continue;
 			}
 
@@ -259,35 +319,39 @@ class SQLiteCollection extends EventEmitter {
 					switch (op) {
 						case "$gt":
 							parts.push(`${extract} > ?`);
-							params.push(path, opVal);
+							params.push(opVal);
 							break;
 						case "$gte":
 							parts.push(`${extract} >= ?`);
-							params.push(path, opVal);
+							params.push(opVal);
 							break;
 						case "$lt":
 							parts.push(`${extract} < ?`);
-							params.push(path, opVal);
+							params.push(opVal);
 							break;
 						case "$lte":
 							parts.push(`${extract} <= ?`);
-							params.push(path, opVal);
+							params.push(opVal);
 							break;
 						case "$ne":
 							parts.push(`${extract} != ?`);
-							params.push(path, opVal);
+							params.push(opVal);
 							break;
 						case "$in":
-						case "$nin":
-							if (Array.isArray(opVal) && opVal.length) {
-								parts.push(
-									`${extract} ${op === "$in" ? "IN" : "NOT IN"} (${opVal
-										.map(() => "?")
-										.join(", ")})`,
-								);
-								params.push(path, ...opVal);
+						case "$nin": {
+							if (!Array.isArray(opVal)) break;
+							if (opVal.length === 0) {
+								if (op === "$in") parts.push("0=1");
+								break;
 							}
+							parts.push(
+								`${extract} ${op === "$in" ? "IN" : "NOT IN"} (${opVal
+									.map(() => "?")
+									.join(", ")})`,
+							);
+							params.push(...opVal);
 							break;
+						}
 					}
 				}
 				continue;
@@ -295,17 +359,15 @@ class SQLiteCollection extends EventEmitter {
 
 			if (value === true) {
 				parts.push(`${extract} = 1`);
-				params.push(path);
 				continue;
 			}
 			if (value === false) {
 				parts.push(`${extract} = 0`);
-				params.push(path);
 				continue;
 			}
 
 			parts.push(`${extract} = ?`);
-			params.push(path, value);
+			params.push(value);
 		}
 
 		return { sql: parts.length ? parts.join(" AND ") : "1=1", params };
@@ -319,11 +381,15 @@ class SQLiteCollection extends EventEmitter {
 
 		_functions.runTx(this.txRunner, () => {
 			for (const doc of items) {
+				const _id = doc._id || randomUUID();
+				const existing = doc._id ? this.db.prepare(`SELECT createdAt FROM ${this.qtable} WHERE _id = ?`).get(doc._id) : null;
+				const createdAt = doc.createdAt || (existing as any)?.createdAt || now;
+
 				const full: Document = {
 					...doc,
-					_id: doc._id || randomUUID(),
-					createdAt: doc.createdAt || now,
-					updatedAt: now,
+					_id,
+					createdAt,
+					updatedAt: doc.updatedAt || now,
 				};
 				this.insertStmt.run(full._id, JSON.stringify(full), full.createdAt, full.updatedAt);
 				result.push(full);
@@ -341,6 +407,11 @@ class SQLiteCollection extends EventEmitter {
 		if (opts.sort) {
 			const clauses: string[] = [];
 			for (const [field, dir] of Object.entries(opts.sort)) {
+				if (field === "_id" || field === "createdAt" || field === "updatedAt") {
+					clauses.push(`${field} ${dir === 1 ? "ASC" : "DESC"}`);
+					continue;
+				}
+
 				const path = _functions.jsonPath(field);
 				clauses.push(`json_extract(doc, '${path}') ${dir === 1 ? "ASC" : "DESC"}`);
 			}
@@ -481,6 +552,10 @@ class SQLiteCollection extends EventEmitter {
 		return { documentCount: this.countAllStmt.get()?.c || 0, tableName: this.table };
 	}
 
+	getDatabase(): any {
+		return (this as any).db;
+	}
+
 	destroy(): void {
 		_functions.finalize(this._insert);
 		_functions.finalize(this._byId);
@@ -543,6 +618,6 @@ export class SimpleDB extends EventEmitter {
 		this.collections.clear();
 		try {
 			this.db.close();
-		} catch {}
+		} catch { }
 	}
 }

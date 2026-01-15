@@ -16,12 +16,14 @@ import {
 	handlePlaylistAutocomplete,
 	handleTrackAutocomplete,
 } from "../../shared/utils";
-import { getPlaylistsCollection } from "../../utils/db";
+import { getPlaylistsCollection, getTracksCollection, getPlaylistWithTracks, getDatabase, getPlaylistTracks } from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
 const playlistsCollection = getPlaylistsCollection();
+const tracksCollection = getTracksCollection();
 
 interface PlaylistTrack {
+    playlistId: string;
 	title: string;
 	uri: string;
 	author: string;
@@ -112,10 +114,7 @@ export class AddCommand extends SubCommand {
 		const userId = ctx.author.id;
 		const t = getContextTranslations(ctx);
 
-		const playlistDb = playlistsCollection.findOne({
-			userId,
-			name: playlistName,
-		});
+		const playlistDb = playlistsCollection.findOne({ userId, name: playlistName }) as any;
 
 		if (!playlistDb) {
 			return ctx.write({
@@ -130,9 +129,12 @@ export class AddCommand extends SubCommand {
 			});
 		}
 
+		const currentTracksCount = typeof playlistDb.trackCount === 'number'
+			? playlistDb.trackCount
+			: tracksCollection.count({ playlistId: playlistDb._id });
 		const availableSlots = Math.max(
 			0,
-			LIMITS.MAX_TRACKS - playlistDb.tracks.length,
+			LIMITS.MAX_TRACKS - currentTracksCount,
 		);
 
 		if (availableSlots === 0) {
@@ -152,34 +154,32 @@ export class AddCommand extends SubCommand {
 
 		const timestamp = new Date().toISOString();
 		const existingCanonical = new Set<string>();
-		for (const t of playlistDb.tracks)
-			existingCanonical.add(_functions.canonicalizeUri(t.uri));
+        const existingUris = tracksCollection.find(
+            { playlistId: playlistDb._id },
+            { fields: ['uri'] }
+        );
+		for (const tr of existingUris)
+			existingCanonical.add(_functions.canonicalizeUri(tr.uri));
 
 		const tokens = _functions.splitInput(rawQuery);
 		const isSingleYouTubePlaylist =
 			tokens.length === 1 && YOUTUBE_PLAYLIST_RE.test(tokens[0]);
 
-		const toAdd: Array<{
-			title: string;
-			uri: string;
-			author: string;
-			duration: number;
-			addedAt: string;
-			addedBy: string;
-			source: string;
-		}> = [];
+		const toAdd: PlaylistTrack[] = [];
 
+		const baseTime = Date.now();
 		const pushTrack = (track: any) => {
 			const uri = track?.info?.uri;
 			if (!uri || toAdd.length >= availableSlots) return;
 			const canonical = _functions.canonicalizeUri(uri);
 			if (existingCanonical.has(canonical)) return;
 			const newTrack: PlaylistTrack = {
+                playlistId: playlistDb._id,
 				title: track.info.title || "Unknown",
 				uri,
 				author: track.info.author || "Unknown",
 				duration: track.info.length || 0,
-				addedAt: timestamp,
+				addedAt: new Date(baseTime + toAdd.length).toISOString(),
 				addedBy: userId,
 				source: determineSource(uri),
 				identifier: track.info.identifier || uri,
@@ -248,24 +248,20 @@ export class AddCommand extends SubCommand {
 
 			if (toAdd.length > availableSlots) toAdd.length = availableSlots;
 
-			playlistDb.tracks.push(...toAdd);
-			playlistDb.lastModified = timestamp;
-			playlistDb.totalDuration = (playlistDb.totalDuration || 0) +
-				toAdd.reduce((sum, t) => sum + (t.duration || 0), 0);
+			const addedDuration = toAdd.reduce((sum, t) => sum + (t.duration || 0), 0);
+            const newTotalDuration = (playlistDb.totalDuration || 0) + addedDuration;
+            const newTotalTracks = currentTracksCount + toAdd.length;
 
-
+			// Atomic update for tracks and playlist metadata
 			try {
-				const result = playlistsCollection.updateAtomic({ _id: playlistDb._id }, {
-					$set: {
-						tracks: playlistDb.tracks,
-						lastModified: timestamp,
-						totalDuration: playlistDb.totalDuration
-					}
-				});
-
-				if (!result) {
-					throw new Error("Database update failed");
-				}
+                getDatabase().transaction(() => {
+                    tracksCollection.insert(toAdd);
+                    playlistsCollection.update({ _id: (playlistDb as any)._id }, {
+                        lastModified: timestamp,
+                        totalDuration: newTotalDuration,
+                        trackCount: newTotalTracks
+                    });
+                });
 			} catch (dbError) {
 				console.error("Failed to update playlist:", dbError);
 				return ctx.editOrReply({
@@ -309,12 +305,12 @@ export class AddCommand extends SubCommand {
 					},
 					{
 						name: `${ICONS.playlist} ${t.playlist?.add?.total || "Total"}`,
-						value: `${playlistDb.tracks.length}/${LIMITS.MAX_TRACKS} tracks`,
+						value: `${newTotalTracks}/${LIMITS.MAX_TRACKS} tracks`,
 						inline: true,
 					},
 					{
 						name: `${ICONS.duration} ${t.playlist?.add?.duration || "Duration"}`,
-						value: formatDuration(playlistDb.totalDuration),
+						value: formatDuration(newTotalDuration),
 						inline: true,
 					},
 				],

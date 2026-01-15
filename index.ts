@@ -21,14 +21,14 @@ import {
   cleanupKaraokeSession,
   cleanupAllKaraokeSessions,
 } from "./src/commands/karaoke";
-import { closeDatabase } from "./src/utils/db";
+import { closeDatabase, initDatabase } from "./src/utils/db";
 // Constants
 const PRESENCE_UPDATE_INTERVAL = 60000;
 const VOICE_STATUS_LENGTH = 30;
 const VOICE_STATUS_THROTTLE = 5000;
 const COUNT_CACHE_TTL = 30000;
 
-const { NODE_HOST, NODE_PASSWORD, NODE_PORT, NODE_NAME, NODE_SECURE, id } =
+const { NODE_HOST, NODE_PASSWORD, NODE_NAME, NODE_PORT, NODE_SECURE, id } =
   process.env;
 
 
@@ -45,8 +45,8 @@ const aqua = new Aqua(
     {
       host: NODE_HOST,
       auth: NODE_PASSWORD,
-      port: Number.parseInt(NODE_PORT, 10),
       ssl: NODE_SECURE === "true",
+      port: NODE_PORT,
       name: NODE_NAME,
     },
   ],
@@ -168,10 +168,11 @@ client.setServices({
   },
 });
 
-aqua.on("trackStart", async (player, track) => {
+aqua.on("trackStart", async (player, track, payload) => {
 
   const channel = client.cache.channels.get(player.textChannel);
   if (!channel) return;
+  if (payload?.resumed) return;
 
   const embed = createNowPlayingEmbed(player, track, client);
   const messageOptions = { components: [embed], flags: 4096 | 32768 };
@@ -220,6 +221,13 @@ aqua.on("trackError", async (player, track, payload) => {
     .catch(() => {});
 });
 
+aqua.on('debug', (message) => {
+  console.log(message);
+});
+aqua.on("debug", (message) => {
+  client.logger.debug(`[Aqua Debug] ${message}`);
+})
+
 const cleanupHandler = (player) => cleanupPlayer(player);
 aqua.on("playerDestroy", cleanupHandler);
 aqua.on("queueEnd", cleanupHandler);
@@ -254,6 +262,7 @@ client
     await client
       .uploadCommands({ cachePath: "./commands.json" })
       .catch(() => {});
+    await initDatabase().catch(console.error);
     aqua.loadPlayers().catch(() => {});
     client.cooldown = new CooldownManager(client as any);
     updatePresence(client);

@@ -2,7 +2,7 @@ import { Container, createEvent } from 'seyfert'
 import { ICONS, LIMITS } from '../shared/constants'
 import { createButtons, createEmbed, formatDuration, shuffleArray } from '../shared/utils'
 import { MUSIC_PLATFORMS, PLAYBACK_E } from '../shared/emojis'
-import { SimpleDB } from '../utils/simpleDB'
+import { getPlaylistsCollection, getTracksCollection, getPlaylistTracks } from '../utils/db'
 
 const MAX_TITLE_LENGTH = 60
 const VOLUME_STEP = 10
@@ -15,8 +15,8 @@ const RESOLVE_CONCURRENCY = 5
 const TITLE_SANITIZE_RE = /[^\w\s\-_.]/g
 const WORD_START_RE = /\b\w/g
 
-const db = new SimpleDB()
-const playlistsCollection = db.collection('playlists')
+const playlistsCollection = getPlaylistsCollection()
+const tracksCollection = getTracksCollection()
 
 export const _functions = {
   clamp: (n, min, max) => (n < min ? min : n > max ? max : n),
@@ -180,7 +180,7 @@ export const _functions = {
       const settled = await Promise.allSettled(batch.map(resolveFn))
       for (const r of settled) {
         if (r.status !== 'fulfilled') continue
-        const track = r.value?.tracks?.[0]
+        const track = (r.value as any)?.tracks?.[0]
         if (track) enqueueFn(track)
       }
     }
@@ -263,12 +263,12 @@ const actionHandlers = {
 }
 
 const buildPlaylistPage = (playlist, playlistName, userId, page) => {
-  const allTracks = Array.isArray(playlist?.tracks) ? playlist.tracks : []
-  const total = allTracks.length
+  const total = tracksCollection.count({ playlistId: playlist._id })
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.min(Math.max(1, page || 1), totalPages)
   const startIdx = (currentPage - 1) * PAGE_SIZE
-  const tracks = allTracks.slice(startIdx, startIdx + PAGE_SIZE)
+
+  const tracks = getPlaylistTracks(playlist._id, { limit: PAGE_SIZE, skip: startIdx })
 
   const embed = createEmbed('primary', `${ICONS.playlist} ${playlistName}`, '')
   embed.addFields(
@@ -316,7 +316,10 @@ const buildPlaylistPage = (playlist, playlistName, userId, page) => {
 const playlistActionHandlers = {
   play_playlist: async (interaction, client, userId, playlistName) => {
     const playlist = playlistsCollection.findOne({ userId, name: playlistName })
-    if (!playlist?.tracks?.length) return { message: '❌ Playlist is empty', shouldUpdate: false }
+    if (!playlist) return { message: '❌ Playlist not found', shouldUpdate: false }
+
+    const tracks = tracksCollection.find({ playlistId: playlist._id })
+    if (!tracks.length) return { message: '❌ Playlist is empty', shouldUpdate: false }
 
     let voiceState = null
     try {
@@ -336,7 +339,7 @@ const playlistActionHandlers = {
     })
 
     await _functions.resolveTracksAndEnqueue(
-      playlist.tracks,
+      tracks,
       (t) => client.aqua.resolve({ query: t.uri, requester: interaction.user }),
       (track) => player.queue.add(track),
       RESOLVE_CONCURRENCY
@@ -344,18 +347,48 @@ const playlistActionHandlers = {
 
     playlistsCollection.update(
       { _id: playlist._id },
-      { ...playlist, playCount: (playlist.playCount || 0) + 1, lastPlayedAt: Date.now() }
+      { playCount: (playlist.playCount || 0) + 1, lastPlayedAt: new Date().toISOString() }
     )
 
     if (!player.playing && !player.paused && player.queue.size) player.play()
-    return { message: `▶️ Playing playlist "${playlistName}" with ${playlist.tracks.length} tracks`, shouldUpdate: false }
+    return { message: `▶️ Playing playlist "${playlistName}" with ${tracks.length} tracks`, shouldUpdate: false }
   },
 
-  shuffle_playlist: (_interaction, _client, userId, playlistName) => {
+  shuffle_playlist: async (interaction, client, userId, playlistName) => {
     const playlist = playlistsCollection.findOne({ userId, name: playlistName })
-    if (!playlist?.tracks?.length) return { message: '❌ Playlist is empty', shouldUpdate: false }
-    playlistsCollection.update({ _id: playlist._id }, { ...playlist, tracks: shuffleArray([...playlist.tracks]) })
-    return { message: `🔀 Shuffled playlist "${playlistName}"`, shouldUpdate: false }
+    if (!playlist) return { message: '❌ Playlist not found', shouldUpdate: false }
+
+    const tracks = tracksCollection.find({ playlistId: playlist._id })
+    if (!tracks.length) return { message: '❌ Playlist is empty', shouldUpdate: false }
+
+    let voiceState = null
+    try {
+      voiceState = await interaction.member?.voice()
+    } catch {
+      voiceState = null
+    }
+    if (!voiceState?.channelId) return { message: '❌ Join a voice channel first', shouldUpdate: false }
+
+    let player = client.aqua.players.get(interaction.guildId)
+    player ??= client.aqua.createConnection({
+      guildId: interaction.guildId,
+      voiceChannel: voiceState.channelId,
+      textChannel: interaction.channelId,
+      defaultVolume: 65,
+      deaf: true
+    })
+
+    const shuffled = shuffleArray([...tracks])
+
+    await _functions.resolveTracksAndEnqueue(
+      shuffled,
+      (t) => client.aqua.resolve({ query: t.uri, requester: interaction.user }),
+      (track) => player.queue.add(track),
+      RESOLVE_CONCURRENCY
+    )
+
+    if (!player.playing && !player.paused && player.queue.size) player.play()
+    return { message: `🔀 Playing shuffled playlist "${playlistName}"`, shouldUpdate: false }
   },
 
   playlist_prev: async (interaction, _client, userId, playlistName, page) => {
@@ -393,8 +426,9 @@ export default createEvent({
           parsed.playlistName || '',
           parsed.page
         )
-        if (result.message) await _functions.safeFollowup(interaction, result.message)
-      } catch {
+        if (result && result.message) await _functions.safeFollowup(interaction, result.message)
+      } catch (err) {
+        console.error('Playlist button error:', err)
         _functions.safeReply(interaction, '❌ An error occurred.')
       }
       return
@@ -417,7 +451,8 @@ export default createEvent({
       const result = await handler(player)
       await _functions.safeFollowup(interaction, result.message)
       if (result.shouldUpdate && player.current) queueMicrotask(() => _functions.updateNowPlayingEmbed(player, client))
-    } catch {
+    } catch (err) {
+      console.error('Action button error:', err)
       _functions.safeReply(interaction, '❌ An error occurred. Please try again.')
     }
   }
