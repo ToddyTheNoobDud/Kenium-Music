@@ -2,10 +2,8 @@ import { EventEmitter } from "node:events";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { performance } from "node:perf_hooks";
 
 const IS_BUN = !!(process as any).isBun;
-const DEBUG = 1;
 
 const Database: any = (() => {
   try {
@@ -103,7 +101,6 @@ class SQLiteCollection extends EventEmitter {
   private _updateById?: any;
   private _deleteById?: any;
   private _countAll?: any;
-
   private _createdAtById?: any;
 
   public get tableName() {
@@ -111,6 +108,14 @@ class SQLiteCollection extends EventEmitter {
   }
   public get database() {
     return this.db;
+  }
+
+  public vacuum(): void {
+    try {
+      this.db.prepare("VACUUM").run();
+    } catch (err) {
+      console.error(`[SQLiteCollection] Vacuum failed for ${this.table}:`, err);
+    }
   }
 
   constructor(db: any, name: string, cacheSize = 50) {
@@ -140,7 +145,6 @@ class SQLiteCollection extends EventEmitter {
   }
 
   private get insertStmt() {
-    // Keeps JSON timestamps consistent with column timestamps on UPSERT.
     return (this._insert ??= this.db.prepare(`
       INSERT INTO ${this.qtable} (_id, doc, createdAt, updatedAt)
       VALUES (?, ?, ?, ?)
@@ -200,7 +204,6 @@ class SQLiteCollection extends EventEmitter {
     const params: any[] = [];
 
     for (const [key, value] of Object.entries(query)) {
-      // Primary key
       if (key === "_id") {
         if (value == null) {
           parts.push(`_id IS NULL`);
@@ -298,7 +301,6 @@ class SQLiteCollection extends EventEmitter {
         continue;
       }
 
-      // JSON field extraction (INLINE PATH so expression indexes work)
       const path = _functions.jsonPath(key);
       const extract = `json_extract(doc, '${path}')`;
 
@@ -363,8 +365,6 @@ class SQLiteCollection extends EventEmitter {
   }
 
   insert(docs: Document | Document[]): Document | Document[] {
-    const start = DEBUG ? performance.now() : 0;
-
     const isArray = Array.isArray(docs);
     const items = isArray ? docs : [docs];
     const now = _functions.now();
@@ -374,9 +374,6 @@ class SQLiteCollection extends EventEmitter {
       for (const doc of items) {
         const _id = doc._id || randomUUID();
 
-        // Only lookup createdAt when:
-        // - caller provided _id (possible UPSERT)
-        // - caller did NOT provide createdAt
         const shouldLookupCreatedAt = !!doc._id && !doc.createdAt;
         const existing = shouldLookupCreatedAt ? this.createdAtByIdStmt.get(doc._id) : null;
 
@@ -397,24 +394,16 @@ class SQLiteCollection extends EventEmitter {
 
     this.emit("change", "insert", isArray ? result : result[0]);
 
-    if (DEBUG) {
-      const end = performance.now();
-      console.log(`[SimpleDB:${this.table}] insert took ${(end - start).toFixed(3)}ms (${items.length} items)`);
-    }
-
     return isArray ? result : result[0];
   }
 
   find(query: Query = {}, opts: FindOptions = {}): Document[] {
-    const start = DEBUG ? performance.now() : 0;
-
     const { sql, params } = this.buildWhere(query);
     let querySql = `SELECT doc FROM ${this.qtable} WHERE ${sql}`;
 
     if (opts.sort) {
       const clauses: string[] = [];
       for (const [field, dir] of Object.entries(opts.sort)) {
-        // Special-case real columns (fast)
         if (field === "_id" || field === "createdAt" || field === "updatedAt") {
           clauses.push(`${field} ${dir === 1 ? "ASC" : "DESC"}`);
           continue;
@@ -455,11 +444,6 @@ class SQLiteCollection extends EventEmitter {
       out.push(proj);
     }
 
-    if (DEBUG) {
-      const end = performance.now();
-      console.log(`[SimpleDB:${this.table}] find took ${(end - start).toFixed(3)}ms (${out.length} results)`);
-    }
-
     return out;
   }
 
@@ -470,22 +454,14 @@ class SQLiteCollection extends EventEmitter {
   findById(id: string): Document | null {
     if (!id) return null;
 
-    const start = DEBUG ? performance.now() : 0;
     const row = this.byIdStmt.get(id);
     const out = row ? _functions.parseDoc(row.doc) : null;
-
-    if (DEBUG) {
-      const end = performance.now();
-      console.log(`[SimpleDB:${this.table}] findById took ${(end - start).toFixed(3)}ms`);
-    }
 
     return out;
   }
 
   private updateWhere(query: Query, mut: (doc: Document) => Document): number {
     if (!query || !Object.keys(query).length) throw new Error("Update query cannot be empty");
-
-    const start = DEBUG ? performance.now() : 0;
 
     const { sql, params } = this.buildWhere(query);
     const selSql = `SELECT _id, doc FROM ${this.qtable} WHERE ${sql}`;
@@ -506,11 +482,6 @@ class SQLiteCollection extends EventEmitter {
     });
 
     if (changed) this.emit("change", "update", { count: changed });
-
-    if (DEBUG) {
-      const end = performance.now();
-      console.log(`[SimpleDB:${this.table}] update took ${(end - start).toFixed(3)}ms (${changed} rows)`);
-    }
 
     return changed;
   }
@@ -559,18 +530,11 @@ class SQLiteCollection extends EventEmitter {
   delete(query: Query): number {
     if (!query || !Object.keys(query).length) throw new Error("Delete query cannot be empty");
 
-    const start = DEBUG ? performance.now() : 0;
-
     const { sql, params } = this.buildWhere(query);
     const delSql = `DELETE FROM ${this.qtable} WHERE ${sql}`;
     const res = this.getStmt(delSql, `del:${delSql}`).run(...params);
 
     if (res.changes > 0) this.emit("change", "delete", { count: res.changes });
-
-    if (DEBUG) {
-      const end = performance.now();
-      console.log(`[SimpleDB:${this.table}] delete took ${(end - start).toFixed(3)}ms (${res.changes} rows)`);
-    }
 
     return res.changes;
   }
@@ -640,6 +604,8 @@ export class SimpleDB extends EventEmitter {
       "mmap_size = 268435456",
       "foreign_keys = ON",
       "busy_timeout = 30000",
+      "journal_size_limit = 5242880",
+      "auto_vacuum = INCREMENTAL",
     ]);
   }
 
@@ -657,6 +623,22 @@ export class SimpleDB extends EventEmitter {
   transaction(fn: () => void): void {
     const runner = _functions.makeTxRunner(this.db);
     _functions.runTx(runner, fn);
+  }
+
+  vacuum(): void {
+    try {
+      this.db.prepare("VACUUM").run();
+    } catch (err) {
+      console.error("[SimpleDB] Vacuum failed:", err);
+    }
+  }
+
+  checkpoint(): void {
+    try {
+      this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").run();
+    } catch (err) {
+      console.error("[SimpleDB] Checkpoint failed:", err);
+    }
   }
 
   close(): void {
