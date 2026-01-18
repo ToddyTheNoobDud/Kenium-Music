@@ -38,7 +38,7 @@ export const _functions = {
   isValidLang: (lang: string) => SUPPORTED_LANGS.has(lang),
 
   createDefaultSettings: (guildId: string) => ({
-    _id: guildId,
+    _id: guildId, // IMPORTANT: _id === guildId
     guildId,
     twentyFourSevenEnabled: false,
     voiceChannelId: null,
@@ -319,6 +319,7 @@ export const setChannelIds = (guildId: string, voiceChannelId: string, textChann
   updateGuildSettingsSync(guildId, { voiceChannelId, textChannelId });
 };
 
+
 export const getGuildLang = (guildId: string): string => {
   try {
     const lang = String(getGuildSettings(guildId).lang || "en");
@@ -351,6 +352,28 @@ export const disable247Sync = (guildId: string, reason?: string) => {
     textChannelId: null,
     ...(reason ? { last247DisableReason: reason } : null),
   });
+};
+
+export const purgeInvalidSettings = () => {
+  try {
+    const collection = dbManager.getSettingsCollection();
+    const all = collection.find({}, { fields: ["_id"] });
+    const toDelete: string[] = [];
+
+    for (const doc of all) {
+      if (typeof doc._id === "string" && !_functions.isValidGuildId(doc._id)) {
+        toDelete.push(doc._id);
+      }
+    }
+
+    if (toDelete.length > 0) {
+      const res = collection.delete({ _id: { $in: toDelete } });
+      return res;
+    }
+  } catch (err) {
+    console.error("[DatabaseHelper] Failed to purge invalid settings:", err);
+  }
+  return 0;
 };
 
 export const cleanupDatabase = () => dbManager.cleanup();
