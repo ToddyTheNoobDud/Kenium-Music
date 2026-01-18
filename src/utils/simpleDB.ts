@@ -214,8 +214,12 @@ class SQLiteCollection extends EventEmitter {
           for (const [op, opVal] of Object.entries(value)) {
             switch (op) {
               case "$ne":
-                parts.push(`_id != ?`);
-                params.push(opVal);
+                if (opVal === null) {
+                  parts.push(`_id IS NOT NULL`);
+                } else {
+                  parts.push(`_id != ?`);
+                  params.push(opVal);
+                }
                 break;
 
               case "$in":
@@ -244,8 +248,12 @@ class SQLiteCollection extends EventEmitter {
             }
           }
         } else {
-          parts.push(`_id = ?`);
-          params.push(value);
+          if (value === null) {
+            parts.push(`_id IS NULL`);
+          } else {
+            parts.push(`_id = ?`);
+            params.push(value);
+          }
         }
         continue;
       }
@@ -278,8 +286,12 @@ class SQLiteCollection extends EventEmitter {
                 params.push(opVal);
                 break;
               case "$ne":
-                parts.push(`${col} != ?`);
-                params.push(opVal);
+                if (opVal === null) {
+                  parts.push(`${col} IS NOT NULL`);
+                } else {
+                  parts.push(`${col} != ?`);
+                  params.push(opVal);
+                }
                 break;
               case "$in":
               case "$nin": {
@@ -295,8 +307,12 @@ class SQLiteCollection extends EventEmitter {
             }
           }
         } else {
-          parts.push(`${col} = ?`);
-          params.push(value);
+          if (value === null) {
+            parts.push(`${col} IS NULL`);
+          } else {
+            parts.push(`${col} = ?`);
+            params.push(value);
+          }
         }
         continue;
       }
@@ -329,8 +345,12 @@ class SQLiteCollection extends EventEmitter {
               params.push(opVal);
               break;
             case "$ne":
-              parts.push(`${extract} != ?`);
-              params.push(opVal);
+              if (opVal === null) {
+                parts.push(`${extract} IS NOT NULL`);
+              } else {
+                parts.push(`${extract} != ?`);
+                params.push(opVal);
+              }
               break;
             case "$in":
             case "$nin": {
@@ -349,11 +369,20 @@ class SQLiteCollection extends EventEmitter {
       }
 
       if (value === true) {
-        parts.push(`${extract} = 1`);
+        parts.push(`(${extract} = 1 OR ${extract} = 'true')`);
+        continue;
+      }
+      if (value === false) {
+        parts.push(`(${extract} = 0 OR ${extract} = 'false')`);
         continue;
       }
       if (value === false) {
         parts.push(`${extract} = 0`);
+        continue;
+      }
+
+      if (value === null) {
+        parts.push(`${extract} IS NULL`);
         continue;
       }
 
