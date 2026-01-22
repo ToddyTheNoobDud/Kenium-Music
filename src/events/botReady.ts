@@ -65,14 +65,16 @@ const processGuild = async (client: any, settings: any) => {
     guild.channels.fetch(textChannelId).catch(() => null),
   ]);
 
-  if (!voiceChannel || voiceChannel.type !== 2) {
+  if (!voiceChannel || (voiceChannel.type !== 2 && voiceChannel.type !== 13)) {
     client.logger.warn(`[24/7] ${guild.name} (${guildId}): Voice channel ${voiceChannelId} is invalid or missing.`);
     return;
   }
 
-  if (!textChannel || (textChannel.type !== 0 && textChannel.type !== 5)) {
-    client.logger.warn(`[24/7] ${guild.name} (${guildId}): Text channel ${textChannelId} is invalid or missing.`);
-    return;
+  const validTextTypes = [0, 5, 10, 11, 12];
+  if (!textChannel || !validTextTypes.includes(textChannel.type)) {
+    client.logger.warn(
+      `[24/7] ${guild.name} (${guildId}): Text channel ${textChannelId} is invalid/missing. Proceeding with voice only.`,
+    );
   }
 
   await Promise.all([
