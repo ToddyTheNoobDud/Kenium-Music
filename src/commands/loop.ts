@@ -38,23 +38,22 @@ export default class LoopCommand extends Command {
 			const loopValue = loopMap[loop] ?? 0;
 			(player as any).setLoop(loopValue);
 
-			const status = loopValue === 0
-				? (t.common?.disabled || "disabled")
-				: (t.common?.enabled || "enabled");
+			const status =
+				loopValue === 0
+					? t.common?.disabled || "disabled"
+					: t.common?.enabled || "enabled";
 
 			let description: string;
 			if (player?.loop === 0) {
 				description = t?.player?.loopDisabled || `Looping has been ${status}.`;
 			} else {
-				description = t?.player?.loopEnabled?.replace('{mode}', loop) || `Current song loop has been ${status}.`;
+				description =
+					t?.player?.loopEnabled?.replace("{mode}", loop) ||
+					`Current song loop has been ${status}.`;
 			}
 
 			await ctx.editOrReply({
-				embeds: [
-					new Embed()
-						.setColor(0x100e09)
-						.setDescription(description),
-				],
+				embeds: [new Embed().setColor(0x100e09).setDescription(description)],
 				flags: 64,
 			});
 		} catch (error) {

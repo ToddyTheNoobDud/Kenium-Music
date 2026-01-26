@@ -24,7 +24,9 @@ export default class resumecmds extends Command {
 			if (!player.paused) {
 				await ctx.editOrReply({
 					embeds: [
-						new Embed().setDescription(t.player?.alreadyResumed).setColor("#0x100e09"),
+						new Embed()
+							.setDescription(t.player?.alreadyResumed)
+							.setColor("#0x100e09"),
 					],
 					flags: 64,
 				});
@@ -34,7 +36,9 @@ export default class resumecmds extends Command {
 			player.pause(false);
 
 			await ctx.editOrReply({
-				embeds: [new Embed().setDescription(t.player?.resumed).setColor("#0x100e09")],
+				embeds: [
+					new Embed().setDescription(t.player?.resumed).setColor("#0x100e09"),
+				],
 				flags: 64,
 			});
 		} catch (error) {

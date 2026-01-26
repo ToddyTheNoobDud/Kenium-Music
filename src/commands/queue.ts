@@ -162,7 +162,11 @@ const createButtonRows = (
 	];
 };
 
-function createQueueContainer(player: any, page: number, thele: any): Container {
+function createQueueContainer(
+	player: any,
+	page: number,
+	thele: any,
+): Container {
 	const queueLength = getQueueLength(player?.queue);
 	const { validPage, maxPages, startIndex, endIndex } = calcPagination(
 		queueLength,
@@ -172,13 +176,22 @@ function createQueueContainer(player: any, page: number, thele: any): Container 
 	const queueSlice = sliceQueue(player?.queue, startIndex, endIndex);
 
 	const components: any[] = [
-		{ type: 10, content: `**${thele.queue.title} • ${thele.queue.page.replace("{current}", validPage).replace("{total}", maxPages)}**` },
+		{
+			type: 10,
+			content: `**${thele.queue.title} • ${thele.queue.page.replace("{current}", validPage).replace("{total}", maxPages)}**`,
+		},
 		{ type: 14, divider: true, spacing: 1 },
 	];
 
 	if (currentTrack) {
-		const title = truncate(currentTrack.info?.title ?? thele.common.unknown, 60);
-		const artist = truncate(currentTrack.info?.author ?? thele.common.unknown, 40);
+		const title = truncate(
+			currentTrack.info?.title ?? thele.common.unknown,
+			60,
+		);
+		const artist = truncate(
+			currentTrack.info?.author ?? thele.common.unknown,
+			40,
+		);
 		const lengthMs = currentTrack.info?.length ?? 0;
 		const posMs = player.position ?? 0;
 		const bar = createProgressBar(posMs, lengthMs);
@@ -201,11 +214,11 @@ function createQueueContainer(player: any, page: number, thele: any): Container 
 			accessory:
 				currentTrack?.info?.artworkUrl || currentTrack?.thumbnail
 					? {
-						type: 11,
-						media: {
-							url: currentTrack.info?.artworkUrl ?? currentTrack.thumbnail,
-						},
-					}
+							type: 11,
+							media: {
+								url: currentTrack.info?.artworkUrl ?? currentTrack.thumbnail,
+							},
+						}
 					: undefined,
 		});
 	}
@@ -221,14 +234,22 @@ function createQueueContainer(player: any, page: number, thele: any): Container 
 		components.push(
 			{ type: 14, divider: true, spacing: 1 },
 			{ type: 10, content: `**${comingUpTitle}**` },
-			{ type: 10, content: lines.join("\n") || `*${thele.queue.noTracksInQueue}*` },
+			{
+				type: 10,
+				content: lines.join("\n") || `*${thele.queue.noTracksInQueue}*`,
+			},
 		);
 	}
 
-	const buttonRows = createButtonRows(validPage, maxPages, {
-		paused: !!player?.paused,
-		loop: !!player?.loop,
-	}, thele);
+	const buttonRows = createButtonRows(
+		validPage,
+		maxPages,
+		{
+			paused: !!player?.paused,
+			loop: !!player?.loop,
+		},
+		thele,
+	);
 
 	components.push({ type: 14, divider: true, spacing: 2 }, ...buttonRows);
 	return new Container({ components });
@@ -238,7 +259,7 @@ async function handleQueueNavigation(
 	interaction: any,
 	player: any,
 	action: string,
-	thele: any
+	thele: any,
 ): Promise<void> {
 	try {
 		await interaction.deferUpdate();
@@ -302,13 +323,13 @@ async function handleQueueNavigation(
 			components: [container],
 			flags: EPHEMERAL_FLAG,
 		});
-	} catch { }
+	} catch {}
 }
 
 async function handleShowQueue(
 	ctx: CommandContext,
 	player: any,
-	thele: any
+	thele: any,
 ): Promise<void> {
 	const queueLength = getQueueLength(player?.queue);
 	if (queueLength === 0 && !player?.current) {
@@ -318,8 +339,7 @@ async function handleShowQueue(
 				{ type: 14, divider: true, spacing: 1 },
 				{
 					type: 10,
-					content:
-						thele.queue.noTracksInQueue
+					content: thele.queue.noTracksInQueue,
 				},
 				{ type: 14, divider: true, spacing: 1 },
 				{ type: 10, content: thele.queue.tip },
@@ -358,7 +378,9 @@ async function handleShowQueue(
 			"queue_loop",
 			"queue_clear",
 		]) {
-			collector.run(id, (i: any) => handleQueueNavigation(i, player, id, thele));
+			collector.run(id, (i: any) =>
+				handleQueueNavigation(i, player, id, thele),
+			);
 		}
 	}
 

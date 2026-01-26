@@ -76,7 +76,9 @@ export default class PlayFile extends Command {
 				}
 				await ctx.editOrReply({
 					embeds: [
-						new Embed().setDescription(thele.player.fileAdded).setColor("#0x100e09"),
+						new Embed()
+							.setDescription(thele.player.fileAdded)
+							.setColor("#0x100e09"),
 					],
 					flags: 64,
 				});

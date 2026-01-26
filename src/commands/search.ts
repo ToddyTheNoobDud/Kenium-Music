@@ -132,7 +132,10 @@ export default class SearchCommand extends Command {
 		}
 	}
 
-	private async getOrCreatePlayer(ctx: CommandContext, thele: any): Promise<any> {
+	private async getOrCreatePlayer(
+		ctx: CommandContext,
+		thele: any,
+	): Promise<any> {
 		let player = ctx.client.aqua.players.get(ctx.interaction.guildId);
 
 		if (!player) {
@@ -229,7 +232,10 @@ export default class SearchCommand extends Command {
 					content: `### 🎵 **${thele.commands.search.name.toUpperCase()}**\n> \`${query}\``,
 				},
 				{ type: 14, divider: true, spacing: 1 },
-				{ type: 10, content: this.createTrackList(tracks, { emoji: "🎵" }, thele) },
+				{
+					type: 10,
+					content: this.createTrackList(tracks, { emoji: "🎵" }, thele),
+				},
 				{ type: 14, divider: true, spacing: 2 },
 				{
 					type: 1,
@@ -396,9 +402,14 @@ export default class SearchCommand extends Command {
 		_message: any,
 		thele: any,
 	): Promise<void> {
-		const platformKey = i.customId.split("_")[2] as keyof typeof MUSIC_PLATFORMS;
+		const platformKey = i.customId.split(
+			"_",
+		)[2] as keyof typeof MUSIC_PLATFORMS;
 		const newPlatform = MUSIC_PLATFORMS[platformKey];
-		if (!newPlatform || newPlatform.name.toUpperCase() === currentPlatform.name.toUpperCase()) {
+		if (
+			!newPlatform ||
+			newPlatform.name.toUpperCase() === currentPlatform.name.toUpperCase()
+		) {
 			return;
 		}
 
@@ -414,7 +425,7 @@ export default class SearchCommand extends Command {
 					newTracks,
 					newPlatform,
 					thele,
-				)
+				);
 				await i.editOrReply({ components: [searchContainer], flags: 32768 });
 			} else {
 				await i.followup({ content: thele.search.noResults, flags: 64 }, true);

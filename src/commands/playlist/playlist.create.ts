@@ -32,7 +32,10 @@ export class CreateCommand extends SubCommand {
 					createEmbed(
 						"error",
 						t.playlist?.create?.invalidName || "Invalid Name",
-						(t.playlist?.create?.nameTooLong || "Playlist name must be less than {maxLength} characters.").replace("{maxLength}", String(LIMITS.MAX_NAME_LENGTH)),
+						(
+							t.playlist?.create?.nameTooLong ||
+							"Playlist name must be less than {maxLength} characters."
+						).replace("{maxLength}", String(LIMITS.MAX_NAME_LENGTH)),
 					),
 				],
 				flags: 64,
@@ -47,7 +50,10 @@ export class CreateCommand extends SubCommand {
 					createEmbed(
 						"error",
 						t.playlist?.create?.exists || "Playlist Exists",
-						(t.playlist?.create?.alreadyExists || "A playlist named \"{name}\" already exists!").replace("{name}", name),
+						(
+							t.playlist?.create?.alreadyExists ||
+							'A playlist named "{name}" already exists!'
+						).replace("{name}", name),
 					),
 				],
 				flags: 64,
@@ -62,7 +68,10 @@ export class CreateCommand extends SubCommand {
 					createEmbed(
 						"error",
 						t.playlist?.create?.limitReached || "Playlist Limit Reached",
-						(t.playlist?.create?.maxPlaylists || "You can only have a maximum of {max} playlists.").replace("{max}", String(LIMITS.MAX_PLAYLISTS)),
+						(
+							t.playlist?.create?.maxPlaylists ||
+							"You can only have a maximum of {max} playlists."
+						).replace("{max}", String(LIMITS.MAX_PLAYLISTS)),
 					),
 				],
 				flags: 64,
@@ -87,7 +96,11 @@ export class CreateCommand extends SubCommand {
 			t.playlist?.create?.created || "Playlist Created",
 			undefined,
 			[
-				{ name: `${ICONS.playlist} ${t.playlist?.create?.name || "Name"}`, value: `**${name}**`, inline: true },
+				{
+					name: `${ICONS.playlist} ${t.playlist?.create?.name || "Name"}`,
+					value: `**${name}**`,
+					inline: true,
+				},
 				{
 					name: `${ICONS.star} ${t.playlist?.create?.status || "Status"}`,
 					value: t.playlist?.create?.readyForTracks || "Ready for tracks!",

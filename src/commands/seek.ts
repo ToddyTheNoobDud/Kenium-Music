@@ -23,7 +23,6 @@ import { getContextLanguage } from "../utils/i18n";
 @Middlewares(["checkPlayer", "checkVoice", "checkTrack"])
 export default class Seek extends Command {
 	async run(ctx: CommandContext) {
-
 		try {
 			const t = ctx.t.get(getContextLanguage(ctx));
 			const { client } = ctx;
@@ -34,7 +33,9 @@ export default class Seek extends Command {
 			player.seek(time * 1000);
 
 			await ctx.editOrReply({
-				embeds: [new Embed().setDescription(t.player.seeked).setColor("#0x100e09")],
+				embeds: [
+					new Embed().setDescription(t.player.seeked).setColor("#0x100e09"),
+				],
 				flags: 64,
 			});
 		} catch (error) {

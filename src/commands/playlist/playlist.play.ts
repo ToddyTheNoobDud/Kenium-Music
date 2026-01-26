@@ -34,11 +34,13 @@ const _functions = {
 			const res = await aqua.resolve({
 				query,
 				requester,
-				source: (sourceStr.includes("youtube") && !isUrl) ? "ytsearch" : undefined,
+				source:
+					sourceStr.includes("youtube") && !isUrl ? "ytsearch" : undefined,
 			});
 
 			const loadType = String(res?.loadType || "").toUpperCase();
-			if (!res || loadType === "LOAD_FAILED" || loadType === "NO_MATCHES") return null;
+			if (!res || loadType === "LOAD_FAILED" || loadType === "NO_MATCHES")
+				return null;
 
 			const tracks = res.tracks;
 			return Array.isArray(tracks) && tracks.length ? tracks[0] : null;
@@ -47,6 +49,7 @@ const _functions = {
 		}
 	},
 
+	// Improved concurrent track resolution with better error handling
 	async resolveTracksConcurrently<T>(
 		items: T[],
 		limit: number,
@@ -59,7 +62,7 @@ const _functions = {
 		const results: (T | null)[] = new Array(len);
 		let nextIndex = 0;
 
-
+		// Synchronous function to get next index - atomic in Node.js single-threaded model
 		const getNextIndex = (): number => {
 			const idx = nextIndex;
 			nextIndex += 1;
@@ -90,7 +93,10 @@ const _functions = {
 	},
 
 	writeError(ctx: CommandContext, title: string, desc: string) {
-		return ctx.write({ embeds: [createEmbed("error", title, desc)], flags: 64 });
+		return ctx.write({
+			embeds: [createEmbed("error", title, desc)],
+			flags: 64,
+		});
 	},
 
 	editError(ctx: CommandContext, title: string, desc: string) {
@@ -139,7 +145,10 @@ export class PlayCommand extends SubCommand {
 			);
 		}
 
-		const dbTracks = tracksCollection.find({ playlistId: playlistDb._id }, { sort: { addedAt: 1 } });
+		const dbTracks = tracksCollection.find(
+			{ playlistId: playlistDb._id },
+			{ sort: { addedAt: 1 } },
+		);
 		if (!Array.isArray(dbTracks) || dbTracks.length === 0) {
 			return _functions.writeError(
 				ctx,
@@ -176,7 +185,8 @@ export class PlayCommand extends SubCommand {
 			const loadedTracks = await _functions.resolveTracksConcurrently(
 				tracks,
 				MAX_RESOLVE_CONCURRENCY,
-				(track) => _functions.resolveTrack(ctx.client.aqua, track, ctx.interaction.user),
+				(track) =>
+					_functions.resolveTrack(ctx.client.aqua, track, ctx.interaction.user),
 			);
 
 			if (!loadedTracks.length) {
@@ -258,10 +268,10 @@ export class PlayCommand extends SubCommand {
 			return _functions.editError(
 				ctx,
 				tp?.playFailed || "Play Failed",
-				`${tp?.playFailedDesc ||
-					"Could not play playlist. Please try again later."}\n\nError: ${
-					err instanceof Error ? err.message : "Unknown error"
-				}`,
+				`${
+					tp?.playFailedDesc ||
+					"Could not play playlist. Please try again later."
+				}\n\nError: ${err instanceof Error ? err.message : "Unknown error"}`,
 			);
 		}
 	}

@@ -1,4 +1,4 @@
-const GLOBAL_HANDLER_FLAG = Symbol.for('kenium.errorHandlersRegistered');
+const GLOBAL_HANDLER_FLAG = Symbol.for("kenium.errorHandlersRegistered");
 
 const handleEvent = (type, fn) => {
 	process.on(type, fn);

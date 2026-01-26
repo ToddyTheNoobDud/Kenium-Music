@@ -36,7 +36,9 @@ export default class pauseCmds extends Command {
 			player.pause(true);
 
 			await ctx.editOrReply({
-				embeds: [new Embed().setDescription(t.player.paused).setColor("#0x100e09")],
+				embeds: [
+					new Embed().setDescription(t.player.paused).setColor("#0x100e09"),
+				],
 				flags: 64,
 			});
 		} catch (error) {

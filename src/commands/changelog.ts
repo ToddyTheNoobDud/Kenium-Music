@@ -113,7 +113,11 @@ function formatCommitMessage(message: string): string {
 		: truncated;
 }
 
-function createChangelogPage(ctx: CommandContext, thele: any, currentPage: 'changelog' | 'commits' = 'changelog'): Container {
+function createChangelogPage(
+	ctx: CommandContext,
+	thele: any,
+	currentPage: "changelog" | "commits" = "changelog",
+): Container {
 	const description = CONFIG.BOT.CHANGELOG;
 	const navigationButtons = createNavigationButtons(currentPage, thele);
 
@@ -161,7 +165,12 @@ function createChangelogPage(ctx: CommandContext, thele: any, currentPage: 'chan
 	});
 }
 
-function createCommitsPage(ctx: CommandContext, commits: any[], thele: any, currentPage: 'changelog' | 'commits' = 'commits'): Container {
+function createCommitsPage(
+	ctx: CommandContext,
+	commits: any[],
+	thele: any,
+	currentPage: "changelog" | "commits" = "commits",
+): Container {
 	// Build commits string in single pass
 	const commitsText = commits
 		.map((commit) => {
@@ -229,7 +238,10 @@ function createCommitsPage(ctx: CommandContext, commits: any[], thele: any, curr
 	});
 }
 
-function createNavigationButtons(currentPage: 'changelog' | 'commits', thele: any) {
+function createNavigationButtons(
+	currentPage: "changelog" | "commits",
+	thele: any,
+) {
 	return {
 		type: 1,
 		components: [
@@ -238,16 +250,22 @@ function createNavigationButtons(currentPage: 'changelog' | 'commits', thele: an
 				custom_id: "ignore_changelog_page",
 				label: thele.common.previous || "Changelog",
 				emoji: { name: "📝" },
-				style: currentPage === 'changelog' ? ButtonStyle.Primary : ButtonStyle.Secondary,
-				disabled: currentPage === 'changelog',
+				style:
+					currentPage === "changelog"
+						? ButtonStyle.Primary
+						: ButtonStyle.Secondary,
+				disabled: currentPage === "changelog",
 			},
 			{
 				type: 2,
 				custom_id: "ignore_commits_page",
 				label: thele.common.next || "Commits",
 				emoji: { name: "📜" },
-				style: currentPage === 'commits' ? ButtonStyle.Primary : ButtonStyle.Secondary,
-				disabled: currentPage === 'commits',
+				style:
+					currentPage === "commits"
+						? ButtonStyle.Primary
+						: ButtonStyle.Secondary,
+				disabled: currentPage === "commits",
 			},
 		],
 	};
@@ -278,16 +296,18 @@ export default class Changelog extends Command {
 			const commits = await fetchCommits();
 
 			// Start with changelog page
-			const changelogContainer = createChangelogPage(ctx, thele, 'changelog');
+			const changelogContainer = createChangelogPage(ctx, thele, "changelog");
 
-			const message = await ctx.editOrReply({
-				components: [changelogContainer],
-				flags: 64 | 32768,
-			}, true);
+			const message = await ctx.editOrReply(
+				{
+					components: [changelogContainer],
+					flags: 64 | 32768,
+				},
+				true,
+			);
 
 			// Set up button interaction handler
 			this.setupNavigationHandler(message, ctx, commits, thele);
-
 		} catch (error) {
 			console.error("Changelog error:", error);
 
@@ -310,16 +330,14 @@ export default class Changelog extends Command {
 		message: any,
 		ctx: CommandContext,
 		commits: any[],
-		thele: any
+		thele: any,
 	): void {
 		const collector = message.createComponentCollector({
 			filter: (i: any) => i.user.id === ctx.interaction.user.id,
 			idle: 300000, // 5 minutes timeout
 			onStop: () => {
 				this.activeCollectors.delete(collector);
-				message
-					.edit({ components: [] })
-					.catch(() => {});
+				message.edit({ components: [] }).catch(() => {});
 			},
 		});
 
@@ -329,7 +347,11 @@ export default class Changelog extends Command {
 		collector.run("ignore_changelog_page", async (interaction: any) => {
 			try {
 				await interaction.deferUpdate();
-				const changelogContainer = createChangelogPage(interaction, thele, 'changelog');
+				const changelogContainer = createChangelogPage(
+					interaction,
+					thele,
+					"changelog",
+				);
 
 				await interaction.editOrReply({
 					components: [changelogContainer],
@@ -344,7 +366,12 @@ export default class Changelog extends Command {
 		collector.run("ignore_commits_page", async (interaction: any) => {
 			try {
 				await interaction.deferUpdate();
-				const commitsContainer = createCommitsPage(interaction, commits, thele, 'commits');
+				const commitsContainer = createCommitsPage(
+					interaction,
+					commits,
+					thele,
+					"commits",
+				);
 
 				await interaction.editOrReply({
 					components: [commitsContainer],

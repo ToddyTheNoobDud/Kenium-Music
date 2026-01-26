@@ -94,7 +94,9 @@ export default class exportcmds extends Command {
 			await ctx.editOrReply({
 				embeds: [
 					new Embed()
-						.setDescription(t?.export?.success || "Exported the queue with URLs for import")
+						.setDescription(
+							t?.export?.success || "Exported the queue with URLs for import",
+						)
 						.setColor("#0x100e09"),
 				],
 				files: [attachment],

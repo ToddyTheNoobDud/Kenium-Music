@@ -49,7 +49,6 @@ function formatDates(totalSeconds: number): string {
 	return `${seconds} second${seconds !== 1 ? "s" : ""}`;
 }
 
-
 function formatMemoryUsage(bytes: number): string {
 	const units = ["B", "KB", "MB", "GB", "TB"];
 	let i = 0;
@@ -66,7 +65,7 @@ async function getBannerURL(client: any): Promise<string | null> {
 	const now = Date.now();
 
 	// Check if we have a cached banner and it's still valid
-	if (BANNER_CACHE.url && (now - BANNER_CACHE.lastFetch) < BANNER_CACHE.ttl) {
+	if (BANNER_CACHE.url && now - BANNER_CACHE.lastFetch < BANNER_CACHE.ttl) {
 		return BANNER_CACHE.url;
 	}
 
@@ -81,7 +80,7 @@ async function getBannerURL(client: any): Promise<string | null> {
 
 		return bannerURL;
 	} catch (error) {
-		console.error('Failed to fetch banner:', error);
+		console.error("Failed to fetch banner:", error);
 		// Return cached URL if fetch fails, or null if no cache
 		return BANNER_CACHE.url;
 	}
@@ -116,16 +115,12 @@ export default class statusCmds extends Command {
 
 		const sortedNodes = [...nodes].sort((a, b) => {
 			if (a.connected !== b.connected) return a.connected ? -1 : 1;
-			return (a.options?.name || "").localeCompare(
-				b.options?.name || "",
-			);
+			return (a.options?.name || "").localeCompare(b.options?.name || "");
 		});
 
 		const activeNode = sortedNodes.find((node) => node.connected);
 		const { stats = {} } = activeNode || {};
-		const {
-			playingPlayers = 0,
-		} = stats;
+		const { playingPlayers = 0 } = stats;
 
 		const guilds = client.cache.guilds.values() || [];
 		const userCount = guilds.reduce(
@@ -138,18 +133,20 @@ export default class statusCmds extends Command {
 
 		const embed = new Embed()
 			.setColor(0x532e68)
-			.setDescription(`Hello, I am **${client.me?.username}**, a music bot created by [\`mushroom0162\`](https://github.com/ToddyTheNoobDud). Here is my current status:`)
+			.setDescription(
+				`Hello, I am **${client.me?.username}**, a music bot created by [\`mushroom0162\`](https://github.com/ToddyTheNoobDud). Here is my current status:`,
+			)
 			.addFields(
 				{
 					inline: true,
-					name: "\`📋\` Info",
-					value: `\`📦\` Guilds: ${guilds.length}\n\`👤\`Users: ${userCount}\n\`🎤\`Players: ${client.aqua.players.size} / Playing: ${playingPlayers}`
+					name: "`📋` Info",
+					value: `\`📦\` Guilds: ${guilds.length}\n\`👤\`Users: ${userCount}\n\`🎤\`Players: ${client.aqua.players.size} / Playing: ${playingPlayers}`,
 				},
 				{
 					inline: true,
-					name: "\`🖥️\` System",
-					value: `\`💻\` Memory Usage: ${formatMemoryUsage(process.memoryUsage().rss)}\n\`🕛\`Uptime: ${formatDates(process.uptime())}\n\`🛜\` Ping: ${client.gateway.latency}`
-				}
+					name: "`🖥️` System",
+					value: `\`💻\` Memory Usage: ${formatMemoryUsage(process.memoryUsage().rss)}\n\`🕛\`Uptime: ${formatDates(process.uptime())}\n\`🛜\` Ping: ${client.gateway.latency}`,
+				},
 			);
 
 		// Only set image if banner URL exists

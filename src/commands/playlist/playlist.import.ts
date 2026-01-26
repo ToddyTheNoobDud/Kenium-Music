@@ -7,7 +7,11 @@ import {
 	Options,
 	SubCommand,
 } from "seyfert";
-import { getPlaylistsCollection, getTracksCollection, getDatabase } from "../../utils/db";
+import {
+	getPlaylistsCollection,
+	getTracksCollection,
+	getDatabase,
+} from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
 // Schema validation for imported playlists
@@ -128,13 +132,18 @@ export class ImportCommand extends SubCommand {
 			const response = await fetch(attachment.url);
 			const data = await response.json();
 
-			if (!data.name || typeof data.name !== 'string' || !Array.isArray(data.tracks)) {
+			if (
+				!data.name ||
+				typeof data.name !== "string" ||
+				!Array.isArray(data.tracks)
+			) {
 				return await ctx.write({
 					embeds: [
 						createEmbed(
 							"error",
 							t.playlist?.import?.invalidFile || "Invalid File",
-							t.playlist?.import?.invalidFileDesc || "The file must contain a valid playlist with name and tracks array.",
+							t.playlist?.import?.invalidFileDesc ||
+								"The file must contain a valid playlist with name and tracks array.",
 						),
 					],
 					flags: 64,
@@ -142,11 +151,13 @@ export class ImportCommand extends SubCommand {
 			}
 
 			const validTracks = data.tracks.filter((track: any) => {
-				return track &&
-					   typeof track.title === 'string' &&
-					   typeof track.uri === 'string' &&
-					   typeof track.author === 'string' &&
-					   typeof track.duration === 'number';
+				return (
+					track &&
+					typeof track.title === "string" &&
+					typeof track.uri === "string" &&
+					typeof track.author === "string" &&
+					typeof track.duration === "number"
+				);
 			});
 
 			if (validTracks.length === 0) {
@@ -174,7 +185,10 @@ export class ImportCommand extends SubCommand {
 						createEmbed(
 							"error",
 							t.playlist?.import?.nameConflict || "Name Conflict",
-							(t.playlist?.import?.nameConflictDesc || "A playlist named \"{name}\" already exists!").replace("{name}", playlistName),
+							(
+								t.playlist?.import?.nameConflictDesc ||
+								'A playlist named "{name}" already exists!'
+							).replace("{name}", playlistName),
 						),
 					],
 					flags: 64,
@@ -182,38 +196,38 @@ export class ImportCommand extends SubCommand {
 			}
 
 			const timestamp = new Date().toISOString();
-            const totalDuration = validTracks.reduce(
-                (sum: number, track: any) => sum + (track.duration || 0),
-                0,
-            );
+			const totalDuration = validTracks.reduce(
+				(sum: number, track: any) => sum + (track.duration || 0),
+				0,
+			);
 
 			try {
-                getDatabase().transaction(() => {
-                    const insertedPlaylist = playlistsCollection.insert({
-                        userId,
-                        name: playlistName,
-                        description: data.description || "Imported playlist",
-                        createdAt: timestamp,
-                        lastModified: timestamp,
-                        playCount: 0,
-                        totalDuration: totalDuration,
-                        trackCount: validTracks.length
-                    }) as any;
+				getDatabase().transaction(() => {
+					const insertedPlaylist = playlistsCollection.insert({
+						userId,
+						name: playlistName,
+						description: data.description || "Imported playlist",
+						createdAt: timestamp,
+						lastModified: timestamp,
+						playCount: 0,
+						totalDuration: totalDuration,
+						trackCount: validTracks.length,
+					}) as any;
 
-                    const tracksToInsert = validTracks.map((track: any) => ({
-                        playlistId: insertedPlaylist._id,
-                        title: track.title,
-                        uri: track.uri,
-                        author: track.author,
-                        duration: track.duration,
-                        addedAt: timestamp,
-                        addedBy: userId,
-                        source: track.source || determineSource(track.uri),
-                        identifier: track.identifier || "",
-                    }));
+					const tracksToInsert = validTracks.map((track: any) => ({
+						playlistId: insertedPlaylist._id,
+						title: track.title,
+						uri: track.uri,
+						author: track.author,
+						duration: track.duration,
+						addedAt: timestamp,
+						addedBy: userId,
+						source: track.source || determineSource(track.uri),
+						identifier: track.identifier || "",
+					}));
 
-                    tracksCollection.insert(tracksToInsert);
-                });
+					tracksCollection.insert(tracksToInsert);
+				});
 			} catch (dbError) {
 				console.error("Database error importing playlist:", dbError);
 				return await ctx.write({
@@ -221,11 +235,17 @@ export class ImportCommand extends SubCommand {
 						createEmbed(
 							"error",
 							t.playlist?.import?.importFailed || "Import Failed",
-							(t.playlist?.import?.importFailedDesc || "Could not save playlist: {error}").replace("{error}", dbError instanceof Error ? dbError.message : "Unknown error"),
+							(
+								t.playlist?.import?.importFailedDesc ||
+								"Could not save playlist: {error}"
+							).replace(
+								"{error}",
+								dbError instanceof Error ? dbError.message : "Unknown error",
+							),
 						),
 					],
 					flags: 64,
-					});
+				});
 			}
 
 			const embed = createEmbed(
@@ -259,7 +279,10 @@ export class ImportCommand extends SubCommand {
 					createEmbed(
 						"error",
 						t.playlist?.import?.importFailed || "Import Failed",
-						(t.playlist?.import?.importFailedDesc || "Could not import playlist: {error}").replace("{error}", (error as Error).message),
+						(
+							t.playlist?.import?.importFailedDesc ||
+							"Could not import playlist: {error}"
+						).replace("{error}", (error as Error).message),
 					),
 				],
 				flags: 64,

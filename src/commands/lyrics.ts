@@ -71,7 +71,11 @@ function chunkContent(content: string, maxLength = MAX_EMBED_LENGTH) {
 	return chunks;
 }
 
-function createNavigationRow(currentPage: number, totalPages: number, thele: any) {
+function createNavigationRow(
+	currentPage: number,
+	totalPages: number,
+	thele: any,
+) {
 	const row = new ActionRow().addComponents(
 		new Button()
 			.setCustomId("ignore_lyrics_close")
@@ -257,19 +261,23 @@ export default class LyricsCommand extends Command {
 			const source = lyricsResult.provider || thele.common.unknown;
 			const hasSyncedLyrics = Array.isArray(lines) && lines.length > 0;
 
-			await displayLyricsUI(ctx, {
-				lyrics: text || "",
-				title: player.current?.title
-					? `🎵 ${player.current.title}`
-					: thele.lyrics.title,
-				track,
-				lines: hasSyncedLyrics ? lines : null,
-				source,
-				albumArt:
-					player.current?.thumbnail ||
-					track?.albumArt ||
-					ctx.client.me.avatarURL(),
-			}, thele);
+			await displayLyricsUI(
+				ctx,
+				{
+					lyrics: text || "",
+					title: player.current?.title
+						? `🎵 ${player.current.title}`
+						: thele.lyrics.title,
+					track,
+					lines: hasSyncedLyrics ? lines : null,
+					source,
+					albumArt:
+						player.current?.thumbnail ||
+						track?.albumArt ||
+						ctx.client.me.avatarURL(),
+				},
+				thele,
+			);
 		} catch (error) {
 			console.error("Lyrics command error:", error);
 			await ctx.editOrReply({

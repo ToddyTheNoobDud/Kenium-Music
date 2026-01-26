@@ -35,7 +35,7 @@ export const checkVoice = createMiddleware<void>(
 		if (
 			!memberVoice ||
 			(botvoice && botvoice.channelId !== memberVoice.channelId)
-		)	{
+		) {
 			await context.editOrReply({
 				flags: 64,
 				embeds: [

@@ -6,7 +6,11 @@ import {
 	SubCommand,
 } from "seyfert";
 import { createEmbed, handlePlaylistAutocomplete } from "../../shared/utils";
-import { getPlaylistsCollection, getTracksCollection, getDatabase } from "../../utils/db";
+import {
+	getPlaylistsCollection,
+	getTracksCollection,
+	getDatabase,
+} from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
 const playlistsCollection = getPlaylistsCollection();
@@ -40,7 +44,10 @@ export class DeleteCommand extends SubCommand {
 					createEmbed(
 						"error",
 						t.playlist?.delete?.notFound || "Playlist Not Found",
-						(t.playlist?.delete?.notFoundDesc || "No playlist named \"{name}\" exists!").replace("{name}", playlistName),
+						(
+							t.playlist?.delete?.notFoundDesc ||
+							'No playlist named "{name}" exists!'
+						).replace("{name}", playlistName),
 					),
 				],
 				flags: 64,
@@ -59,7 +66,10 @@ export class DeleteCommand extends SubCommand {
 		const embed = createEmbed(
 			"success",
 			t.playlist?.delete?.deleted || "Playlist Deleted",
-			(t.playlist?.delete?.deletedDesc || "Successfully deleted playlist \"{name}\"").replace("{name}", playlistName),
+			(
+				t.playlist?.delete?.deletedDesc ||
+				'Successfully deleted playlist "{name}"'
+			).replace("{name}", playlistName),
 		);
 		return ctx.write({ embeds: [embed], flags: 64 });
 	}

@@ -31,7 +31,6 @@ export default class Volume extends Command {
 			const lang = getContextLanguage(ctx);
 			const t = ctx.t.get(lang);
 
-
 			const player = ctx.client.aqua.players.get(ctx.guildId!);
 
 			if (volume < 0 || volume > 200) {
@@ -39,7 +38,9 @@ export default class Volume extends Command {
 					embeds: [
 						new Embed()
 							.setColor("#0x100e09")
-							.setDescription(t.volume?.rangeError || "Use an integer between 0 and 200."),
+							.setDescription(
+								t.volume?.rangeError || "Use an integer between 0 and 200.",
+							),
 					],
 				});
 			}
@@ -47,7 +48,16 @@ export default class Volume extends Command {
 			player.setVolume(volume);
 
 			await ctx.editOrReply({
-				embeds: [new Embed().setDescription((t.player?.volumeSet || "Volume set to {volume}%.").replace("{volume}", volume.toString())).setColor("#0x100e09")],
+				embeds: [
+					new Embed()
+						.setDescription(
+							(t.player?.volumeSet || "Volume set to {volume}%.").replace(
+								"{volume}",
+								volume.toString(),
+							),
+						)
+						.setColor("#0x100e09"),
+				],
 				flags: 64,
 			});
 		} catch (error) {

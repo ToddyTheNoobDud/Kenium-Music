@@ -23,7 +23,9 @@ export default class shuffleCmds extends Command {
 			player.shuffle();
 
 			await ctx.editOrReply({
-				embeds: [new Embed().setDescription(t.player.seeked).setColor("#0x100e09")],
+				embeds: [
+					new Embed().setDescription(t.player.seeked).setColor("#0x100e09"),
+				],
 				flags: 64,
 			});
 		} catch (error) {

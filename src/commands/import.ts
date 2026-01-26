@@ -84,15 +84,19 @@ export default class importcmds extends Command {
 				await ctx.editOrReply({
 					embeds: [
 						new Embed()
-							.setDescription(t?.import?.noValidTracks || "❌ No valid tracks found in the file")
+							.setDescription(
+								t?.import?.noValidTracks ||
+									"❌ No valid tracks found in the file",
+							)
 							.setColor(0xff0000),
 					],
 				});
 				return;
 			}
 
-			const importingText = t?.import?.importing?.replace('{count}', tracks.length.toString())
-				|| `🎵 Importing ${tracks.length} tracks...`;
+			const importingText =
+				t?.import?.importing?.replace("{count}", tracks.length.toString()) ||
+				`🎵 Importing ${tracks.length} tracks...`;
 
 			const embed = new Embed()
 				.setDescription(importingText)
@@ -147,16 +151,27 @@ export default class importcmds extends Command {
 			}
 
 			const completeTitle = t?.import?.complete || "🔥 Import Complete";
-			const successText = t?.import?.successfullyImported?.replace('{count}', successCount.toString())
-				|| `✅ Successfully imported: **${successCount}** tracks`;
-			const failText = failCount > 0
-				? (t?.import?.failedToImport?.replace('{count}', failCount.toString())
-					|| `❌ Failed to import: **${failCount}** tracks`)
-				: "";
-			const totalText = t?.import?.totalQueueSize?.replace('{count}', player.queue.length.toString())
-				|| `🎵 Total queue size: **${player.queue.length}** tracks`;
+			const successText =
+				t?.import?.successfullyImported?.replace(
+					"{count}",
+					successCount.toString(),
+				) || `✅ Successfully imported: **${successCount}** tracks`;
+			const failText =
+				failCount > 0
+					? t?.import?.failedToImport?.replace(
+							"{count}",
+							failCount.toString(),
+						) || `❌ Failed to import: **${failCount}** tracks`
+					: "";
+			const totalText =
+				t?.import?.totalQueueSize?.replace(
+					"{count}",
+					player.queue.length.toString(),
+				) || `🎵 Total queue size: **${player.queue.length}** tracks`;
 
-			const description = [successText, failText, totalText].filter(Boolean).join("\n");
+			const description = [successText, failText, totalText]
+				.filter(Boolean)
+				.join("\n");
 
 			const resultEmbed = new Embed()
 				.setTitle(completeTitle)

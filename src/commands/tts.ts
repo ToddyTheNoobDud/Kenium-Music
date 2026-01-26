@@ -51,7 +51,7 @@ export default class TTSCommand extends Command {
 			ctx.write({
 				content: t.player?.trackAdded,
 				flags: 64,
-			})
+			});
 		}
 	}
 }

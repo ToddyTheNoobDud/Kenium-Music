@@ -62,7 +62,11 @@ export default class filtersss extends Command {
 					player.filters.setKaraoke(true);
 					break;
 				case "timescale":
-					player.filters.setTimescale(true, { speed: 1.2, pitch: 1.2, rate: 1.0 });
+					player.filters.setTimescale(true, {
+						speed: 1.2,
+						pitch: 1.2,
+						rate: 1.0,
+					});
 					break;
 				case "tremolo":
 					player.filters.setTremolo(true, { depth: 0.5, frequency: 4 });
@@ -109,12 +113,12 @@ export default class filtersss extends Command {
 					});
 			}
 
-			const appliedText = t.player?.filterApplied?.replace('{filter}', filters) || `**Applied ${filters}**`;
+			const appliedText =
+				t.player?.filterApplied?.replace("{filter}", filters) ||
+				`**Applied ${filters}**`;
 
 			await ctx.editOrReply({
-				embeds: [
-					new Embed().setDescription(appliedText).setColor("#0x100e09"),
-				],
+				embeds: [new Embed().setDescription(appliedText).setColor("#0x100e09")],
 				flags: 64,
 			});
 		} catch (error) {

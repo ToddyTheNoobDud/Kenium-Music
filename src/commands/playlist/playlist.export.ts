@@ -114,18 +114,24 @@ export class ExportCommand extends SubCommand {
 					createEmbed(
 						"error",
 						t.playlist?.view?.notFound || "Playlist Not Found",
-						(t.playlist?.view?.notFoundDesc || "No playlist named \"{name}\" exists!").replace("{name}", playlistName),
+						(
+							t.playlist?.view?.notFoundDesc ||
+							'No playlist named "{name}" exists!'
+						).replace("{name}", playlistName),
 					),
 				],
 				flags: 64,
 			});
 		}
 
-        const tracks = tracksCollection.find({ playlistId: playlist._id }, { sort: { addedAt: 1 } });
-        const exportData = {
-            ...playlist,
-            tracks
-        };
+		const tracks = tracksCollection.find(
+			{ playlistId: playlist._id },
+			{ sort: { addedAt: 1 } },
+		);
+		const exportData = {
+			...playlist,
+			tracks,
+		};
 
 		const content = JSON.stringify(exportData, null, 2);
 		const fileName = `${playlistName}.json`;

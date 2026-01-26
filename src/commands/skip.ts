@@ -22,7 +22,9 @@ export default class skipCmds extends Command {
 			if (player.queue.length === 0) {
 				await ctx.editOrReply({
 					embeds: [
-						new Embed().setDescription(t.player?.queueEmpty).setColor("#0x100e09"),
+						new Embed()
+							.setDescription(t.player?.queueEmpty)
+							.setColor("#0x100e09"),
 					],
 					flags: 64,
 				});
@@ -31,7 +33,9 @@ export default class skipCmds extends Command {
 			player.skip();
 
 			await ctx.editOrReply({
-				embeds: [new Embed().setDescription(t.player?.skipped).setColor("#0x100e09")],
+				embeds: [
+					new Embed().setDescription(t.player?.skipped).setColor("#0x100e09"),
+				],
 				flags: 64,
 			});
 		} catch (error) {

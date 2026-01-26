@@ -58,7 +58,11 @@ export default class removecmds extends Command {
 
 			player.queue.splice(position - 1, 1);
 			await ctx.editOrReply({
-				embeds: [new Embed().setDescription(t.player?.removedSong).setColor("#0x100e09")],
+				embeds: [
+					new Embed()
+						.setDescription(t.player?.removedSong)
+						.setColor("#0x100e09"),
+				],
 				flags: 64,
 			});
 		} catch (error) {

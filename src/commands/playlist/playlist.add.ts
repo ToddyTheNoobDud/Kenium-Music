@@ -16,14 +16,20 @@ import {
 	handlePlaylistAutocomplete,
 	handleTrackAutocomplete,
 } from "../../shared/utils";
-import { getPlaylistsCollection, getTracksCollection, getPlaylistWithTracks, getDatabase, getPlaylistTracks } from "../../utils/db";
+import {
+	getPlaylistsCollection,
+	getTracksCollection,
+	getPlaylistWithTracks,
+	getDatabase,
+	getPlaylistTracks,
+} from "../../utils/db";
 import { getContextTranslations } from "../../utils/i18n";
 
 const playlistsCollection = getPlaylistsCollection();
 const tracksCollection = getTracksCollection();
 
 interface PlaylistTrack {
-    playlistId: string;
+	playlistId: string;
 	title: string;
 	uri: string;
 	author: string;
@@ -79,7 +85,7 @@ export const _functions = {
 			return idx;
 		};
 		const next = async () => {
-			for (; ;) {
+			for (;;) {
 				if (shouldStop?.()) return;
 				const idx = getNextIndex();
 				if (idx >= items.length) return;
@@ -123,7 +129,10 @@ export class AddCommand extends SubCommand {
 		const userId = ctx.author.id;
 		const t = getContextTranslations(ctx);
 
-		const playlistDb = playlistsCollection.findOne({ userId, name: playlistName }) as any;
+		const playlistDb = playlistsCollection.findOne({
+			userId,
+			name: playlistName,
+		}) as any;
 
 		if (!playlistDb) {
 			return ctx.write({
@@ -131,20 +140,21 @@ export class AddCommand extends SubCommand {
 					createEmbed(
 						"error",
 						t.playlist?.add?.notFound || "Playlist Not Found",
-						(t.playlist?.add?.notFoundDesc || "No playlist named \"{name}\" exists!").replace("{name}", playlistName),
+						(
+							t.playlist?.add?.notFoundDesc ||
+							'No playlist named "{name}" exists!'
+						).replace("{name}", playlistName),
 					),
 				],
 				flags: 64,
 			});
 		}
 
-		const currentTracksCount = typeof playlistDb.trackCount === 'number'
-			? playlistDb.trackCount
-			: tracksCollection.count({ playlistId: playlistDb._id });
-		const availableSlots = Math.max(
-			0,
-			LIMITS.MAX_TRACKS - currentTracksCount,
-		);
+		const currentTracksCount =
+			typeof playlistDb.trackCount === "number"
+				? playlistDb.trackCount
+				: tracksCollection.count({ playlistId: playlistDb._id });
+		const availableSlots = Math.max(0, LIMITS.MAX_TRACKS - currentTracksCount);
 
 		if (availableSlots === 0) {
 			return ctx.write({
@@ -152,7 +162,10 @@ export class AddCommand extends SubCommand {
 					createEmbed(
 						"warning",
 						t.playlist?.add?.full || "Playlist Full",
-						(t.playlist?.add?.fullDesc || "This playlist has reached the {max}-track limit!").replace("{max}", String(LIMITS.MAX_TRACKS)),
+						(
+							t.playlist?.add?.fullDesc ||
+							"This playlist has reached the {max}-track limit!"
+						).replace("{max}", String(LIMITS.MAX_TRACKS)),
 					),
 				],
 				flags: 64,
@@ -163,10 +176,10 @@ export class AddCommand extends SubCommand {
 
 		const timestamp = new Date().toISOString();
 		const existingCanonical = new Set<string>();
-        const existingUris = tracksCollection.find(
-            { playlistId: playlistDb._id },
-            { fields: ['uri'] }
-        );
+		const existingUris = tracksCollection.find(
+			{ playlistId: playlistDb._id },
+			{ fields: ["uri"] },
+		);
 		for (const tr of existingUris)
 			existingCanonical.add(_functions.canonicalizeUri(tr.uri));
 
@@ -183,7 +196,7 @@ export class AddCommand extends SubCommand {
 			const canonical = _functions.canonicalizeUri(uri);
 			if (existingCanonical.has(canonical)) return;
 			const newTrack: PlaylistTrack = {
-                playlistId: playlistDb._id,
+				playlistId: playlistDb._id,
 				title: track.info.title || "Unknown",
 				uri,
 				author: track.info.author || "Unknown",
@@ -249,7 +262,8 @@ export class AddCommand extends SubCommand {
 						createEmbed(
 							"warning",
 							t.playlist?.add?.nothingAdded || "Nothing Added",
-							t.playlist?.add?.nothingAddedDesc || "No new tracks were added. They may already exist in the playlist or no matches were found.",
+							t.playlist?.add?.nothingAddedDesc ||
+								"No new tracks were added. They may already exist in the playlist or no matches were found.",
 						),
 					],
 				});
@@ -257,20 +271,26 @@ export class AddCommand extends SubCommand {
 
 			if (toAdd.length > availableSlots) toAdd.length = availableSlots;
 
-			const addedDuration = toAdd.reduce((sum, t) => sum + (t.duration || 0), 0);
-            const newTotalDuration = (playlistDb.totalDuration || 0) + addedDuration;
-            const newTotalTracks = currentTracksCount + toAdd.length;
+			const addedDuration = toAdd.reduce(
+				(sum, t) => sum + (t.duration || 0),
+				0,
+			);
+			const newTotalDuration = (playlistDb.totalDuration || 0) + addedDuration;
+			const newTotalTracks = currentTracksCount + toAdd.length;
 
 			// Atomic update for tracks and playlist metadata
 			try {
-                getDatabase().transaction(() => {
-                    tracksCollection.insert(toAdd);
-                    playlistsCollection.update({ _id: (playlistDb as any)._id }, {
-                        lastModified: timestamp,
-                        totalDuration: newTotalDuration,
-                        trackCount: newTotalTracks
-                    });
-                });
+				getDatabase().transaction(() => {
+					tracksCollection.insert(toAdd);
+					playlistsCollection.update(
+						{ _id: (playlistDb as any)._id },
+						{
+							lastModified: timestamp,
+							totalDuration: newTotalDuration,
+							trackCount: newTotalTracks,
+						},
+					);
+				});
 			} catch (dbError) {
 				console.error("Failed to update playlist:", dbError);
 				return ctx.editOrReply({
@@ -278,7 +298,13 @@ export class AddCommand extends SubCommand {
 						createEmbed(
 							"error",
 							t.playlist?.add?.addFailed || "Add Failed",
-							(t.playlist?.add?.addFailedDesc || "Could not save playlist changes: {error}").replace("{error}", dbError instanceof Error ? dbError.message : "Unknown error"),
+							(
+								t.playlist?.add?.addFailedDesc ||
+								"Could not save playlist changes: {error}"
+							).replace(
+								"{error}",
+								dbError instanceof Error ? dbError.message : "Unknown error",
+							),
 						),
 					],
 				});
@@ -286,11 +312,13 @@ export class AddCommand extends SubCommand {
 			const primary = toAdd[0];
 			const embed = createEmbed(
 				"success",
-				toAdd.length > 1 ? (t.playlist?.add?.tracksAdded || "Tracks Added") : (t.playlist?.add?.trackAdded || "Track Added"),
+				toAdd.length > 1
+					? t.playlist?.add?.tracksAdded || "Tracks Added"
+					: t.playlist?.add?.trackAdded || "Track Added",
 				undefined,
 				[
 					{
-						name: `${ICONS.music} ${toAdd.length > 1 ? (t.playlist?.add?.tracks || "Tracks") : (t.playlist?.add?.track || "Track")}`,
+						name: `${ICONS.music} ${toAdd.length > 1 ? t.playlist?.add?.tracks || "Tracks" : t.playlist?.add?.track || "Track"}`,
 						value:
 							toAdd.length > 1
 								? `**${primary.title}** (+${toAdd.length - 1} more)`
@@ -341,7 +369,12 @@ export class AddCommand extends SubCommand {
 					createEmbed(
 						"error",
 						t.playlist?.add?.addFailed || "Add Failed",
-						(t.playlist?.add?.addFailedDesc || "Could not add tracks: {error}").replace("{error}", err instanceof Error ? err.message : "Unknown error"),
+						(
+							t.playlist?.add?.addFailedDesc || "Could not add tracks: {error}"
+						).replace(
+							"{error}",
+							err instanceof Error ? err.message : "Unknown error",
+						),
 					),
 				],
 			});

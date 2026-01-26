@@ -98,7 +98,7 @@ export default class JumpCommand extends Command {
 		if (!player?.queue?.length) {
 			await ctx.editOrReply({
 				content: t?.jump?.noSongsInQueue || "No songs in queue",
-				flags: 64
+				flags: 64,
 			});
 			return;
 		}
@@ -118,7 +118,9 @@ export default class JumpCommand extends Command {
 			}
 
 			await ctx.editOrReply({
-				content: t?.jump?.specifyPositionOrName || "Please specify either a position number or song name",
+				content:
+					t?.jump?.specifyPositionOrName ||
+					"Please specify either a position number or song name",
 				flags: 64,
 			});
 		} catch (error: any) {
@@ -138,15 +140,16 @@ export default class JumpCommand extends Command {
 		ctx: CommandContext,
 		player: any,
 		position: number,
-		t: any
+		t: any,
 	): Promise<void> {
 		const queueLength = player.queue.length;
 
 		if (position < 1 || position > queueLength) {
-			const errorMsg = t.commands?.jump?.positionRange
-				?.replace('{min}', '1')
-				?.replace('{max}', queueLength.toString())
-				|| `Position must be between 1 and ${queueLength}`;
+			const errorMsg =
+				t.commands?.jump?.positionRange
+					?.replace("{min}", "1")
+					?.replace("{max}", queueLength.toString()) ||
+				`Position must be between 1 and ${queueLength}`;
 
 			await ctx.editOrReply({
 				content: errorMsg,
@@ -157,8 +160,10 @@ export default class JumpCommand extends Command {
 
 		if (position === 1) {
 			await ctx.editOrReply({
-				content: t.commands?.jump?.alreadyAt?.replace('{position}', '1') || "Already at position 1",
-				flags: 64
+				content:
+					t.commands?.jump?.alreadyAt?.replace("{position}", "1") ||
+					"Already at position 1",
+				flags: 64,
 			});
 			return;
 		}
@@ -170,8 +175,9 @@ export default class JumpCommand extends Command {
 
 		player.stop();
 
-		const successMsg = t.commands?.jump?.jumpedTo?.replace('{position}', position.toString())
-			|| `Jumped to song ${position}`;
+		const successMsg =
+			t.commands?.jump?.jumpedTo?.replace("{position}", position.toString()) ||
+			`Jumped to song ${position}`;
 
 		await ctx.editOrReply({ content: successMsg, flags: 64 });
 	}
@@ -180,15 +186,16 @@ export default class JumpCommand extends Command {
 		ctx: CommandContext,
 		player: any,
 		name: string,
-		t: any
+		t: any,
 	): Promise<void> {
 		const songIndex = player.queue.findIndex(
 			(song: any) => song.info.title === name,
 		);
 
 		if (songIndex === -1) {
-			const errorMsg = t.commands?.jump?.songNotFound?.replace('{name}', name)
-				|| `Couldn't find "${name}" in the queue`;
+			const errorMsg =
+				t.commands?.jump?.songNotFound?.replace("{name}", name) ||
+				`Couldn't find "${name}" in the queue`;
 
 			await ctx.editOrReply({
 				content: errorMsg,
@@ -198,8 +205,9 @@ export default class JumpCommand extends Command {
 		}
 
 		if (songIndex === 0) {
-			const alreadyPlayingMsg = t.commands?.jump?.alreadyPlaying?.replace('{name}', name)
-				|| `"${name}" is already playing`;
+			const alreadyPlayingMsg =
+				t.commands?.jump?.alreadyPlaying?.replace("{name}", name) ||
+				`"${name}" is already playing`;
 
 			await ctx.editOrReply({
 				content: alreadyPlayingMsg,
@@ -214,8 +222,9 @@ export default class JumpCommand extends Command {
 
 		player.stop();
 
-		const successMsg = t.commands?.jump?.jumpedToSong?.replace('{name}', name)
-			|| `Jumped to song "${name}"`;
+		const successMsg =
+			t.commands?.jump?.jumpedToSong?.replace("{name}", name) ||
+			`Jumped to song "${name}"`;
 
 		await ctx.editOrReply({ content: successMsg, flags: 64 });
 	}

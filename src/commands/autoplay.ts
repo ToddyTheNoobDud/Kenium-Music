@@ -33,7 +33,7 @@ export default class autoPlaycmd extends Command {
 				.setDescription(statusText)
 				.setFooter({
 					text: t.commands?.autoplay?.name || "Autoplay",
-					iconUrl: client.me.avatarURL()
+					iconUrl: client.me.avatarURL(),
 				})
 				.setTimestamp();
 

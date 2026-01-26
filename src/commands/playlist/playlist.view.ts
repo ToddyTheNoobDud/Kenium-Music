@@ -17,7 +17,11 @@ import {
 	handlePlaylistAutocomplete,
 } from "../../shared/utils";
 import { getContextTranslations } from "../../utils/i18n";
-import { getPlaylistsCollection, getTracksCollection, getPlaylistTracks } from "../../utils/db";
+import {
+	getPlaylistsCollection,
+	getTracksCollection,
+	getPlaylistTracks,
+} from "../../utils/db";
 
 const playlistsCollection = getPlaylistsCollection();
 const tracksCollection = getTracksCollection();
@@ -38,7 +42,7 @@ function createSelectMenu(
 
 	for (const opt of opts) {
 		menu.addOption({
-			// @ts-ignore
+			// @ts-expect-error
 			label: opt.label,
 			value: opt.value,
 			description: opt.description,
@@ -85,8 +89,14 @@ export class ViewCommand extends SubCommand {
 					sort: { lastModified: -1 },
 					limit: pageSize,
 					skip: (page - 1) * pageSize,
-					fields: ['name', 'totalDuration', 'lastModified', 'createdAt', 'playCount']
-				}
+					fields: [
+						"name",
+						"totalDuration",
+						"lastModified",
+						"createdAt",
+						"playCount",
+					],
+				},
 			);
 			if (!Array.isArray(playlists) || playlists.length === 0) {
 				const embed = createEmbed(
@@ -121,7 +131,7 @@ export class ViewCommand extends SubCommand {
 				const lastMod = new Date(
 					p.lastModified || p.createdAt,
 				).toLocaleDateString();
-                const trackCount = p.trackCount || 0;
+				const trackCount = p.trackCount || 0;
 				embed.addFields({
 					name: `${ICONS.playlist} ${p.name}`,
 					value: `${ICONS.tracks} ${trackCount} tracks • ${ICONS.duration} ${duration}\n${ICONS.info} Modified: ${lastMod}`,
@@ -138,12 +148,12 @@ export class ViewCommand extends SubCommand {
 			const components =
 				selectOptions.length > 0
 					? [
-						createSelectMenu(
-							`select_playlist_${userId}`,
-							"Choose a playlist to view...",
-							selectOptions,
-						),
-					]
+							createSelectMenu(
+								`select_playlist_${userId}`,
+								"Choose a playlist to view...",
+								selectOptions,
+							),
+						]
 					: [];
 
 			return ctx.write({ embeds: [embed], components, flags: 64 });
@@ -166,9 +176,10 @@ export class ViewCommand extends SubCommand {
 			});
 		}
 
-        const totalTracks = typeof playlist.trackCount === 'number'
-            ? playlist.trackCount
-            : tracksCollection.count({ playlistId: playlist._id });
+		const totalTracks =
+			typeof playlist.trackCount === "number"
+				? playlist.trackCount
+				: tracksCollection.count({ playlistId: playlist._id });
 
 		if (totalTracks === 0) {
 			const embed = createEmbed(
@@ -193,7 +204,10 @@ export class ViewCommand extends SubCommand {
 		const startIdx = (page - 1) * pageSize;
 
 		// Only load the tracks for the current page to save memory
-		const tracks = getPlaylistTracks(playlist._id as string, { limit: pageSize, skip: startIdx });
+		const tracks = getPlaylistTracks(playlist._id as string, {
+			limit: pageSize,
+			skip: startIdx,
+		});
 
 		const embed = createEmbed(
 			"primary",
