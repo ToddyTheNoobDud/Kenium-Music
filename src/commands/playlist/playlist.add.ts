@@ -72,13 +72,22 @@ export const _functions = {
 		shouldStop?: () => boolean,
 	) => {
 		const l = Math.max(1, limit);
-		let i = 0;
+		let nextIndex = 0;
+		const getNextIndex = (): number => {
+			const idx = nextIndex;
+			nextIndex += 1;
+			return idx;
+		};
 		const next = async () => {
 			for (; ;) {
 				if (shouldStop?.()) return;
-				const idx = i++;
+				const idx = getNextIndex();
 				if (idx >= items.length) return;
-				await fn(items[idx], idx);
+				try {
+					await fn(items[idx], idx);
+				} catch (err) {
+					console.error(`mapPool task ${idx} failed:`, err);
+				}
 			}
 		};
 		const runners = Array.from({ length: Math.min(l, items.length) }, next);

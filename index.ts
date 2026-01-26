@@ -104,7 +104,7 @@ export const updatePresence = (clientInstance) => {
   let activityIndex = 0;
   const activities = [
     {
-      name: "⚡ Kenium 4.9.1 ⚡",
+      name: "⚡ Kenium 4.9.2 ⚡",
       type: 1,
       url: "https://www.youtube.com/watch?v=tSFp2ESLxyU",
     },
@@ -199,7 +199,7 @@ aqua.on("trackStart", async (player, track, payload) => {
     state.lastVoiceStatusUpdate = now;
     const title = track.info?.title || track.title;
     if (title) {
-      const status = `⭐ ${_functions.truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.9.1`;
+      const status = `⭐ ${_functions.truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.9.2`;
       client.channels
         .setVoiceStatus(player.voiceChannel, status)
         .catch(() => {});

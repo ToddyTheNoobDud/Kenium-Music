@@ -96,12 +96,18 @@ class SQLiteCollection extends EventEmitter {
   private readonly stmtCache = new Map<string, any>();
   private readonly txRunner: null | ((fn: () => any) => any);
 
+
   private _insert?: any;
   private _byId?: any;
   private _updateById?: any;
   private _deleteById?: any;
   private _countAll?: any;
   private _createdAtById?: any;
+
+  private _findAll?: any;
+  private _deleteAll?: any;
+
+  private readonly fieldStmtCache = new Map<string, any>();
 
   public get tableName() {
     return this.table;
@@ -602,6 +608,12 @@ class SQLiteCollection extends EventEmitter {
     _functions.finalize(this._countAll);
     _functions.finalize(this._createdAtById);
 
+    _functions.finalize(this._findAll);
+    _functions.finalize(this._deleteAll);
+
+    for (const stmt of this.fieldStmtCache.values()) _functions.finalize(stmt);
+    this.fieldStmtCache.clear();
+
     for (const stmt of this.stmtCache.values()) _functions.finalize(stmt);
     this.stmtCache.clear();
     this.removeAllListeners();
@@ -612,6 +624,12 @@ export class SimpleDB extends EventEmitter {
   private readonly db: any;
   private readonly collections = new Map<string, SQLiteCollection>();
   private readonly cacheSize: number;
+
+  private _checkpointStmt?: any;
+  private _vacuumStmt?: any;
+
+  private checkpointTimer: NodeJS.Timeout | null = null;
+  private static readonly CHECKPOINT_INTERVAL_MS = 120000; // 2 minutes
 
   constructor(options: SimpleDBOptions = {}) {
     super();
@@ -636,6 +654,26 @@ export class SimpleDB extends EventEmitter {
       "journal_size_limit = 5242880",
       "auto_vacuum = INCREMENTAL",
     ]);
+
+    this._checkpointStmt = this.db.prepare("PRAGMA wal_checkpoint(PASSIVE)");
+    this.startCheckpointTimer();
+  }
+
+  private startCheckpointTimer(): void {
+    if (this.checkpointTimer) return;
+
+    this.checkpointTimer = setInterval(() => {
+      this.checkpointPassive();
+    }, SimpleDB.CHECKPOINT_INTERVAL_MS);
+
+    (this.checkpointTimer as any)?.unref?.();
+  }
+
+  private stopCheckpointTimer(): void {
+    if (this.checkpointTimer) {
+      clearInterval(this.checkpointTimer);
+      this.checkpointTimer = null;
+    }
   }
 
   collection(name: string): SQLiteCollection {
@@ -656,9 +694,20 @@ export class SimpleDB extends EventEmitter {
 
   vacuum(): void {
     try {
+      this.stopCheckpointTimer();
       this.db.prepare("VACUUM").run();
     } catch (err) {
       console.error("[SimpleDB] Vacuum failed:", err);
+    } finally {
+      this.startCheckpointTimer();
+    }
+  }
+
+  checkpointPassive(): void {
+    try {
+      this._checkpointStmt?.run();
+    } catch (err) {
+      console.error("[SimpleDB] Passive checkpoint failed:", err);
     }
   }
 
@@ -671,8 +720,18 @@ export class SimpleDB extends EventEmitter {
   }
 
   close(): void {
+    this.stopCheckpointTimer();
+
+    try {
+      this.checkpoint();
+    } catch {}
+
     for (const col of this.collections.values()) col.destroy();
     this.collections.clear();
+
+    _functions.finalize(this._checkpointStmt);
+    _functions.finalize(this._vacuumStmt);
+
     try {
       this.db.close();
     } catch {}

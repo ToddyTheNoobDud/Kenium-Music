@@ -47,7 +47,6 @@ const _functions = {
 		}
 	},
 
-	// Improved concurrent track resolution with better error handling
 	async resolveTracksConcurrently<T>(
 		items: T[],
 		limit: number,
@@ -58,12 +57,18 @@ const _functions = {
 
 		const cap = Math.min(limit > 0 ? limit : 1, len);
 		const results: (T | null)[] = new Array(len);
-		let currentIndex = 0;
+		let nextIndex = 0;
 
-		// Create worker functions that process items in order
+
+		const getNextIndex = (): number => {
+			const idx = nextIndex;
+			nextIndex += 1;
+			return idx;
+		};
+
 		const workers = Array.from({ length: cap }, async () => {
-			while (currentIndex < len) {
-				const idx = currentIndex++;
+			while (true) {
+				const idx = getNextIndex();
 				if (idx >= len) break;
 
 				try {
@@ -77,7 +82,6 @@ const _functions = {
 
 		await Promise.all(workers);
 
-		// Filter out null results and return valid tracks
 		return results.filter((result): result is T => result !== null);
 	},
 

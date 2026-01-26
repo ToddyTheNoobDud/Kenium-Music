@@ -58,7 +58,9 @@ class DatabaseManager {
 
   updateQueue = new Map<string, AnyDoc>();
   updateTimer: NodeJS.Timeout | null = null;
-  isProcessing = false;
+
+  private processingMutex: Promise<void> = Promise.resolve();
+  private isProcessingScheduled = false;
 
   consecutiveFailures = 0;
   maxFailuresBeforeDrop = 5;
@@ -88,8 +90,8 @@ class DatabaseManager {
     if (this.updateTimer) return;
 
     const timer = setTimeout(() => {
-      this.processBatchUpdates();
       this.updateTimer = null;
+      this.processBatchUpdates();
     }, BATCH_INTERVAL_MS);
 
     (timer as any)?.unref?.();
@@ -99,12 +101,16 @@ class DatabaseManager {
   processBatchUpdates() {
     if (this.updateQueue.size === 0) return;
 
-    if (this.isProcessing) {
-      this.scheduleBatch();
-      return;
-    }
+    // Use mutex to ensure only one batch processes at a time
+    this.processingMutex = this.processingMutex.then(() => {
+      return this._executeBatchUpdates();
+    }).catch((err) => {
+      console.error("Batch mutex error:", err);
+    });
+  }
 
-    this.isProcessing = true;
+  private _executeBatchUpdates() {
+    if (this.updateQueue.size === 0) return;
     const collection = this.getSettingsCollection();
 
     const batch = this.updateQueue;
@@ -185,8 +191,6 @@ class DatabaseManager {
       } else {
         setTimeout(() => this.scheduleBatch(), BATCH_INTERVAL_MS * 2);
       }
-    } finally {
-      this.isProcessing = false;
     }
   }
 

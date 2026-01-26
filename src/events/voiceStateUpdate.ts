@@ -97,7 +97,7 @@ const _functions = {
 
 class CircuitBreaker {
   failures = new Map<string, { count: number; lastAttempt: number }>();
-  maxFailures = 3;
+  maxFailures = 15;
   baseResetTime = 30000;
 
   canAttempt(guildId: string) {
@@ -273,6 +273,8 @@ class VoiceManager {
           this.breaker.recordResult(guildId, true);
         } catch {
           this.breaker.recordResult(guildId, false);
+          this.setState(guildId, STATE_IDLE);
+          this.scheduleRejoin(client, guildId, voiceId, textId);
         }
       })();
     }, REJOIN_DELAY);

@@ -19,44 +19,31 @@ const CONFIG = {
 		ISSUES_URL: "https://github.com/ToddyTheNoobDud/Kenium-Music/issues/new",
 	},
 	BOT: {
-		VERSION: "4.9.1",
+		VERSION: "4.9.2",
 		DEVELOPER: "mushroom0162",
 		CHANGELOG: `
 ### Added
-- Added all the missing translations from before
-- Added a new karaoke command
-- Added the ratelimited event
-- Added missing divider on grab and nowplaying
-- Added a embed to tell the user is not on a VC
+- Some missing translations / outdated translations
 
 ### Changed
 - Updated dependencies
-- Made the bot startup way faster
-- Improved the bot voice handling performance
-- Reworked the code style
-- Improved the lyrics/musixmatch speed on fetching
-- Full database rewrite
-  - The new implementation makes everything goes on a single instance, which should make everything WAY faster, and on a high-load thing can drop the memory usage by 80%
-  - All playlists command has been rewritten to use count and findOne methods, these remove the needs of fetching the entire playlist file, making it zero-memory overhead and 50% faster
-- Full playlists rewrite
-  - Rewritten most commands with atomic updates, meaning they will be way faster into fetching, editing, adding, creating and deleting
-- Changed the way buttons get checked, this makes it extremely fast to handle now
-- Changed the uptime on status command
+- Reworked all the playlists commands, now all of them are indexed by default, this should make everything faster
+- Reworked the entire database system, with indexing support & pure sqlite json, this improves the performance by a lot
+- Improved the cache hits on the database too, this should make everything faster for users who use the bot frequently
+- Made the /play command use less allocations by using more string methods
+- Reworked the karaoke command, now it uses timestamp based math, and reworked its UI
+- Optimized the interaction commands for playlists, it should give responses faster too.
+- Optimized the 24/7 command to reduce the db queries
+- Optimized bot startup to reduce the db queries, and improve the overall startup speed.
 
 ### Removed
 - Nothing
 
 ### Fixed
-- Fixed the autoResume system
-- Fixed some bugs related to player restoring / node is down when 24/7 is enabled
-- Fixed some memory leaks
-- Fixed Search Buttons
-- Fixed some race conditions with update batching (especially 24/7)
-- Fixed loop only showing disabled
-- Fixed playlist play not passing the right requester (long-standing bug lol)
-- Fixed typos on the TTS command
-- Fixed non-connected the nodes making reset the 24/7 database
-- Fixed 'th' not being added to the languages
+- Some memory leaks
+
+### For github users:
+- The database will auto-migrate to the new system, if you have any issues, please open an issue on github.
 `,
 	},
 	COLORS: {
