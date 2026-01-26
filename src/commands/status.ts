@@ -99,7 +99,7 @@ async function getBannerURL(client: any): Promise<string | null> {
 export default class statusCmds extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const { client } = ctx
-    await ctx.deferReply()
+    if (!ctx.deferred) await ctx.deferReply()
 
     const now = Date.now()
     if (now - CPU_CACHE.lastCheck > 5000) {
@@ -119,7 +119,7 @@ export default class statusCmds extends Command {
     })
 
     const activeNode = sortedNodes.find((node) => node.connected)
-    const { stats = {} } = activeNode || {}
+    const { stats = {} as any } = activeNode || {}
     const { playingPlayers = 0 } = stats
 
     const guilds = client.cache.guilds.values() || []

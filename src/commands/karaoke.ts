@@ -406,7 +406,7 @@ export default class KaraokeCommand extends Command {
   }
 
   public override async run(ctx: CommandContext): Promise<void> {
-    await ctx.deferReply()
+    if (!ctx.deferred) await ctx.deferReply()
 
     const lang = getContextLanguage(ctx)
     const t = ctx.t.get(lang)

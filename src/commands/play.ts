@@ -242,7 +242,7 @@ export default class Play extends Command {
 
     let player: any
     try {
-      await ctx.deferReply(true)
+      if (!ctx.deferred) await ctx.deferReply(true)
 
       const voice = await ctx.member.voice()
       if (!voice?.channelId) {
@@ -331,7 +331,7 @@ export default class Play extends Command {
     } catch (err: any) {
       if (err?.code === 10065) return
       try {
-        await ctx.editResponse({
+        await ctx.editOrReply({
           content: t.errors?.general || 'An error occurred. Please try again.'
         })
       } catch {}

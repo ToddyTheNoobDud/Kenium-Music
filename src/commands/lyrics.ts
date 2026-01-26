@@ -229,7 +229,7 @@ export default class LyricsCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const lang = getContextLanguage(ctx)
     const thele = ctx.t.get(lang)
-    await ctx.deferReply()
+    if (!ctx.deferred) await ctx.deferReply()
     const player = ctx.client.aqua.players.get(ctx.guildId)
 
     if (!player) {

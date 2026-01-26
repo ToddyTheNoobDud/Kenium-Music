@@ -165,7 +165,7 @@ export class PlayCommand extends SubCommand {
       )
     }
 
-    await ctx.deferReply(true)
+    if (!ctx.deferred) await ctx.deferReply(true)
 
     try {
       const player =

@@ -172,7 +172,7 @@ export class AddCommand extends SubCommand {
       })
     }
 
-    await ctx.deferReply(true)
+    if (!ctx.deferred) await ctx.deferReply(true)
 
     const timestamp = new Date().toISOString()
     const existingCanonical = new Set<string>()

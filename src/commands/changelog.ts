@@ -291,7 +291,7 @@ export default class Changelog extends Command {
     const thele = ctx.t.get(lang)
 
     try {
-      await ctx.deferReply(true)
+      if (!ctx.deferred) await ctx.deferReply(true)
 
       const commits = await fetchCommits()
 

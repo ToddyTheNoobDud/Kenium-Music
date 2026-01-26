@@ -342,13 +342,13 @@ async function handleShowQueue(
         { type: 10, content: thele.queue.tip }
       ]
     })
-    await ctx.write({ components: [emptyContainer], flags: EPHEMERAL_FLAG })
+    await ctx.editOrReply({ components: [emptyContainer], flags: EPHEMERAL_FLAG })
     return
   }
 
   const container = createQueueContainer(player, 1, thele)
   const { maxPages } = calcPagination(queueLength, 1)
-  const message = await ctx.write(
+  const message = await ctx.editOrReply(
     { components: [container], flags: EPHEMERAL_FLAG },
     true
   )
@@ -400,7 +400,7 @@ export default class QueueCommand extends Command {
     try {
       const player = ctx.client?.aqua?.players?.get(ctx.interaction.guildId)
       if (!player) {
-        await ctx.write({
+        await ctx.editOrReply({
           content: thele.queue.noActivePlayerFound,
           flags: EPHEMERAL_FLAG
         })
@@ -410,10 +410,12 @@ export default class QueueCommand extends Command {
       await handleShowQueue(ctx, player, thele)
     } catch (error: any) {
       if (error?.code === 10065) return
-      await ctx.write({
-        content: thele.queue.errorDisplayingQueue,
-        flags: EPHEMERAL_FLAG
-      })
+      try {
+        await ctx.editOrReply({
+          content: thele.queue.errorDisplayingQueue,
+          flags: EPHEMERAL_FLAG
+        })
+      } catch {}
     }
   }
 }

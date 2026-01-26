@@ -39,7 +39,7 @@ export default class TwentyFourSevenCommand extends Command {
         }
       }
 
-      await ctx.deferReply(true)
+      if (!ctx.deferred) await ctx.deferReply(true)
 
       // Only create/ensure player when enabling
       if (newEnabled) {
