@@ -52,7 +52,18 @@ const processGuild = async (client: any, settings: any) => {
     return
   }
 
-  const guild = await client.guilds.fetch(guildId).catch((err: any) => {
+  const guild = await client.guilds.fetch(guildId).catch(async (err: any) => {
+    if (
+      err?.code === 10004 ||
+      err?.body?.code === 10004 ||
+      err?.message?.includes('Unknown Guild')
+    ) {
+      client.logger.warn(
+        `[24/7] Guild ${guildId} is unknown/invalid (Code 10004). Removing from database.`
+      )
+      await disable247ForGuild(guildId, 'Unknown Guild 10004')
+      return null
+    }
     client.logger.error(`[24/7] Error fetching guild ${guildId}:`, err)
     return null
   })
