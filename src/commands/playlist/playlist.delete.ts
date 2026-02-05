@@ -59,10 +59,6 @@ export class DeleteCommand extends SubCommand {
       playlistsCollection.delete({ _id: playlist._id })
     })
 
-    const db = getDatabase()
-    db.vacuum()
-    db.checkpoint()
-
     const embed = createEmbed(
       'success',
       t.playlist?.delete?.deleted || 'Playlist Deleted',
