@@ -128,10 +128,18 @@ export function getSettingsCollection() {
 
   if (!_settingsIndexed) {
     try {
-      // Useful for startup scan:
-      collection.createIndex('twentyFourSevenEnabled')
+      const rawDb = collection.getDatabase()
+      const tableName = collection.getStats().tableName
 
-      // Optional/legacy; if you always use _id, this isn’t required:
+      rawDb
+        .prepare(
+          `CREATE INDEX IF NOT EXISTS idx_settings_247_enabled
+           ON "${tableName}"(json_extract(doc, '$.voiceChannelId'), json_extract(doc, '$.textChannelId'))
+           WHERE json_extract(doc, '$.twentyFourSevenEnabled') = 1`
+        )
+        .run()
+
+      collection.createIndex('twentyFourSevenEnabled')
       collection.createIndex('guildId')
 
       _settingsIndexed = true
