@@ -417,10 +417,6 @@ class SQLiteCollection extends EventEmitter {
         parts.push(`(${extract} = 0 OR ${extract} = 'false')`)
         continue
       }
-      if (value === false) {
-        parts.push(`${extract} = 0`)
-        continue
-      }
 
       if (value === null) {
         parts.push(`${extract} IS NULL`)
@@ -686,7 +682,9 @@ export class SimpleDB extends EventEmitter {
   private _vacuumStmt?: any
 
   private checkpointTimer: NodeJS.Timeout | null = null
+  private optimizeTimer: NodeJS.Timeout | null = null
   private static readonly CHECKPOINT_INTERVAL_MS = 120000 // 2 minutes
+  private static readonly OPTIMIZE_INTERVAL_MS = 24 * 60 * 60 * 1000 // Daily
 
   constructor(options: SimpleDBOptions = {}) {
     super()
@@ -714,6 +712,7 @@ export class SimpleDB extends EventEmitter {
 
     this._checkpointStmt = this.db.prepare('PRAGMA wal_checkpoint(PASSIVE)')
     this.startCheckpointTimer()
+    this.startOptimizeTimer()
   }
 
   private startCheckpointTimer(): void {
@@ -730,6 +729,31 @@ export class SimpleDB extends EventEmitter {
     if (this.checkpointTimer) {
       clearInterval(this.checkpointTimer)
       this.checkpointTimer = null
+    }
+  }
+
+  private startOptimizeTimer(): void {
+    if (this.optimizeTimer) return
+
+    setTimeout(() => {
+      try {
+        this.db.prepare('PRAGMA optimize').run()
+      } catch {}
+    }, 10000)?.unref?.()
+
+    this.optimizeTimer = setInterval(() => {
+      try {
+        this.db.prepare('PRAGMA optimize').run()
+      } catch {}
+    }, SimpleDB.OPTIMIZE_INTERVAL_MS)
+
+    ;(this.optimizeTimer as any)?.unref?.()
+  }
+
+  private stopOptimizeTimer(): void {
+    if (this.optimizeTimer) {
+      clearInterval(this.optimizeTimer)
+      this.optimizeTimer = null
     }
   }
 
@@ -778,6 +802,7 @@ export class SimpleDB extends EventEmitter {
 
   close(): void {
     this.stopCheckpointTimer()
+    this.stopOptimizeTimer()
 
     try {
       this.checkpoint()
