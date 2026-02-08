@@ -2,8 +2,8 @@ import {
   Command,
   type CommandContext,
   Declare,
-  Middlewares,
-  Embed
+  Embed,
+  Middlewares
 } from 'seyfert'
 import { getContextLanguage } from '../utils/i18n'
 
@@ -19,14 +19,18 @@ export default class roulettecmds extends Command {
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
 
-      const player = ctx.client.aqua.players.get(ctx.guildId!)
+      const guildId = ctx.guildId
+      if (!guildId) return
+
+      const player = ctx.client.aqua.players.get(guildId)
+      if (!player) return
 
       const queue = player?.queue
       if (!queue || queue.length === 0) {
         return ctx.write({
           embeds: [
             new Embed()
-              .setDescription('❌ ' + t.player.queueEmpty)
+              .setDescription(`❌ ${t.player.queueEmpty}`)
               .setColor(0xff0000)
           ],
           flags: 64
@@ -38,7 +42,7 @@ export default class roulettecmds extends Command {
 
       if (queue.splice) {
         queue.splice(randomIndex, 1)
-        queue.unshift(randomTrack)
+        queue.unshift(randomTrack as any)
       }
 
       if (player.playing || player.paused) {
@@ -69,7 +73,7 @@ export default class roulettecmds extends Command {
         ],
         flags: 64
       })
-    } catch (error) {
+    } catch (error: any) {
       console.error('Roulette command error:', error)
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
@@ -77,7 +81,7 @@ export default class roulettecmds extends Command {
       return ctx.write({
         embeds: [
           new Embed()
-            .setDescription('❌ ' + t.roulette.error)
+            .setDescription(`❌ ${t.roulette.error}`)
             .setColor(0xff0000)
         ],
         flags: 64

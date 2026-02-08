@@ -6,8 +6,8 @@ import {
   Declare,
   Middlewares
 } from 'seyfert'
-import { getContextLanguage } from '../utils/i18n'
 import { lru } from 'tiny-lru'
+import { getContextLanguage } from '../utils/i18n'
 
 const TRACKS_PER_PAGE = 5
 const MAX_DURATION_CACHE = 1000
@@ -313,7 +313,7 @@ async function handleQueueNavigation(
 
     const { maxPages } = calcPagination(getQueueLength(player?.queue), newPage)
     newPage = Math.min(newPage, maxPages)
-    queueViewState.set(messageId!, { page: newPage, maxPages })
+    queueViewState.set(messageId, { page: newPage, maxPages })
 
     const container = createQueueContainer(player, newPage, thele)
     await interaction.editOrReply({
@@ -342,7 +342,10 @@ async function handleShowQueue(
         { type: 10, content: thele.queue.tip }
       ]
     })
-    await ctx.editOrReply({ components: [emptyContainer], flags: EPHEMERAL_FLAG })
+    await ctx.editOrReply({
+      components: [emptyContainer],
+      flags: EPHEMERAL_FLAG
+    })
     return
   }
 
@@ -398,7 +401,7 @@ export default class QueueCommand extends Command {
     const lang = getContextLanguage(ctx)
     const thele = ctx.t.get(lang)
     try {
-      const player = ctx.client?.aqua?.players?.get(ctx.interaction.guildId)
+      const player = ctx.client?.aqua?.players?.get(ctx.interaction.guildId as string)
       if (!player) {
         await ctx.editOrReply({
           content: thele.queue.noActivePlayerFound,

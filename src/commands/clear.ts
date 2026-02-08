@@ -19,7 +19,11 @@ export default class clearcmds extends Command {
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
 
-      const player = client.aqua.players.get(ctx.guildId!)
+      const guildId = ctx.guildId
+      if (!guildId) return
+
+      const player = client.aqua.players.get(guildId)
+      if (!player) return
 
       if (player.queue.length === 0) {
         await ctx.editOrReply({
@@ -43,8 +47,8 @@ export default class clearcmds extends Command {
         ],
         flags: 64
       })
-    } catch (error) {
-      if (error.code === 10065) return
+    } catch (error: any) {
+      if (error?.code === 10065) return
     }
   }
 }

@@ -1,10 +1,10 @@
 import {
-  type CommandContext,
-  createIntegerOption,
-  createStringOption,
   Declare,
   Options,
-  SubCommand
+  SubCommand,
+  createIntegerOption,
+  createStringOption,
+  type CommandContext
 } from 'seyfert'
 import { ICONS } from '../../shared/constants'
 import {
@@ -14,10 +14,10 @@ import {
   handleTrackIndexAutocomplete
 } from '../../shared/utils'
 import {
-  getPlaylistsCollection,
-  getTracksCollection,
+  getDatabase,
   getPlaylistTracks,
-  getDatabase
+  getPlaylistsCollection,
+  getTracksCollection
 } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
 
@@ -26,13 +26,14 @@ const tracksCollection = getTracksCollection()
 
 @Declare({
   name: 'remove',
-  description: '➖ Remove a track from a playlist'
+  description: '❌ Remove a track from a playlist'
 })
+// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
 @Options({
   playlist: createStringOption({
     description: 'Playlist name',
     required: true,
-    autocomplete: async (interaction: any) => {
+    autocomplete: async (interaction) => {
       return handlePlaylistAutocomplete(interaction, playlistsCollection)
     }
   }),
@@ -40,11 +41,11 @@ const tracksCollection = getTracksCollection()
     description: 'Track number to remove',
     required: true,
     min_value: 1,
-    autocomplete: async (interaction: any) => {
+    autocomplete: async (interaction) => {
       return handleTrackIndexAutocomplete(interaction, playlistsCollection)
     }
   })
-})
+} as any)
 export class RemoveCommand extends SubCommand {
   async run(ctx: CommandContext) {
     const { playlist: playlistName, index } = ctx.options as {
@@ -97,7 +98,7 @@ export class RemoveCommand extends SubCommand {
     }
 
     // Fetch just the track at that index (Deterministic due to addedAt sort in getPlaylistTracks)
-    const tracks = getPlaylistTracks(playlist._id as string, {
+    const tracks = getPlaylistTracks(playlist._id, {
       limit: 1,
       skip: index - 1
     })
@@ -119,7 +120,8 @@ export class RemoveCommand extends SubCommand {
     const timestamp = new Date().toISOString()
     const newTotalDuration = Math.max(
       0,
-      ((playlist as any).totalDuration || 0) - (removedTrack.duration || 0)
+      (playlist.totalDuration || 0) -
+        (removedTrack.duration || 0)
     )
 
     // Use atomic operation with proper error handling
@@ -158,7 +160,7 @@ export class RemoveCommand extends SubCommand {
     const embed = createEmbed(
       'success',
       t.playlist?.remove?.removed || 'Track Removed',
-      undefined,
+      null,
       [
         {
           name: `${ICONS.remove} ${t.playlist?.remove?.removedTrack || 'Removed'}`,

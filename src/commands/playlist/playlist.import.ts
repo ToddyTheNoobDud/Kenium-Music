@@ -1,34 +1,21 @@
 import {
-  type CommandContext,
-  createAttachmentOption,
-  createStringOption,
   Declare,
   Embed,
   Options,
-  SubCommand
+  SubCommand,
+  createAttachmentOption,
+  createStringOption,
+  type Attachment,
+  type CommandContext
 } from 'seyfert'
+import type { Playlist, Track } from '../../shared/types'
 import {
+  getDatabase,
   getPlaylistsCollection,
-  getTracksCollection,
-  getDatabase
+  getTracksCollection
 } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
 
-// Schema validation for imported playlists
-interface ImportedPlaylist {
-  name: string
-  description?: string
-  tracks: Array<{
-    title: string
-    uri: string
-    author: string
-    duration: number
-    source?: string
-    identifier?: string
-  }>
-}
-
-// Modern Emoji Set
 const ICONS = {
   music: '🎵',
   tracks: '💿',
@@ -65,8 +52,8 @@ function createEmbed(
   }
 
   const embed = new Embed()
-    .setColor(colors[type] || colors.default)
-    .setTitle(`${icons[type] || icons.default} ${title}`)
+    .setColor((colors as any)[type] || colors.default)
+    .setTitle(`${(icons as any)[type] || icons.default} ${title}`)
     .setTimestamp()
     .setFooter({
       text: `${ICONS.tracks} Kenium Music • Playlist System`,
@@ -109,8 +96,9 @@ function determineSource(uri: string): string {
 
 @Declare({
   name: 'import',
-  description: '📥 Import a playlist'
+  description: '📥 Import a playlist from a JSON file'
 })
+// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
 @Options({
   file: createAttachmentOption({
     description: 'Playlist file to import',
@@ -120,17 +108,17 @@ function determineSource(uri: string): string {
     description: 'Custom playlist name (optional)',
     required: false
   })
-})
+} as any)
 export class ImportCommand extends SubCommand {
   async run(ctx: CommandContext) {
-    const { file: attachment } = ctx.options as { file: any }
+    const { file: attachment } = ctx.options as { file: Attachment }
     const { name: providedName } = ctx.options as { name: string }
     const userId = ctx.author.id
     const t = getContextTranslations(ctx)
 
     try {
       const response = await fetch(attachment.url)
-      const data = await response.json()
+      const data = (await response.json()) as any
 
       if (
         !data.name ||
@@ -150,7 +138,7 @@ export class ImportCommand extends SubCommand {
         })
       }
 
-      const validTracks = data.tracks.filter((track: any) => {
+      const validTracks = (data.tracks as any[]).filter((track: any) => {
         return (
           track &&
           typeof track.title === 'string' &&
@@ -203,7 +191,8 @@ export class ImportCommand extends SubCommand {
 
       try {
         getDatabase().transaction(() => {
-          const insertedPlaylist = playlistsCollection.insert({
+          const insertedPlaylist: Playlist = {
+            _id: `pl_${Math.random().toString(36).slice(2, 11)}_${Date.now()}`,
             userId,
             name: playlistName,
             description: data.description || 'Imported playlist',
@@ -212,9 +201,12 @@ export class ImportCommand extends SubCommand {
             playCount: 0,
             totalDuration: totalDuration,
             trackCount: validTracks.length
-          }) as any
+          }
 
-          const tracksToInsert = validTracks.map((track: any) => ({
+          playlistsCollection.insert(insertedPlaylist)
+
+          const tracksToInsert: Track[] = validTracks.map((track: any, i: number) => ({
+            _id: `tr_${Math.random().toString(36).slice(2, 11)}_${Date.now() + i}`,
             playlistId: insertedPlaylist._id,
             title: track.title,
             uri: track.uri,

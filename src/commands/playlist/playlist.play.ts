@@ -1,29 +1,34 @@
 import { Cooldown, CooldownType } from '@slipher/cooldown'
 import {
-  type CommandContext,
-  createBooleanOption,
-  createStringOption,
   Declare,
   Middlewares,
   Options,
-  SubCommand
+  SubCommand,
+  createBooleanOption,
+  createStringOption,
+  type CommandContext
 } from 'seyfert'
 import { ICONS } from '../../shared/constants'
+import type { Track } from '../../shared/types'
 import {
   createEmbed,
   formatDuration,
   handlePlaylistAutocomplete,
   shuffleArray
 } from '../../shared/utils'
-import { getContextTranslations } from '../../utils/i18n'
 import { getPlaylistsCollection, getTracksCollection } from '../../utils/db'
+import { getContextTranslations } from '../../utils/i18n'
 
 const playlistsCollection = getPlaylistsCollection()
 const tracksCollection = getTracksCollection()
 const MAX_RESOLVE_CONCURRENCY = 6
 
 const _functions = {
-  async resolveTrack(aqua: any, track: any, requester: any) {
+  async resolveTrack(
+    aqua: { resolve: (opts: any) => Promise<any> },
+    track: { uri?: string; source?: string; identifier?: string },
+    requester: { id: string; username: string }
+  ): Promise<Track | null> {
     const uri = track?.uri
     if (!uri) return null
 
@@ -48,7 +53,6 @@ const _functions = {
     }
   },
 
-  // Improved concurrent track resolution with better error handling
   async resolveTracksConcurrently<T>(
     items: T[],
     limit: number,
@@ -61,7 +65,6 @@ const _functions = {
     const results: (T | null)[] = new Array(len)
     let nextIndex = 0
 
-    // Synchronous function to get next index - atomic in Node.js single-threaded model
     const getNextIndex = (): number => {
       const idx = nextIndex
       nextIndex += 1
@@ -74,7 +77,10 @@ const _functions = {
         if (idx >= len) break
 
         try {
-          results[idx] = await fn(items[idx], idx)
+          const item = items[idx]
+          if (item !== undefined) {
+            results[idx] = await fn(item, idx)
+          }
         } catch (error) {
           console.error(`Track resolution failed for index ${idx}:`, error)
           results[idx] = null
@@ -87,7 +93,7 @@ const _functions = {
     return results.filter((result): result is T => result !== null)
   },
 
-  getChannelName(vc: any) {
+  getChannelName(vc: { channel: { name: string }; channelId: string }) {
     return vc?.channel?.name || vc?.channelId || 'Voice'
   },
 
@@ -103,19 +109,23 @@ const _functions = {
   }
 }
 
-@Declare({ name: 'play', description: '▶️ Play a playlist' })
+@Declare({
+  name: 'play',
+  description: '🎵 Play a playlist'
+})
+// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
 @Options({
   playlist: createStringOption({
-    description: 'Playlist name',
+    description: 'Playlist name to play',
     required: true,
-    autocomplete: (interaction: any) =>
+    autocomplete: async (interaction) =>
       handlePlaylistAutocomplete(interaction, playlistsCollection)
   }),
   shuffle: createBooleanOption({
-    description: 'Shuffle the playlist',
+    description: 'Whether to shuffle tracks before playing',
     required: false
   })
-})
+} as any)
 @Cooldown({ type: CooldownType.User, interval: 20000, uses: { default: 2 } })
 @Middlewares(['checkVoice'])
 export class PlayCommand extends SubCommand {
@@ -127,7 +137,6 @@ export class PlayCommand extends SubCommand {
 
     const tp = getContextTranslations(ctx).playlist?.play
 
-    // Your SimpleDB findOne() is synchronous; leaving this sync is correct.
     const playlistDb = playlistsCollection.findOne({
       userId: ctx.author.id,
       name: playlistName
@@ -169,11 +178,11 @@ export class PlayCommand extends SubCommand {
 
     try {
       const player =
-        ctx.client.aqua.players.get(ctx.guildId!) ??
+        ctx.client.aqua.players.get(ctx.guildId || '') ??
         ctx.client.aqua.createConnection({
-          guildId: ctx.guildId!,
+          guildId: ctx.guildId as string,
           voiceChannel: voiceState.channelId,
-          textChannel: ctx.channelId!,
+          textChannel: ctx.channelId,
           defaultVolume: 65,
           deaf: true
         })
@@ -203,13 +212,12 @@ export class PlayCommand extends SubCommand {
         playlistsCollection.update(
           { _id: playlistDb._id },
           {
-            playCount: ((playlistDb as any).playCount || 0) + 1,
+            playCount: (playlistDb.playCount || 0) + 1,
             lastPlayedAt: new Date().toISOString()
           }
         )
       } catch (dbError) {
         console.error('Database error updating playlist stats:', dbError)
-        // stats update should never block playback
       }
 
       if (!player.playing && !player.paused) player.play()
@@ -223,9 +231,7 @@ export class PlayCommand extends SubCommand {
             shuffle
               ? tp?.shuffling || 'Shuffling Playlist'
               : tp?.playing || 'Playing Playlist',
-            failedCount > 0
-              ? `\n\n⚠️ ${failedCount} track(s) could not be loaded`
-              : undefined,
+            failedCount > 0 ? `\n\n⚠️ ${failedCount} track(s) could not be loaded` : null,
             [
               {
                 name: `${ICONS.playlist} ${tp?.playlist || 'Playlist'}`,
@@ -239,12 +245,12 @@ export class PlayCommand extends SubCommand {
               },
               {
                 name: `${ICONS.duration} ${tp?.duration || 'Duration'}`,
-                value: formatDuration((playlistDb as any).totalDuration || 0),
+                value: formatDuration(playlistDb.totalDuration || 0),
                 inline: true
               },
               {
                 name: `${ICONS.music} ${tp?.channel || 'Channel'}`,
-                value: _functions.getChannelName(voiceState),
+                value: _functions.getChannelName(voiceState as { channel: { name: string }; channelId: string }),
                 inline: true
               },
               {

@@ -1,3 +1,4 @@
+import type { Player } from 'aqualink'
 import {
   Command,
   type CommandContext,
@@ -10,18 +11,20 @@ import {
 import { getContextLanguage } from '../utils/i18n'
 
 const createAutocompleteResults = (
-  queue: any[],
+  queue: { info: { title: string } }[],
   focused: string,
   includePosition = false
-): any[] => {
+): { name: string; value: number | string }[] => {
   if (!queue?.length) return []
 
-  const results: any[] = []
+  const results: { name: string; value: number | string }[] = []
   const focusedLower = focused.toLowerCase()
   const maxResults = 25
 
   for (let i = 0; i < queue.length && results.length < maxResults; i++) {
-    const { title } = queue[i].info
+    const item = queue[i]
+    if (!item?.info) continue
+    const { title } = item.info
     const titleLower = title.toLowerCase()
 
     if (focused && !titleLower.includes(focusedLower)) continue
@@ -51,11 +54,15 @@ const createAutocompleteResults = (
   name: createStringOption({
     description: 'The song to jump to',
     required: false,
-    autocomplete: async (interaction: any) => {
+    autocomplete: async (interaction) => {
       try {
-        const player = interaction.client.aqua.players.get(interaction.guildId!)
+        const player = interaction.client.aqua.players.get(interaction.guildId || '')
         const focused = interaction.getInput()?.toLowerCase() || ''
-        const results = createAutocompleteResults(player?.queue, focused, false)
+        const results = createAutocompleteResults(
+          (player?.queue as any) || [],
+          focused,
+          false
+        )
         return interaction.respond(results)
       } catch {
         return interaction.respond([])
@@ -65,18 +72,22 @@ const createAutocompleteResults = (
   position: createIntegerOption({
     description: 'The song number to jump to',
     required: false,
-    autocomplete: async (interaction: any) => {
+    autocomplete: async (interaction) => {
       try {
-        const player = interaction.client.aqua.players.get(interaction.guildId!)
+        const player = interaction.client.aqua.players.get(interaction.guildId || '')
         const focused = interaction.getInput()?.toLowerCase() || ''
-        const results = createAutocompleteResults(player?.queue, focused, true)
+        const results = createAutocompleteResults(
+          (player?.queue as any) || [],
+          focused,
+          true
+        )
         return interaction.respond(results)
       } catch {
         return interaction.respond([])
       }
     }
   })
-})
+} as any)
 @Declare({
   name: 'jump',
   description: 'Jump to a specific position or song in the queue'
@@ -85,11 +96,11 @@ export default class JumpCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const lang = getContextLanguage(ctx)
     const t = ctx.t.get(lang)
-    const player = ctx.client.aqua.players.get(ctx.guildId!)
+    const player = ctx.client.aqua.players.get(ctx.guildId || '')
 
     if (!player?.queue?.length) {
       await ctx.editOrReply({
-        content: t?.jump?.noSongsInQueue || 'No songs in queue',
+        content: (t as any).jump?.noSongsInQueue || 'No songs in queue',
         flags: 64
       })
       return
@@ -100,6 +111,7 @@ export default class JumpCommand extends Command {
       name?: string
     }
 
+    if (!player) return
     try {
       if (position !== undefined) {
         return await this.handlePositionJump(ctx, player, position, t)
@@ -111,12 +123,12 @@ export default class JumpCommand extends Command {
 
       await ctx.editOrReply({
         content:
-          t?.jump?.specifyPositionOrName ||
+          (t as any).jump?.specifyPositionOrName ||
           'Please specify either a position number or song name',
         flags: 64
       })
-    } catch (error: any) {
-      if (error?.code === 10065) return
+    } catch (error: unknown) {
+      if ((error as any)?.code === 10065) return
 
       console.error('Jump command error:', error)
       await ctx
@@ -130,15 +142,16 @@ export default class JumpCommand extends Command {
 
   private async handlePositionJump(
     ctx: CommandContext,
-    player: any,
+    player: Player,
     position: number,
+    // biome-ignore lint/suspicious/noExplicitAny: t is a dynamic translation object
     t: any
   ): Promise<void> {
     const queueLength = player.queue.length
 
     if (position < 1 || position > queueLength) {
       const errorMsg =
-        t.commands?.jump?.positionRange
+        (t as any).commands?.jump?.positionRange
           ?.replace('{min}', '1')
           ?.replace('{max}', queueLength.toString()) ||
         `Position must be between 1 and ${queueLength}`
@@ -153,7 +166,7 @@ export default class JumpCommand extends Command {
     if (position === 1) {
       await ctx.editOrReply({
         content:
-          t.commands?.jump?.alreadyAt?.replace('{position}', '1') ||
+          (t as any).commands?.jump?.alreadyAt?.replace('{position}', '1') ||
           'Already at position 1',
         flags: 64
       })
@@ -168,7 +181,7 @@ export default class JumpCommand extends Command {
     player.stop()
 
     const successMsg =
-      t.commands?.jump?.jumpedTo?.replace('{position}', position.toString()) ||
+      (t as any).commands?.jump?.jumpedTo?.replace('{position}', position.toString()) ||
       `Jumped to song ${position}`
 
     await ctx.editOrReply({ content: successMsg, flags: 64 })
@@ -176,17 +189,18 @@ export default class JumpCommand extends Command {
 
   private async handleNameJump(
     ctx: CommandContext,
-    player: any,
+    player: Player,
     name: string,
+    // biome-ignore lint/suspicious/noExplicitAny: t is a dynamic translation object
     t: any
   ): Promise<void> {
     const songIndex = player.queue.findIndex(
-      (song: any) => song.info.title === name
+      (song: { info: { title: string } }) => song.info.title === name
     )
 
     if (songIndex === -1) {
       const errorMsg =
-        t.commands?.jump?.songNotFound?.replace('{name}', name) ||
+        (t as any).commands?.jump?.songNotFound?.replace('{name}', name) ||
         `Couldn't find "${name}" in the queue`
 
       await ctx.editOrReply({
@@ -198,7 +212,7 @@ export default class JumpCommand extends Command {
 
     if (songIndex === 0) {
       const alreadyPlayingMsg =
-        t.commands?.jump?.alreadyPlaying?.replace('{name}', name) ||
+        (t as any).commands?.jump?.alreadyPlaying?.replace('{name}', name) ||
         `"${name}" is already playing`
 
       await ctx.editOrReply({
@@ -215,7 +229,7 @@ export default class JumpCommand extends Command {
     player.stop()
 
     const successMsg =
-      t.commands?.jump?.jumpedToSong?.replace('{name}', name) ||
+      (t as any).commands?.jump?.jumpedToSong?.replace('{name}', name) ||
       `Jumped to song "${name}"`
 
     await ctx.editOrReply({ content: successMsg, flags: 64 })

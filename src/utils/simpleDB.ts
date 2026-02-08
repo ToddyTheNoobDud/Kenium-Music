@@ -1,117 +1,177 @@
+import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { randomUUID } from 'node:crypto'
 
-const IS_BUN = !!(process as any).isBun
+type JsonPrimitive = string | number | boolean | null
+export type JsonValue = JsonPrimitive | JsonValue[] | { [k: string]: JsonValue }
 
-const Database: any = (() => {
+type QueryOps = Partial<{
+  $ne: JsonValue
+  $in: JsonValue[]
+  $nin: JsonValue[]
+  $gt: JsonPrimitive
+  $gte: JsonPrimitive
+  $lt: JsonPrimitive
+  $lte: JsonPrimitive
+}>
+type QueryValue = JsonValue | undefined | QueryOps
+type Query = Record<string, QueryValue>
+
+interface FindOptions {
+  limit?: number
+  skip?: number
+  sort?: Record<string, 1 | -1>
+  fields?: string[]
+}
+
+type Document = {
+  _id?: string
+  createdAt?: string
+  updatedAt?: string
+} & Record<string, JsonValue | undefined>
+
+interface AtomicUpdate {
+  $set?: Record<string, JsonValue>
+  $inc?: Record<string, number>
+  $push?: Record<string, JsonValue>
+  $pull?: Record<string, JsonValue>
+}
+
+interface SimpleDBOptions {
+  dbPath?: string
+  cacheSize?: number
+}
+
+
+type SQLiteRunResult = { changes: number }
+
+interface SQLiteStmt {
+  run(...params: unknown[]): SQLiteRunResult
+  get<T extends Record<string, unknown> = Record<string, unknown>>(
+    ...params: unknown[]
+  ): T | undefined
+  all<T extends Record<string, unknown> = Record<string, unknown>>(
+    ...params: unknown[]
+  ): T[]
+  finalize?: () => void
+}
+
+type TxRunner = <T>(fn: () => T) => T
+
+interface SQLiteDB {
+  prepare(sql: string): SQLiteStmt
+  close(): void
+
+  // better-sqlite3
+  pragma?: (p: string) => unknown
+  transaction?: (
+    fn: (fn: () => unknown) => unknown
+  ) => (fn: () => unknown) => unknown
+
+
+  run?: (sql: string) => unknown
+}
+
+type SQLiteCtor = new (path: string) => SQLiteDB
+
+const IS_BUN =
+  typeof (process as unknown as { isBun?: unknown }).isBun !== 'undefined'
+
+const DatabaseCtor: SQLiteCtor | null = (() => {
   try {
     if (IS_BUN) {
-      const m = require('bun:sqlite')
-      return m?.default || m
+      const m: unknown = require('bun:sqlite')
+      const ctor = (m as { default?: unknown })?.default ?? m
+      return ctor as SQLiteCtor
     }
-    return require('better-sqlite3')
+  } catch {}
+
+  try {
+    const m: unknown = require('better-sqlite3')
+    return m as SQLiteCtor
   } catch {
-    return require('better-sqlite3')
+    return null
   }
 })()
 
 const VALID_NAME = /^[A-Za-z0-9_]+$/
 const VALID_PATH = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/
 
-interface Query {
-  [key: string]: any
-}
-interface FindOptions {
-  limit?: number
-  skip?: number
-  sort?: { [key: string]: 1 | -1 }
-  fields?: string[]
-}
-interface Document {
-  _id?: string
-  createdAt?: string
-  updatedAt?: string
-  [key: string]: any
-}
-interface AtomicUpdate {
-  $set?: Record<string, any>
-  $inc?: Record<string, number>
-  $push?: Record<string, any>
-  $pull?: Record<string, any>
-}
-interface SimpleDBOptions {
-  dbPath?: string
-  cacheSize?: number
-}
-
 const _functions = {
   now: () => new Date().toISOString(),
-  isPlainObject: (v: any) => !!v && typeof v === 'object' && !Array.isArray(v),
+
+  isPlainObject: (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === 'object' && !Array.isArray(v),
+
   parseDoc: (raw: string): Document | null => {
     try {
-      const doc = JSON.parse(raw)
-      return doc && typeof doc === 'object' ? doc : null
+      const doc: unknown = JSON.parse(raw)
+      return _functions.isPlainObject(doc) ? (doc as Document) : null
     } catch {
       return null
     }
   },
+
   jsonPath: (key: string) => {
     if (!VALID_PATH.test(key)) throw new Error(`Invalid field path: ${key}`)
     return `$.${key}`
   },
-  finalize: (stmt: any) => {
+
+  finalize: (stmt: SQLiteStmt | undefined) => {
     try {
-      if (stmt && typeof stmt.finalize === 'function') stmt.finalize()
+      stmt?.finalize?.()
     } catch {}
   },
-  makeTxRunner: (db: any) => {
+
+  makeTxRunner: (db: SQLiteDB): TxRunner | null => {
     try {
-      if (db && typeof db.transaction === 'function')
-        return db.transaction((fn: any) => fn())
+      if (typeof db.transaction === 'function') {
+        const wrapped = db.transaction((fn: () => unknown) => fn())
+        return <T>(fn: () => T) => wrapped(fn) as T
+      }
     } catch {}
-    return null as null | ((fn: () => any) => any)
+    return null
   },
-  runTx: <T>(runner: null | ((fn: () => T) => T), fn: () => T) =>
+
+  runTx: <T>(runner: TxRunner | null, fn: () => T) =>
     runner ? runner(fn) : fn(),
+
   ensureDirForFile: (filePath: string) => {
     try {
       mkdirSync(dirname(filePath), { recursive: true })
     } catch {}
   },
-  applyPragmas: (db: any, pragmas: string[]) => {
+
+  applyPragmas: (db: SQLiteDB, pragmas: string[]) => {
     for (const p of pragmas) {
       try {
-        if (IS_BUN) db.run(`PRAGMA ${p}`)
-        else db.pragma(p)
+        if (IS_BUN) db.run?.(`PRAGMA ${p}`)
+        else db.pragma?.(p)
       } catch {}
     }
   }
 }
 
-class SQLiteCollection extends EventEmitter {
-  private readonly db: any
+class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
+  private readonly db: SQLiteDB
   private readonly table: string
   private readonly qtable: string
   private readonly cacheSize: number
-  private readonly stmtCache = new Map<string, any>()
-  private readonly txRunner: null | ((fn: () => any) => any)
+  private readonly stmtCache = new Map<string, SQLiteStmt>()
+  private readonly txRunner: TxRunner | null
 
-  // Pre-compiled statements for core operations
-  private _insert?: any
-  private _byId?: any
-  private _updateById?: any
-  private _deleteById?: any
-  private _countAll?: any
-  private _createdAtById?: any
+  private _insert?: SQLiteStmt
+  private _byId?: SQLiteStmt
+  private _updateById?: SQLiteStmt
+  private _deleteById?: SQLiteStmt
+  private _countAll?: SQLiteStmt
+  private _createdAtById?: SQLiteStmt
 
-  // Pre-compiled statements for common query patterns
-  private _findAll?: any
-  private _deleteAll?: any
+  private _findAll?: SQLiteStmt
+  private _deleteAll?: SQLiteStmt
 
-  // Cache for field-specific prepared statements (playlistId, userId, etc.)
-  private readonly fieldStmtCache = new Map<string, any>()
+  private readonly fieldStmtCache = new Map<string, SQLiteStmt>()
 
   public get tableName() {
     return this.table
@@ -128,7 +188,7 @@ class SQLiteCollection extends EventEmitter {
     }
   }
 
-  constructor(db: any, name: string, cacheSize = 50) {
+  constructor(db: SQLiteDB, name: string, cacheSize = 50) {
     super()
     if (!VALID_NAME.test(name))
       throw new Error(`Invalid collection name: ${name}`)
@@ -163,8 +223,9 @@ class SQLiteCollection extends EventEmitter {
       .run()
   }
 
-  private get insertStmt() {
-    return (this._insert ??= this.db.prepare(`
+  private get insertStmt(): SQLiteStmt {
+    if (this._insert) return this._insert
+    this._insert = this.db.prepare(`
       INSERT INTO ${this.qtable} (_id, doc, createdAt, updatedAt)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(_id) DO UPDATE SET
@@ -174,37 +235,47 @@ class SQLiteCollection extends EventEmitter {
           '$.createdAt', ${this.qtable}.createdAt,
           '$.updatedAt', excluded.updatedAt
         )
-    `))
+    `)
+    return this._insert
   }
 
-  private get createdAtByIdStmt() {
-    return (this._createdAtById ??= this.db.prepare(
+  private get createdAtByIdStmt(): SQLiteStmt {
+    if (this._createdAtById) return this._createdAtById
+    this._createdAtById = this.db.prepare(
       `SELECT createdAt FROM ${this.qtable} WHERE _id = ?`
-    ))
+    )
+    return this._createdAtById
   }
 
-  private get byIdStmt() {
-    return (this._byId ??= this.db.prepare(
-      `SELECT doc FROM ${this.qtable} WHERE _id = ?`
-    ))
+  private get byIdStmt(): SQLiteStmt {
+    if (this._byId) return this._byId
+    this._byId = this.db.prepare(`SELECT doc FROM ${this.qtable} WHERE _id = ?`)
+    return this._byId
   }
-  private get updateStmt() {
-    return (this._updateById ??= this.db.prepare(
+
+  private get updateStmt(): SQLiteStmt {
+    if (this._updateById) return this._updateById
+    this._updateById = this.db.prepare(
       `UPDATE ${this.qtable} SET doc = ?, updatedAt = ? WHERE _id = ?`
-    ))
-  }
-  private get deleteStmt() {
-    return (this._deleteById ??= this.db.prepare(
-      `DELETE FROM ${this.qtable} WHERE _id = ?`
-    ))
-  }
-  private get countAllStmt() {
-    return (this._countAll ??= this.db.prepare(
-      `SELECT COUNT(*) AS c FROM ${this.qtable}`
-    ))
+    )
+    return this._updateById
   }
 
-  private getStmt(sql: string, cacheKey?: string): any {
+  private get deleteByIdStmt(): SQLiteStmt {
+    if (this._deleteById) return this._deleteById
+    this._deleteById = this.db.prepare(
+      `DELETE FROM ${this.qtable} WHERE _id = ?`
+    )
+    return this._deleteById
+  }
+
+  private get countAllStmt(): SQLiteStmt {
+    if (this._countAll) return this._countAll
+    this._countAll = this.db.prepare(`SELECT COUNT(*) AS c FROM ${this.qtable}`)
+    return this._countAll
+  }
+
+  private getStmt(sql: string, cacheKey?: string): SQLiteStmt {
     if (!cacheKey || this.cacheSize === 0) return this.db.prepare(sql)
 
     const hit = this.stmtCache.get(cacheKey)
@@ -228,9 +299,9 @@ class SQLiteCollection extends EventEmitter {
     return stmt
   }
 
-  private buildWhere(query: Query): { sql: string; params: any[] } {
+  private buildWhere(query: Query): { sql: string; params: unknown[] } {
     const parts: string[] = []
-    const params: any[] = []
+    const params: unknown[] = []
 
     for (const [key, value] of Object.entries(query)) {
       if (key === '_id') {
@@ -240,12 +311,13 @@ class SQLiteCollection extends EventEmitter {
         }
 
         if (_functions.isPlainObject(value)) {
-          for (const [op, opVal] of Object.entries(value)) {
+          for (const [op, opVal] of Object.entries(
+            value as Record<string, unknown>
+          )) {
             switch (op) {
               case '$ne':
-                if (opVal === null) {
-                  parts.push(`_id IS NOT NULL`)
-                } else {
+                if (opVal === null) parts.push(`_id IS NOT NULL`)
+                else {
                   parts.push(`_id != ?`)
                   params.push(opVal)
                 }
@@ -285,9 +357,8 @@ class SQLiteCollection extends EventEmitter {
             }
           }
         } else {
-          if (value === null) {
-            parts.push(`_id IS NULL`)
-          } else {
+          if (value === null) parts.push(`_id IS NULL`)
+          else {
             parts.push(`_id = ?`)
             params.push(value)
           }
@@ -304,7 +375,9 @@ class SQLiteCollection extends EventEmitter {
         }
 
         if (_functions.isPlainObject(value)) {
-          for (const [op, opVal] of Object.entries(value)) {
+          for (const [op, opVal] of Object.entries(
+            value as Record<string, unknown>
+          )) {
             switch (op) {
               case '$gt':
                 parts.push(`${col} > ?`)
@@ -323,9 +396,8 @@ class SQLiteCollection extends EventEmitter {
                 params.push(opVal)
                 break
               case '$ne':
-                if (opVal === null) {
-                  parts.push(`${col} IS NOT NULL`)
-                } else {
+                if (opVal === null) parts.push(`${col} IS NOT NULL`)
+                else {
                   parts.push(`${col} != ?`)
                   params.push(opVal)
                 }
@@ -346,9 +418,8 @@ class SQLiteCollection extends EventEmitter {
             }
           }
         } else {
-          if (value === null) {
-            parts.push(`${col} IS NULL`)
-          } else {
+          if (value === null) parts.push(`${col} IS NULL`)
+          else {
             parts.push(`${col} = ?`)
             params.push(value)
           }
@@ -365,7 +436,9 @@ class SQLiteCollection extends EventEmitter {
       }
 
       if (_functions.isPlainObject(value)) {
-        for (const [op, opVal] of Object.entries(value)) {
+        for (const [op, opVal] of Object.entries(
+          value as Record<string, unknown>
+        )) {
           switch (op) {
             case '$gt':
               parts.push(`${extract} > ?`)
@@ -384,9 +457,8 @@ class SQLiteCollection extends EventEmitter {
               params.push(opVal)
               break
             case '$ne':
-              if (opVal === null) {
-                parts.push(`${extract} IS NOT NULL`)
-              } else {
+              if (opVal === null) parts.push(`${extract} IS NOT NULL`)
+              else {
                 parts.push(`${extract} != ?`)
                 params.push(opVal)
               }
@@ -418,11 +490,6 @@ class SQLiteCollection extends EventEmitter {
         continue
       }
 
-      if (value === null) {
-        parts.push(`${extract} IS NULL`)
-        continue
-      }
-
       parts.push(`${extract} = ?`)
       params.push(value)
     }
@@ -430,25 +497,26 @@ class SQLiteCollection extends EventEmitter {
     return { sql: parts.length ? parts.join(' AND ') : '1=1', params }
   }
 
-  insert(docs: Document | Document[]): Document | Document[] {
+  insert(docs: T | T[]): (T & Required<Document>) | (T & Required<Document>)[] {
     const isArray = Array.isArray(docs)
     const items = isArray ? docs : [docs]
     const now = _functions.now()
-    const result: Document[] = []
+    const result: (T & Required<Document>)[] = []
 
     _functions.runTx(this.txRunner, () => {
       for (const doc of items) {
-        const _id = doc._id || randomUUID()
+        const _id = (doc as any)._id || randomUUID()
 
-        const shouldLookupCreatedAt = !!doc._id && !doc.createdAt
-        const existing = shouldLookupCreatedAt
-          ? this.createdAtByIdStmt.get(doc._id)
-          : null
+        const shouldLookupCreatedAt = !!(doc as any)._id && !(doc as any).createdAt
+        const existing =
+          shouldLookupCreatedAt && (doc as any)._id
+            ? this.createdAtByIdStmt.get<{ createdAt: string }>((doc as any)._id)
+            : undefined
 
-        const createdAt = doc.createdAt || existing?.createdAt || now
-        const updatedAt = doc.updatedAt || now
+        const createdAt = (doc as any).createdAt || existing?.createdAt || now
+        const updatedAt = (doc as any).updatedAt || now
 
-        const full: Document = {
+        const full: T & Required<Document> = {
           ...doc,
           _id,
           createdAt,
@@ -465,12 +533,14 @@ class SQLiteCollection extends EventEmitter {
       }
     })
 
-    this.emit('change', 'insert', isArray ? result : result[0])
-
-    return isArray ? result : result[0]
+    const changeData = isArray ? result : result[0]
+    if (changeData) {
+      this.emit('change', 'insert', changeData)
+    }
+    return isArray ? result : (result[0] as any)
   }
 
-  find(query: Query = {}, opts: FindOptions = {}): Document[] {
+  find(query: Query = {}, opts: FindOptions = {}): (T & Required<Document>)[] {
     const { sql, params } = this.buildWhere(query)
     let querySql = `SELECT doc FROM ${this.qtable} WHERE ${sql}`
 
@@ -500,48 +570,60 @@ class SQLiteCollection extends EventEmitter {
     }
 
     const cacheKey = this.cacheSize ? `find:${querySql}` : undefined
-    const rows = this.getStmt(querySql, cacheKey).all(...params)
+    const rows = this.getStmt(querySql, cacheKey).all<{ doc: string }>(
+      ...params
+    )
 
     const fields = opts.fields?.length ? new Set(opts.fields) : null
-    const out: Document[] = []
+    const out: (T & Required<Document>)[] = []
 
     for (const row of rows) {
       const doc = _functions.parseDoc(row.doc)
       if (!doc) continue
 
       if (!fields) {
-        out.push(doc)
+        out.push(doc as T & Required<Document>)
         continue
       }
 
-      const proj: Document = { _id: doc._id }
-      for (const f of fields) if (Object.hasOwn(doc, f)) proj[f] = doc[f]
-      out.push(proj)
+      const proj: any = {}
+      if (doc._id) proj._id = doc._id
+      if (fields) {
+        for (const f of fields) if (Object.hasOwn(doc, f)) proj[f] = (doc as any)[f]
+      }
+      out.push(proj as T & Required<Document>)
     }
 
     return out
   }
 
-  findOne(query: Query = {}, opts?: FindOptions): Document | null {
+  findOne(query: Query = {}, opts?: FindOptions): (T & Required<Document>) | null {
     return this.find(query, { ...opts, limit: 1 })[0] ?? null
   }
 
-  findById(id: string): Document | null {
+  findById(id: string): (T & Required<Document>) | null {
     if (!id) return null
-
-    const row = this.byIdStmt.get(id)
-    const out = row ? _functions.parseDoc(row.doc) : null
-
-    return out
+    const row = this.byIdStmt.get<{ doc: string }>(id)
+    return row ? (_functions.parseDoc(row.doc) as T & Required<Document>) : null
   }
 
-  private updateWhere(query: Query, mut: (doc: Document) => Document): number {
+  deleteById(id: string): boolean {
+    if (!id) return false
+    const res = this.deleteByIdStmt.run(id)
+    if (res.changes > 0) this.emit('change', 'delete', { count: res.changes })
+    return res.changes > 0
+  }
+
+  private updateWhere(query: Query, mut: (doc: T & Required<Document>) => T & Required<Document>): number {
     if (!query || !Object.keys(query).length)
       throw new Error('Update query cannot be empty')
 
     const { sql, params } = this.buildWhere(query)
     const selSql = `SELECT _id, doc FROM ${this.qtable} WHERE ${sql}`
-    const rows = this.getStmt(selSql, `selupd:${selSql}`).all(...params)
+    const rows = this.getStmt(selSql, `selupd:${selSql}`).all<{
+      _id: string
+      doc: string
+    }>(...params)
     if (!rows.length) return 0
 
     const now = _functions.now()
@@ -551,60 +633,65 @@ class SQLiteCollection extends EventEmitter {
       for (const row of rows) {
         const doc = _functions.parseDoc(row.doc)
         if (!doc) continue
+
         const next = mut({
           ...doc,
           _id: row._id,
-          createdAt: doc.createdAt,
+          ...(doc.createdAt ? { createdAt: doc.createdAt } : {}),
           updatedAt: now
-        })
+        } as T & Required<Document>)
+
         this.updateStmt.run(JSON.stringify(next), now, row._id)
         changed++
       }
     })
 
     if (changed) this.emit('change', 'update', { count: changed })
-
     return changed
   }
 
-  update(query: Query, updates: Partial<Document>): number {
-    return this.updateWhere(query, (doc) => ({
-      ...doc,
-      ...updates,
-      _id: doc._id,
-      createdAt: doc.createdAt,
-      updatedAt: doc.updatedAt
-    }))
+  update(query: Query, updates: Partial<T>): number {
+    return this.updateWhere(query, (doc) => {
+      const next: T & Required<Document> = {
+        ...doc,
+        ...updates
+      }
+      if (doc._id) next._id = doc._id
+      if (doc.createdAt) next.createdAt = doc.createdAt
+      if (doc.updatedAt) next.updatedAt = doc.updatedAt
+      return next as T & Required<Document>
+    })
   }
 
   updateAtomic(query: Query, ops: AtomicUpdate): number {
     return this.updateWhere(query, (doc) => {
-      const next: Document = { ...doc }
+      const next: T & Required<Document> = { ...doc }
 
       if (ops.$set) Object.assign(next, ops.$set)
 
       if (ops.$inc) {
         for (const [k, v] of Object.entries(ops.$inc)) {
-          next[k] = (typeof next[k] === 'number' ? next[k] : 0) + v
+          (next as any)[k] = (typeof (next as any)[k] === 'number' ? ((next as any)[k] as number) : 0) + v
         }
       }
 
       if (ops.$push) {
         for (const [k, v] of Object.entries(ops.$push)) {
-          const cur = next[k]
-          if (!Array.isArray(cur)) next[k] = [v]
-          else cur.push(v)
+          const cur = (next as any)[k]
+          if (!Array.isArray(cur)) (next as any)[k] = [v]
+          else (cur as JsonValue[]).push(v)
         }
       }
 
       if (ops.$pull) {
         for (const [k, v] of Object.entries(ops.$pull)) {
-          const cur = next[k]
-          if (Array.isArray(cur)) next[k] = cur.filter((x: any) => x !== v)
+          const cur = (next as any)[k]
+          if (Array.isArray(cur))
+            (next as any)[k] = (cur as JsonValue[]).filter((x: JsonValue) => x !== v)
         }
       }
 
-      return next
+      return next as T & Required<Document>
     })
   }
 
@@ -617,16 +704,18 @@ class SQLiteCollection extends EventEmitter {
     const res = this.getStmt(delSql, `del:${delSql}`).run(...params)
 
     if (res.changes > 0) this.emit('change', 'delete', { count: res.changes })
-
     return res.changes
   }
 
   count(query: Query = {}): number {
-    if (!Object.keys(query).length) return this.countAllStmt.get()?.c || 0
+    if (!Object.keys(query).length)
+      return this.countAllStmt.get<{ c: number }>()?.c ?? 0
 
     const { sql, params } = this.buildWhere(query)
     const cSql = `SELECT COUNT(*) AS c FROM ${this.qtable} WHERE ${sql}`
-    return this.getStmt(cSql, `count:${cSql}`).get(...params)?.c || 0
+    return (
+      this.getStmt(cSql, `count:${cSql}`).get<{ c: number }>(...params)?.c ?? 0
+    )
   }
 
   createIndex(field: string, name?: string): void {
@@ -635,6 +724,7 @@ class SQLiteCollection extends EventEmitter {
     const idxName = name || `${this.table}_${safeField}_idx`
     if (!VALID_NAME.test(idxName))
       throw new Error(`Invalid index name: ${idxName}`)
+
     this.db
       .prepare(
         `CREATE INDEX IF NOT EXISTS "${idxName}" ON ${this.qtable}(json_extract(doc, '${path}'))`
@@ -644,12 +734,12 @@ class SQLiteCollection extends EventEmitter {
 
   getStats(): { documentCount: number; tableName: string } {
     return {
-      documentCount: this.countAllStmt.get()?.c || 0,
+      documentCount: this.countAllStmt.get<{ c: number }>()?.c ?? 0,
       tableName: this.table
     }
   }
 
-  getDatabase(): any {
+  getDatabase(): SQLiteDB {
     return this.db
   }
 
@@ -669,17 +759,18 @@ class SQLiteCollection extends EventEmitter {
 
     for (const stmt of this.stmtCache.values()) _functions.finalize(stmt)
     this.stmtCache.clear()
+
     this.removeAllListeners()
   }
 }
 
 export class SimpleDB extends EventEmitter {
-  private readonly db: any
-  private readonly collections = new Map<string, SQLiteCollection>()
+  private readonly db: SQLiteDB
+  private readonly collections = new Map<string, SQLiteCollection<any>>()
   private readonly cacheSize: number
 
-  private _checkpointStmt?: any
-  private _vacuumStmt?: any
+  private _checkpointStmt?: SQLiteStmt
+  private _vacuumStmt?: SQLiteStmt
 
   private checkpointTimer: NodeJS.Timeout | null = null
   private optimizeTimer: NodeJS.Timeout | null = null
@@ -689,6 +780,12 @@ export class SimpleDB extends EventEmitter {
   constructor(options: SimpleDBOptions = {}) {
     super()
 
+    if (!DatabaseCtor) {
+      throw new Error(
+        'No SQLite driver found. Install "better-sqlite3" or run on Bun with "bun:sqlite".'
+      )
+    }
+
     const defaultDir = join(process.cwd(), 'db')
     const dbPath = options.dbPath || join(defaultDir, 'sey.sqlite')
     this.cacheSize = options.cacheSize ?? 50
@@ -696,7 +793,7 @@ export class SimpleDB extends EventEmitter {
     mkdirSync(defaultDir, { recursive: true })
     _functions.ensureDirForFile(dbPath)
 
-    this.db = new Database(dbPath)
+    this.db = new DatabaseCtor(dbPath)
 
     _functions.applyPragmas(this.db, [
       'journal_mode = WAL',
@@ -722,7 +819,7 @@ export class SimpleDB extends EventEmitter {
       this.checkpointPassive()
     }, SimpleDB.CHECKPOINT_INTERVAL_MS)
 
-    ;(this.checkpointTimer as any)?.unref?.()
+    this.checkpointTimer.unref?.()
   }
 
   private stopCheckpointTimer(): void {
@@ -735,11 +832,14 @@ export class SimpleDB extends EventEmitter {
   private startOptimizeTimer(): void {
     if (this.optimizeTimer) return
 
-    setTimeout(() => {
+    const t = setTimeout(() => {
       try {
+        console.log('[SimpleDB] Database optimized')
         this.db.prepare('PRAGMA optimize').run()
       } catch {}
-    }, 10000)?.unref?.()
+    }, 10000)
+
+    t.unref?.()
 
     this.optimizeTimer = setInterval(() => {
       try {
@@ -747,7 +847,7 @@ export class SimpleDB extends EventEmitter {
       } catch {}
     }, SimpleDB.OPTIMIZE_INTERVAL_MS)
 
-    ;(this.optimizeTimer as any)?.unref?.()
+    this.optimizeTimer.unref?.()
   }
 
   private stopOptimizeTimer(): void {
@@ -757,11 +857,11 @@ export class SimpleDB extends EventEmitter {
     }
   }
 
-  collection(name: string): SQLiteCollection {
+  collection<T extends Record<string, any>>(name: string): SQLiteCollection<T> {
     const existing = this.collections.get(name)
-    if (existing) return existing
+    if (existing) return existing as any
 
-    const col = new SQLiteCollection(this.db, name, this.cacheSize)
+    const col = new SQLiteCollection<T>(this.db, name, this.cacheSize)
     col.on('change', (...args) => this.emit('change', ...args))
     col.on('error', (err) => this.emit('error', err))
     this.collections.set(name, col)

@@ -15,6 +15,13 @@ export default createEvent({
         player.connection._lastVoiceDataUpdate = 0
       }
 
+      if (player.nowPlayingMessage) {
+        client.messages.fetch(
+          player.nowPlayingMessage.channelId,
+          player.textChannel
+        )
+      }
+
       player.send({
         guild_id: player.guildId,
         channel_id: vcId,
@@ -22,16 +29,15 @@ export default createEvent({
         self_mute: player.mute
       })
 
-      if (player.nowPlayingMessage) {
-        client.messages.fetch(player.nowPlayingMessage.channelId, player.textChannel)
-      }
-
-      const t: any = setTimeout(() => {
+      const t: NodeJS.Timeout = setTimeout(() => {
         if (player.destroyed) return
         const conn = player.connection
         if (!conn) return
 
-        if (!conn._lastVoiceDataUpdate || Date.now() - conn._lastVoiceDataUpdate > 2500) {
+        if (
+          !conn._lastVoiceDataUpdate ||
+          Date.now() - conn._lastVoiceDataUpdate > 2500
+        ) {
           player.send({
             guild_id: player.guildId,
             channel_id: null,
@@ -40,7 +46,12 @@ export default createEvent({
           })
           setTimeout(() => {
             if (player.destroyed) return
-            player.connect({ guildId: player.guildId, voiceChannel: vcId, deaf: player.deaf, mute: player.mute })
+            player.connect({
+              guildId: player.guildId,
+              voiceChannel: vcId,
+              deaf: player.deaf,
+              mute: player.mute
+            })
           }, 250)
         }
       }, 2500)

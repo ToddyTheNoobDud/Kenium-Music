@@ -19,7 +19,7 @@ class MxmApiError extends Error {
     super(hint || `Musixmatch API error ${code}`)
     this.name = 'MxmApiError'
     this.code = code
-    this.hint = hint
+    if (hint !== undefined) this.hint = hint
   }
 }
 
@@ -40,7 +40,7 @@ const BRACKET_JUNK =
   /\s*\[([^\]]*(?:official|lyrics?|video|audio|mv|visualizer|color\s*coded|hd|4k)[^\]]*)\]/gi
 const SEPARATORS = [' - ', ' – ', ' — ', ' ~ ', '-']
 
-const DEFAULT_HEADERS: HeadersInit = Object.freeze({
+const DEFAULT_HEADERS: Record<string, string> = Object.freeze({
   accept: 'application/json',
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
   cookie:
@@ -59,7 +59,7 @@ const _functions = {
       lyrics: calls['track.lyrics.get']?.message?.body?.lyrics?.lyrics_body as
         | string
         | undefined,
-      track: calls['matcher.track.get']?.message?.body?.track,
+      track: calls['matcher.track.get']?.message?.body?.track as any,
       subtitles: calls['track.subtitles.get']?.message?.body?.subtitle_list?.[0]
         ?.subtitle?.subtitle_body as string | undefined
     }
@@ -159,7 +159,7 @@ export class Musixmatch {
       })
       if (!response.ok) throw new HttpError(response.status)
 
-      const data = await response.json()
+      const data = (await response.json()) as any
       const header = data?.message?.header
 
       if (header?.status_code !== 200) {

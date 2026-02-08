@@ -1,12 +1,13 @@
 import {
-  type CommandContext,
-  createStringOption,
   Declare,
   Options,
-  SubCommand
+  SubCommand,
+  createStringOption,
+  type CommandContext
 } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
 import { ICONS, LIMITS } from '../../shared/constants'
+import type { Playlist } from '../../shared/types'
 import { createButtons, createEmbed } from '../../shared/utils'
 import { getPlaylistsCollection } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
@@ -17,9 +18,10 @@ const playlistsCollection = getPlaylistsCollection()
   name: 'create',
   description: '🎧 Create a new playlist'
 })
+// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
 @Options({
   name: createStringOption({ description: 'Playlist name', required: true })
-})
+} as any)
 export class CreateCommand extends SubCommand {
   async run(ctx: CommandContext) {
     const { name } = ctx.options as { name: string }
@@ -42,7 +44,10 @@ export class CreateCommand extends SubCommand {
       })
     }
 
-    const existing = playlistsCollection.findOne({ userId, name })
+    const existing = playlistsCollection.findOne({
+      userId,
+      name
+    })
 
     if (existing) {
       return ctx.write({
@@ -79,7 +84,8 @@ export class CreateCommand extends SubCommand {
     }
 
     const timestamp = new Date().toISOString()
-    const playlist = {
+    const playlist: Playlist = {
+      _id: `pl_${Math.random().toString(36).slice(2, 11)}_${Date.now()}`,
       userId,
       name,
       createdAt: timestamp,
@@ -89,12 +95,12 @@ export class CreateCommand extends SubCommand {
       trackCount: 0
     }
 
-    playlistsCollection.insert(playlist)
+    playlistsCollection.insert(playlist as any)
 
     const embed = createEmbed(
       'success',
       t.playlist?.create?.created || 'Playlist Created',
-      undefined,
+      null,
       [
         {
           name: `${ICONS.playlist} ${t.playlist?.create?.name || 'Name'}`,

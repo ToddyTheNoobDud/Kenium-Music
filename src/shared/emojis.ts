@@ -2,7 +2,7 @@
 const BASE_COLOR = 0x100e09
 const BASE_STYLE = 1
 
-const createPlatform = (name, source, emoji, icon) =>
+const createPlatform = (name: any, source: any, emoji: any, icon: any) =>
   Object.freeze({
     name,
     source,

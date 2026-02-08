@@ -1,6 +1,11 @@
 import { getDatabase, getPlaylistsCollection, getTracksCollection } from './db'
 
-function tableExists(rawDb: any, tableName: string): boolean {
+interface RawSQLiteDB {
+  prepare(sql: string): any
+  backup?(path: string): Promise<void>
+}
+
+function tableExists(rawDb: RawSQLiteDB, tableName: string): boolean {
   try {
     return !!rawDb
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
@@ -12,7 +17,7 @@ function tableExists(rawDb: any, tableName: string): boolean {
 
 export async function migrateDatabase() {
   const db = getDatabase()
-  const rawDb = (db as any).db
+  const rawDb = (db as any).db as RawSQLiteDB
 
   let sourceTable = ''
   if (tableExists(rawDb, 'col_playlists')) {
@@ -78,7 +83,11 @@ export async function migrateDatabase() {
           lastPlayedAt: doc.lastPlayedAt || null,
           totalDuration:
             doc.totalDuration ||
-            tracks.reduce((sum: number, t: any) => sum + (t.duration || 0), 0),
+            tracks.reduce(
+              (sum: number, t: { duration?: number }) =>
+                sum + (t.duration || 0),
+              0
+            ),
           trackCount: tracks.length,
           lastModified: doc.lastModified || row.updatedAt || row.createdAt,
           createdAt: row.createdAt,
@@ -86,17 +95,31 @@ export async function migrateDatabase() {
         })
 
         if (tracks.length > 0) {
-          const tracksToInsert = tracks.map((track: any, index: number) => ({
-            playlistId: row._id,
-            title: track.title,
-            uri: track.uri,
-            author: track.author,
-            duration: track.duration || 0,
-            source: track.source || 'Unknown',
-            identifier: track.identifier || track.uri,
-            artworkUrl: track.artworkUrl || null,
-            addedAt: track.addedAt || row.createdAt
-          }))
+          const tracksToInsert = tracks.map(
+            (
+              track: {
+                title: string
+                uri: string
+                author: string
+                duration?: number
+                source?: string
+                identifier?: string
+                artworkUrl?: string | null
+                addedAt?: string
+              },
+              _index: number
+            ) => ({
+              playlistId: row._id,
+              title: track.title,
+              uri: track.uri,
+              author: track.author,
+              duration: track.duration || 0,
+              source: track.source || 'Unknown',
+              identifier: track.identifier || track.uri,
+              artworkUrl: track.artworkUrl || null,
+              addedAt: track.addedAt || row.createdAt
+            })
+          )
           tracksV2.insert(tracksToInsert)
         }
 

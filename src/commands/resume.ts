@@ -19,7 +19,8 @@ export default class resumecmds extends Command {
       const t = ctx.t.get(getContextLanguage(ctx))
       const { client } = ctx
 
-      const player = client.aqua.players.get(ctx.guildId!)
+      const player = client.aqua.players.get(String(ctx.guildId))
+      if (!player) return
 
       if (!player.paused) {
         await ctx.editOrReply({
@@ -41,8 +42,8 @@ export default class resumecmds extends Command {
         ],
         flags: 64
       })
-    } catch (error) {
-      if (error.code === 10065) return
+    } catch (error: any) {
+      if (error?.code === 10065) return
     }
   }
 }

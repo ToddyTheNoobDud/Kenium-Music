@@ -1,12 +1,12 @@
 import {
   Command,
   type CommandContext,
-  Declare,
-  Options,
   createStringOption,
-  LocalesT
+  Declare,
+  LocalesT,
+  Options
 } from 'seyfert'
-import { setGuildLang, getGuildLang } from '../utils/db_helper'
+import { getGuildLang, setGuildLang } from '../utils/db_helper'
 import { getContextLanguage } from '../utils/i18n'
 
 const LANGUAGE_NAMES = {
@@ -41,7 +41,7 @@ const options = {
       { name: 'Thai (TH)', value: 'th' }
     ]
   })
-}
+} as any
 
 const _functions = {
   getLangDisplayName: (lang: string): string =>
@@ -51,22 +51,22 @@ const _functions = {
     ctx: CommandContext<typeof options>,
     lang: string
   ): Promise<void> => {
-    if (getGuildLang(ctx.guildId!) === lang) {
+    if (getGuildLang(ctx.guildId || '') === lang) {
       const t = ctx.t.get(getContextLanguage(ctx))
       await ctx.editOrReply({
-        content: t.success?.settingAlradySet || 'Language already set',
+        content: (t as any).success?.settingAlradySet || 'Language already set',
         flags: 64
       })
       return
     }
-    const success = setGuildLang(ctx.guildId!, lang)
+    const success = setGuildLang(ctx.guildId || '', lang)
     const t = ctx.t.get(lang)
     const displayName = _functions.getLangDisplayName(lang)
     const successBool = success !== undefined && success !== null
     const content = successBool
-      ? t.success?.languageSet?.replace('{lang}', displayName) ||
+      ? (t as any).success?.languageSet?.replace('{lang}', displayName) ||
         `Language set to ${displayName}`
-      : t.errors?.databaseError || 'Failed to save settings'
+      : (t as any).errors?.databaseError || 'Failed to save settings'
 
     await ctx.editOrReply({ content, flags: 64 })
   }
@@ -92,7 +92,7 @@ export default class LanguageCommand extends Command {
     }
 
     try {
-      await _functions.handleLanguageSet(ctx, ctx.options.language)
+      await _functions.handleLanguageSet(ctx, (ctx.options as any).language)
     } catch (error) {
       console.error('Error in language command:', error)
       const currentLang = getContextLanguage(ctx)

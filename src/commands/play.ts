@@ -37,7 +37,7 @@ const _functions = {
 
   truncate(text: unknown, maxLength: number): string {
     const s = String(text ?? '')
-    return s.length <= maxLength ? s : s.slice(0, maxLength - 1) + '…'
+    return s.length <= maxLength ? s : `${s.slice(0, maxLength - 1)}…`
   },
 
   formatChoice(title: unknown, author?: unknown): string {
@@ -100,11 +100,11 @@ const _functions = {
         query,
         requester: interaction.user
       })
-      results = Array.isArray(res) ? res : res?.tracks || []
-      if (results.length) searchCache.set(key, results)
+      results = (Array.isArray(res) ? res : res?.tracks || []) as SearchResult[]
+      if (results?.length) searchCache.set(key, results)
     }
 
-    if (!results.length) return interaction.respond([])
+    if (!results || !results.length) return interaction.respond([])
 
     const choices: Array<{ name: string; value: string }> = []
     for (
@@ -194,6 +194,7 @@ const debounceTimers = new Map<string, NodeJS.Timeout>()
 const _cleanupTimers = (): void => {
   for (const timer of debounceTimers.values()) clearTimeout(timer)
   debounceTimers.clear()
+  searchCache.clear()
 }
 _functions.bindProcessCleanupOnce(_cleanupTimers)
 
@@ -232,10 +233,10 @@ const options = {
 }
 
 @Declare({ name: 'play', description: 'Play a song by search query or URL.' })
-@Options(options)
+@Options(options as any)
 @Middlewares(['checkVoice'])
 export default class Play extends Command {
-  async run(ctx: CommandContext): Promise<void> {
+  public override async run(ctx: CommandContext): Promise<void> {
     const { query } = ctx.options as { query: string }
     const lang = getContextLanguage(ctx)
     const t = ctx.t.get(lang)
@@ -244,7 +245,7 @@ export default class Play extends Command {
     try {
       if (!ctx.deferred) await ctx.deferReply(true)
 
-      const voice = await ctx.member.voice()
+      const voice = await (ctx.member as any).voice()
       if (!voice?.channelId) {
         await ctx.editResponse({
           content:
@@ -268,7 +269,7 @@ export default class Play extends Command {
       }
 
       player = ctx.client.aqua.createConnection({
-        guildId: ctx.guildId,
+        guildId: ctx.guildId as string,
         voiceChannel: voice.channelId,
         textChannel: ctx.channelId,
         deaf: true,

@@ -5,6 +5,7 @@ export default {
   ping: {
     description:
       '**Gateway**: {wsPing}ms\n**Shard**: {shardPing}ms\n**Reprodutor**: {playerPing}ms',
+    descriptionNoPlayer: '**Gateway**: {wsPing}ms\n**Shard**: {shardPing}ms',
     title: 'Informações de Ping'
   },
   language: {

@@ -1,8 +1,8 @@
 import process from 'node:process'
-import { lru } from 'tiny-lru'
 import { createEvent, Embed } from 'seyfert'
+import { lru } from 'tiny-lru'
+import { cleanupKaraokeSession, hasKaraokeSession } from '../commands/karaoke'
 import { getChannelIds, isTwentyFourSevenEnabled } from '../utils/db_helper'
-import { hasKaraokeSession, cleanupKaraokeSession } from '../commands/karaoke'
 
 const NO_SONG_TIMEOUT = 600000
 const REJOIN_DELAY = 5000
@@ -23,8 +23,8 @@ TRANSITIONS[STATE_DESTROYING] = STATE_REJOINING
 
 const _functions = {
   unrefTimeout(fn: () => void, delay: number) {
-    const t: any = setTimeout(fn, delay)
-    t?.unref?.()
+    const t = setTimeout(fn, delay)
+    if (typeof t.unref === 'function') t.unref()
     return t
   },
   clearTimer(timer: any) {
@@ -49,12 +49,12 @@ const _functions = {
       ? ([ids.voiceChannelId, ids.textChannelId] as const)
       : null
   },
-  async fetchGuild(cache: any, client: any, guildId: string) {
+  async fetchGuild(cache: any, client: any, guildId: string): Promise<any> {
     let guild = cache.get(guildId)
     if (guild) return guild
 
     guild = client.cache?.guilds?.get?.(guildId)
-    if (guild) return cache.set(guildId, guild), guild
+    if (guild) return cache.set(guildId, guild)
 
     try {
       guild = await client.guilds?.fetch?.(guildId)
@@ -64,7 +64,7 @@ const _functions = {
       return null
     }
   },
-  async getVoiceChannel(guild: any, channelId: string) {
+  async getVoiceChannel(guild: any, channelId: string): Promise<any> {
     let ch = guild.channels?.get?.(channelId)
     if (ch) return ch.type === 2 ? ch : null
     try {
@@ -74,7 +74,7 @@ const _functions = {
       return null
     }
   },
-  getBotVoiceChannelId(guild: any, botId: string) {
+  getBotVoiceChannelId(guild: any, botId: string): string | null {
     return (
       guild?.members?.me?.voice?.channelId ||
       guild?.members?.get?.(botId)?.voice?.channelId ||
@@ -82,7 +82,7 @@ const _functions = {
       null
     )
   },
-  countHumans(members: any) {
+  countHumans(members: any): number {
     if (!members) return 0
     let n = 0
     const it =
@@ -159,9 +159,10 @@ class VoiceManager {
     }, CLEANUP_INTERVAL)
   }
 
-  setState(guildId: string, newState: number) {
+  setState(guildId: string, newState: number): boolean {
     const current = this.states.get(guildId) ?? STATE_IDLE
-    if (!(TRANSITIONS[current] & newState)) return false
+    const allowed = TRANSITIONS[current] ?? 0
+    if (!(allowed & newState)) return false
     this.states.set(guildId, newState)
     return true
   }
@@ -227,14 +228,16 @@ class VoiceManager {
       }
     }
 
-    aqua?.on?.('trackStart', handlers.trackStart)
-    aqua?.on?.('queueEnd', handlers.queueEnd)
-    aqua?.on?.('playerDestroy', handlers.playerDestroy)
+    if (aqua?.on) {
+      aqua.on('trackStart', handlers.trackStart)
+      aqua.on('queueEnd', handlers.queueEnd)
+      aqua.on('playerDestroy', handlers.playerDestroy)
+    }
     client._voiceHandlers = handlers
   }
 
   handleUpdate(event: any, client: any) {
-    const guildId = event.guildId
+    const guildId = event.guildId as string
     if (!guildId) return
 
     const existing = this.pending.get(guildId)
@@ -251,7 +254,7 @@ class VoiceManager {
 
   processUpdate(event: any, client: any) {
     const { newState, oldState } = event
-    const guildId = event.guildId
+    const guildId = event.guildId as string
     if (!guildId || oldState?.channelId === newState?.channelId) return
 
     const player = client.aqua?.players?.get?.(guildId)
@@ -386,9 +389,9 @@ class VoiceManager {
             .setFooter({ text: 'Automatically destroying player' })
 
           try {
-            const msg = await client.messages.write(current.textChannel, {
+            const msg = (await client.messages.write(current.textChannel, {
               embeds: [embed]
-            })
+            })) as any
             if (msg)
               this.setTimeout(
                 `msg_${msg.id}`,
@@ -426,7 +429,7 @@ class VoiceManager {
   cleanup() {
     this.stopped = true
     for (const t of this.timeouts.values()) _functions.clearTimer(t)
-    for (const p of this.pending.values()) _functions.clearTimer(p.timer)
+    for (const p of (this.pending as any).values()) _functions.clearTimer(p.timer)
     _functions.clearTimer(this.cleanupTimer)
 
     this.timeouts.clear()

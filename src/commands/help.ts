@@ -1,8 +1,6 @@
 import { Command, type CommandContext, Container, Declare } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
 
-import { getContextLanguage } from '../utils/i18n'
-
 const COMMANDS_PER_PAGE = 9
 const EPHEMERAL_FLAG = 64 | 32768
 
@@ -11,8 +9,8 @@ const EPHEMERAL_FLAG = 64 | 32768
   description: 'Displays a list of available commands.'
 })
 export default class HelpCommand extends Command {
-  async run(ctx: CommandContext) {
-    const commands = Array.from(ctx.client.commands.values).sort((a, b) =>
+  public override async run(ctx: CommandContext) {
+    const commands = Array.from(ctx.client.commands.values).sort((a: any, b: any) =>
       a.name.localeCompare(b.name)
     )
 
@@ -40,7 +38,7 @@ export default class HelpCommand extends Command {
     )
 
     const collector = message.createComponentCollector({
-      filter: (i) => i.user.id === ctx.author.id && i.isButton(),
+      filter: (i: any) => i.user.id === ctx.author.id && i.isButton(),
       idle: 60_000,
       onStop: async () => {
         const disabled = this._buildContainer(
@@ -55,7 +53,7 @@ export default class HelpCommand extends Command {
       }
     })
 
-    collector.run('ignore_help_prev', async (i) => {
+    collector.run('ignore_help_prev', async (i: any) => {
       page = Math.max(page - 1, 0)
       const updated = this._buildContainer(
         commands,
@@ -67,7 +65,7 @@ export default class HelpCommand extends Command {
       await i.update({ components: [updated] })
     })
 
-    collector.run('ignore_help_next', async (i) => {
+    collector.run('ignore_help_next', async (i: any) => {
       page = Math.min(page + 1, totalPages - 1)
       const updated = this._buildContainer(
         commands,
@@ -81,7 +79,7 @@ export default class HelpCommand extends Command {
   }
 
   private _buildContainer(
-    commands: any[],
+    commands: unknown[],
     commandMap: Map<string, string>,
     page: number,
     totalPages: number,
@@ -92,10 +90,12 @@ export default class HelpCommand extends Command {
     const chunk = commands.slice(start, start + COMMANDS_PER_PAGE)
 
     const fieldValue = chunk
-      .map(
-        (cmd) =>
-          `</${cmd.name}:${commandMap.get(cmd.name) || 'unknown'}>: **${cmd.description}**`
-      )
+      .map((cmd) => {
+        const name = (cmd as { name: string }).name || 'Unknown'
+        const description =
+          (cmd as { description: string }).description || 'No description'
+        return `</${name}:${commandMap.get(name) || 'unknown'}>: **${description}**`
+      })
       .join('\n')
 
     return new Container({

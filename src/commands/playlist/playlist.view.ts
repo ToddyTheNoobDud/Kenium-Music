@@ -1,11 +1,11 @@
 import {
   ActionRow,
-  type CommandContext,
-  createStringOption,
   Declare,
   Options,
   StringSelectMenu,
-  SubCommand
+  SubCommand,
+  createStringOption,
+  type CommandContext
 } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
 import { ICONS, LIMITS } from '../../shared/constants'
@@ -16,11 +16,10 @@ import {
   formatDuration,
   handlePlaylistAutocomplete
 } from '../../shared/utils'
-import { getContextTranslations } from '../../utils/i18n'
 import {
   getPlaylistsCollection,
-  getTracksCollection,
-  getPlaylistTracks
+  getPlaylistTracks,
+  getTracksCollection
 } from '../../utils/db'
 
 const playlistsCollection = getPlaylistsCollection()
@@ -66,18 +65,18 @@ function getSourceIcon(uri: string): string {
   name: 'view',
   description: '🎧 View your playlists or a specific playlist'
 })
+// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
 @Options({
   playlist: createStringOption({
     description: 'Playlist name',
     required: true,
-    autocomplete: async (interaction: any) =>
+    autocomplete: async (interaction) =>
       handlePlaylistAutocomplete(interaction, playlistsCollection)
   })
-})
+} as any)
 export class ViewCommand extends SubCommand {
   async run(ctx: CommandContext) {
     const { playlist: playlistName } = ctx.options as { playlist?: string }
-    const t = getContextTranslations(ctx)
     const userId = ctx.author.id
 
     if (!playlistName) {
@@ -94,7 +93,8 @@ export class ViewCommand extends SubCommand {
             'totalDuration',
             'lastModified',
             'createdAt',
-            'playCount'
+            'playCount',
+            'trackCount'
           ]
         }
       )
@@ -126,7 +126,7 @@ export class ViewCommand extends SubCommand {
         'Your Playlists',
         `You have **${playlists.length}** playlist${playlists.length !== 1 ? 's' : ''}`
       )
-      playlists.slice(0, 10).forEach((p: any) => {
+      playlists.slice(0, 10).forEach((p) => {
         const duration = formatDuration(p.totalDuration || 0)
         const lastMod = new Date(
           p.lastModified || p.createdAt
@@ -142,7 +142,7 @@ export class ViewCommand extends SubCommand {
       const selectOptions = playlists.slice(0, 25).map((p) => ({
         label: p.name,
         value: p.name,
-        description: `${p.trackCount || 0} tracks • ${formatDuration((p as any).totalDuration || 0)}`,
+        description: `${p.trackCount || 0} tracks • ${formatDuration(p.totalDuration || 0)}`,
         emoji: ICONS.playlist
       }))
       const components =
@@ -189,7 +189,7 @@ export class ViewCommand extends SubCommand {
         [
           {
             name: `${ICONS.info} Description`,
-            value: (playlist as any).description || 'No description'
+            value: playlist.description || 'No description'
           }
         ]
       )
@@ -204,7 +204,7 @@ export class ViewCommand extends SubCommand {
     const startIdx = (page - 1) * pageSize
 
     // Only load the tracks for the current page to save memory
-    const tracks = getPlaylistTracks(playlist._id as string, {
+    const tracks = getPlaylistTracks(playlist._id, {
       limit: pageSize,
       skip: startIdx
     })
@@ -212,11 +212,11 @@ export class ViewCommand extends SubCommand {
     const embed = createEmbed(
       'primary',
       `${ICONS.playlist} ${playlistName}`,
-      undefined,
+      null,
       [
         {
           name: `${ICONS.info} Info`,
-          value: (playlist as any).description || 'No description',
+          value: playlist.description || 'No description',
           inline: false
         },
         {
@@ -226,19 +226,19 @@ export class ViewCommand extends SubCommand {
         },
         {
           name: `${ICONS.duration} Duration`,
-          value: formatDuration((playlist as any).totalDuration || 0),
+          value: formatDuration(playlist.totalDuration || 0),
           inline: true
         },
         {
           name: `${ICONS.info} Plays`,
-          value: String((playlist as any).playCount || 0),
+          value: String(playlist.playCount || 0),
           inline: true
         }
       ]
     )
 
     const trackList = tracks
-      .map((t: any, i: number) => {
+      .map((t, i) => {
         const pos = String(startIdx + i + 1).padStart(2, '0')
         const duration = formatDuration(t.duration || 0)
         const source = getSourceIcon(t.uri)
@@ -253,7 +253,8 @@ export class ViewCommand extends SubCommand {
         inline: false
       })
 
-    const firstVideoId = extractYouTubeId(tracks[0]?.uri)
+    const track = tracks[0]
+    const firstVideoId = extractYouTubeId(track?.uri || '')
     if (firstVideoId)
       embed.setThumbnail(
         `https://img.youtube.com/vi/${firstVideoId}/maxresdefault.jpg`

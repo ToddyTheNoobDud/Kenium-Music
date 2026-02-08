@@ -1,5 +1,6 @@
-import { SimpleDB } from './simpleDB'
 import { migrateDatabase } from './migration'
+import { SimpleDB } from './simpleDB'
+import type { Playlist, Track } from '../shared/types'
 
 let dbInstance: SimpleDB | null = null
 
@@ -11,7 +12,8 @@ let _playlistsIndexed = false
 let _tracksIndexed = false
 
 export function getDatabase(): SimpleDB {
-  return (dbInstance ??= new SimpleDB())
+  if (!dbInstance) dbInstance = new SimpleDB()
+  return dbInstance
 }
 
 export async function initDatabase(): Promise<void> {
@@ -44,7 +46,7 @@ export function closeDatabase(): void {
 
 export function getPlaylistsCollection() {
   const db = getDatabase()
-  const collection = db.collection('playlists_v2')
+  const collection = db.collection<Playlist>('playlists_v2')
 
   if (!_playlistsIndexed) {
     try {
@@ -74,7 +76,7 @@ export function getPlaylistsCollection() {
 
 export function getTracksCollection() {
   const db = getDatabase()
-  const collection = db.collection('tracks_v2')
+  const collection = db.collection<Track>('tracks_v2')
 
   if (!_tracksIndexed) {
     try {

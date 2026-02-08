@@ -1,8 +1,16 @@
-import { Command, type CommandContext, Declare, Embed, LocalesT } from 'seyfert'
+import {
+  Command,
+  type CommandContext,
+  Declare,
+  Embed,
+  LocalesT,
+  type UsingClient
+} from 'seyfert'
 import { getContextLanguage } from '../utils/i18n'
 
 const _functions = {
   createPingEmbed: (
+    // biome-ignore lint/suspicious/noExplicitAny: t is a dynamic translation object
     t: any,
     wsPing: number,
     shardPing: number,
@@ -25,11 +33,11 @@ const _functions = {
       .setTitle(t.ping.title)
       .setDescription(description)
       .setTimestamp()
-      .setFooter({ text: `Shard ${shardId}`, iconUrl: avatarURL })
+      .setFooter({ text: `Shard ${shardId}`, ...(avatarURL ? { iconUrl: avatarURL } : {}) })
   },
 
-  getPlayerPing: (client: any, guildId: string): number => {
-    const player = client.aqua.players.get(guildId)
+  getPlayerPing: (client: UsingClient, guildId: string): number => {
+    const player = client.aqua.players.get(guildId || '')
     return player ? Math.floor(player.ping) : 0
   }
 }
@@ -52,7 +60,7 @@ export default class PingCommand extends Command {
       const shardPing = Math.floor(
         (await client.gateway.get(ctx.shardId)?.ping()) ?? 0
       )
-      const playerPing = _functions.getPlayerPing(client, ctx.guildId)
+      const playerPing = _functions.getPlayerPing(client, ctx.guildId || '')
 
       const embed = _functions.createPingEmbed(
         t,
@@ -64,8 +72,9 @@ export default class PingCommand extends Command {
       )
 
       await ctx.write({ embeds: [embed] })
-    } catch (error: any) {
-      if (error.code !== 10065) {
+    } catch (error) {
+      const err = error as { code?: number }
+      if (err.code !== 10065) {
         const t = ctx.t.get('en')
         await ctx.write({
           content: t.errors?.general || 'An error occurred',

@@ -1,7 +1,20 @@
-import { getDatabase } from './db'
 import { lru } from 'tiny-lru'
+import { getDatabase } from './db'
 
-const toBool = (v: any) => v === true || v === 1 || v === '1' || v === 'true'
+const toBool = (v: any): v is true | 1 | '1' | 'true' =>
+  v === true || v === 1 || v === '1' || v === 'true'
+
+export interface GuildSettings {
+  _id: string
+  guildId: string
+  twentyFourSevenEnabled: boolean
+  voiceChannelId: string | null
+  textChannelId: string | null
+  lang: string
+  last247DisableReason?: string
+  createdAt?: string
+  updatedAt?: string
+}
 
 export class DatabaseError extends Error {
   constructor(message: string, cause?: unknown) {
@@ -49,7 +62,7 @@ export const _functions = {
   isValidGuildId: (guildId: string) => GUILD_ID_RE.test(guildId),
   isValidLang: (lang: string) => SUPPORTED_LANGS.has(lang),
 
-  createDefaultSettings: (guildId: string) => ({
+  createDefaultSettings: (guildId: string): GuildSettings => ({
     _id: guildId, // IMPORTANT: _id === guildId
     guildId,
     twentyFourSevenEnabled: false,
@@ -59,26 +72,28 @@ export const _functions = {
   })
 }
 
-type AnyDoc = Record<string, any>
+
 
 class DatabaseManager {
   static instance: DatabaseManager | null = null
 
   settingsCollection: any = null
 
-  cache = lru(CACHE_MAX, CACHE_TTL_MS, true)
+  cache = lru<GuildSettings>(CACHE_MAX, CACHE_TTL_MS, true)
 
-  updateQueue = new Map<string, AnyDoc>()
+  updateQueue = new Map<string, Partial<GuildSettings>>()
   updateTimer: NodeJS.Timeout | null = null
 
   private processingMutex: Promise<void> = Promise.resolve()
-  private isProcessingScheduled = false
 
   consecutiveFailures = 0
   maxFailuresBeforeDrop = 5
 
   static getInstance(): DatabaseManager {
-    return (DatabaseManager.instance ??= new DatabaseManager())
+    if (!DatabaseManager.instance) {
+      DatabaseManager.instance = new DatabaseManager()
+    }
+    return DatabaseManager.instance
   }
 
   getSettingsCollection() {
@@ -113,26 +128,33 @@ class DatabaseManager {
   processBatchUpdates() {
     if (this.updateQueue.size === 0) return
 
+    // Atomically swap the queue before async processing
+    const batch = this.updateQueue
+    this.updateQueue = new Map<string, Partial<GuildSettings>>()
+
     // Use mutex to ensure only one batch processes at a time
     this.processingMutex = this.processingMutex
       .then(() => {
-        return this._executeBatchUpdates()
+        return this._executeBatchUpdates(batch)
       })
       .catch((err) => {
         console.error('Batch mutex error:', err)
+        // Re-queue failed items
+        for (const [k, v] of batch.entries()) {
+          const existing = this.updateQueue.get(k)
+          this.updateQueue.set(k, existing ? { ...existing, ...v } : v)
+        }
+        this.scheduleBatch()
       })
   }
 
-  private _executeBatchUpdates() {
-    if (this.updateQueue.size === 0) return
+  private _executeBatchUpdates(batch: Map<string, Partial<GuildSettings>>) {
+    if (batch.size === 0) return
     const collection = this.getSettingsCollection()
-
-    const batch = this.updateQueue
-    this.updateQueue = new Map<string, AnyDoc>()
 
     const updates = Array.from(batch.entries())
 
-    const chunks: Array<Array<[string, AnyDoc]>> = []
+    const chunks: Array<Array<[string, Partial<GuildSettings>]>> = []
     for (let i = 0; i < updates.length; i += MAX_BATCH_SIZE) {
       chunks.push(updates.slice(i, i + MAX_BATCH_SIZE))
     }
@@ -144,16 +166,18 @@ class DatabaseManager {
           if (!this.cache.get(guildId)) idsToFetch.push(guildId)
         }
 
-        let existingMap = new Map<string, AnyDoc>()
+        let existingMap = new Map<string, GuildSettings>()
         if (idsToFetch.length) {
           const existingDocs = collection.find({
             _id: { $in: idsToFetch }
-          }) as AnyDoc[]
-          existingMap = new Map(existingDocs.map((d) => [String(d._id), d]))
+          }) as GuildSettings[]
+          existingMap = new Map(
+            existingDocs.map((d) => [String(d._id), d])
+          )
         }
 
         const nowIso = new Date().toISOString()
-        const docsToUpsert: AnyDoc[] = []
+        const docsToUpsert: GuildSettings[] = []
 
         for (const [guildId, updateData] of chunk) {
           const base =
@@ -176,7 +200,7 @@ class DatabaseManager {
           docsToUpsert.push(next)
         }
 
-        const saved = collection.insert(docsToUpsert) as AnyDoc[]
+        const saved = collection.insert(docsToUpsert) as GuildSettings[]
 
         for (const doc of saved) {
           const key = String(doc._id ?? doc.guildId)
@@ -208,10 +232,9 @@ class DatabaseManager {
         setTimeout(() => this.scheduleBatch(), BATCH_INTERVAL_MS * 2)
       }
     }
-    // Mutex auto-releases when this function returns
   }
 
-  queueUpdate(guildId: string, updates: AnyDoc) {
+  queueUpdate(guildId: string, updates: Partial<GuildSettings>) {
     const existing = this.updateQueue.get(guildId)
     this.updateQueue.set(
       guildId,
@@ -259,7 +282,10 @@ export const getGuildSettings = (guildId: string) => {
   }
 }
 
-export const updateGuildSettings = (guildId: string, updates: AnyDoc) => {
+export const updateGuildSettings = (
+  guildId: string,
+  updates: Partial<GuildSettings>
+) => {
   if (!_functions.isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
@@ -278,7 +304,10 @@ export const updateGuildSettings = (guildId: string, updates: AnyDoc) => {
   dbManager.queueUpdate(guildId, updates)
 }
 
-export const updateGuildSettingsSync = (guildId: string, updates: AnyDoc) => {
+export const updateGuildSettingsSync = (
+  guildId: string,
+  updates: Partial<GuildSettings>
+) => {
   if (!_functions.isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
@@ -304,7 +333,7 @@ export const updateGuildSettingsSync = (guildId: string, updates: AnyDoc) => {
 
     next.twentyFourSevenEnabled = toBool(next.twentyFourSevenEnabled)
 
-    const saved = collection.insert(next) as AnyDoc
+    const saved = collection.insert(next) as GuildSettings
     dbManager.cache.set(guildId, saved)
     return saved
   } catch (error) {

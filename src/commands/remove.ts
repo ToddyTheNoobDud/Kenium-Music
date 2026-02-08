@@ -8,7 +8,8 @@ import {
   Options
 } from 'seyfert'
 import { getContextLanguage } from '../utils/i18n'
-function formatTrackName(name) {
+
+function formatTrackName(name: string) {
   return name.length <= 100 ? name : `${name.substring(0, 97)}...`
 }
 @Options({
@@ -25,23 +26,23 @@ function formatTrackName(name) {
 
       const choices = player.queue
         .slice(0, 25)
-        .map((track, index) => {
+        .map((track: any, index: number) => {
           const name = formatTrackName(`${index + 1}: ${track.info.title}`)
           return { name, value: index + 1 }
         })
         .filter(
-          (choice) =>
+          (choice: any) =>
             !focusedValue || choice.name.toLowerCase().includes(focusedValue)
         )
 
       const validChoices = choices.filter(
-        (choice) => choice.name.length >= 1 && choice.name.length <= 100
+        (choice: any) => choice.name.length >= 1 && choice.name.length <= 100
       )
 
       return interaction.respond(validChoices.slice(0, 25))
     }
   })
-})
+} as any)
 @Middlewares(['checkPlayer', 'checkVoice'])
 @Declare({
   name: 'remove',
@@ -53,7 +54,8 @@ export default class removecmds extends Command {
       const t = ctx.t.get(getContextLanguage(ctx))
       const { client } = ctx
 
-      const player = client.aqua.players.get(ctx.guildId!)
+      const player = client.aqua.players.get(ctx.guildId as string)
+      if (!player) return
       const { position } = ctx.options as { position: number }
 
       player.queue.splice(position - 1, 1)
@@ -65,8 +67,8 @@ export default class removecmds extends Command {
         ],
         flags: 64
       })
-    } catch (error) {
-      if (error.code === 10065) return
+    } catch (error: any) {
+      if (error?.code === 10065) return
     }
   }
 }

@@ -14,7 +14,7 @@ import { getContextLanguage } from '../utils/i18n'
     description: 'Time to seek (in secs)',
     required: true
   })
-})
+} as any)
 
 @Declare({
   name: 'seek',
@@ -22,12 +22,16 @@ import { getContextLanguage } from '../utils/i18n'
 })
 @Middlewares(['checkPlayer', 'checkVoice', 'checkTrack'])
 export default class Seek extends Command {
-  async run(ctx: CommandContext) {
+  public override async run(ctx: CommandContext) {
     try {
       const t = ctx.t.get(getContextLanguage(ctx))
       const { client } = ctx
 
-      const player = client.aqua.players.get(ctx.guildId!)
+      const guildId = ctx.guildId
+      if (!guildId) return
+
+      const player = client.aqua.players.get(guildId)
+      if (!player) return
       const { time } = ctx.options as { time: number }
 
       player.seek(time * 1000)
@@ -38,8 +42,8 @@ export default class Seek extends Command {
         ],
         flags: 64
       })
-    } catch (error) {
-      if (error.code === 10065) return
+    } catch (error: any) {
+      if (error?.code === 10065) return
     }
   }
 }

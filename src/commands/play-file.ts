@@ -35,13 +35,17 @@ export default class PlayFile extends Command {
 
     try {
       const { client } = ctx
-      const voiceChannel = ctx.member?.voice()
+      const guildId = ctx.guildId
+      if (!guildId) return
+
+      const voice = await ctx.member?.voice()
+      if (!voice?.channelId) return
 
       const player =
-        client.aqua.players.get(ctx.guildId!) ??
+        client.aqua.players.get(guildId) ??
         client.aqua.createConnection({
-          guildId: ctx.guildId!,
-          voiceChannel: (await voiceChannel).channelId,
+          guildId: guildId,
+          voiceChannel: voice.channelId,
           textChannel: ctx.channelId,
           deaf: true,
           defaultVolume: 65
@@ -56,7 +60,7 @@ export default class PlayFile extends Command {
           query: file.url,
           requester: ctx.interaction.user
         })
-        const track = result.tracks[0]
+        const track = result?.tracks?.[0]
         if (!track) {
           await ctx.editOrReply({
             embeds: [
@@ -85,8 +89,8 @@ export default class PlayFile extends Command {
       } catch (error) {
         console.log(error)
       }
-    } catch (error) {
-      if (error.code === 10065) return
+    } catch (error: any) {
+      if (error?.code === 10065) return
       await ctx.editOrReply({
         embeds: [
           new Embed()

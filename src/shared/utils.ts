@@ -1,7 +1,7 @@
 import { ActionRow, Button, Embed } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
-import { COLORS, ICONS } from './constants'
 import { getTracksCollection } from '../utils/db'
+import { COLORS, ICONS } from './constants'
 
 // Constants
 const MAX_AUTOCOMPLETE_OPTIONS = 25
@@ -11,7 +11,6 @@ const MAX_BUTTONS_PER_ROW = 5
 // Pre-compiled regex patterns for better performance
 const YT_REGEX =
   /(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/
-const PLATFORM_REGEX = /youtube\.com|youtu\.be|spotify\.com|soundcloud\.com/i
 
 // Lookup tables for O(1) access
 const TITLE_ICONS = Object.freeze({
@@ -22,14 +21,9 @@ const TITLE_ICONS = Object.freeze({
   info: 'ℹ️'
 })
 
-const PLATFORM_ICONS = Object.freeze({
-  youtube: ICONS.youtube,
-  spotify: ICONS.spotify,
-  soundcloud: ICONS.soundcloud
-})
 
 export const _functions = {
-  formatSeconds: (totalSeconds) => {
+  formatSeconds: (totalSeconds: number) => {
     const hours = Math.floor(totalSeconds / 3600)
     const minutes = Math.floor((totalSeconds % 3600) / 60)
     const seconds = totalSeconds % 60
@@ -38,12 +32,12 @@ export const _functions = {
       : `${minutes}:${String(seconds).padStart(2, '0')}`
   },
 
-  clampField: (text, maxLen) => {
+  clampField: (text: string | number, maxLen: number) => {
     const str = String(text)
     return str.length > maxLen ? str.slice(0, maxLen) : str
   },
 
-  getPlatformFromUri: (uri) => {
+  getPlatformFromUri: (uri: string | undefined) => {
     if (!uri) return 'Music'
     const lower = uri.toLowerCase()
     if (lower.includes('youtu')) return `${ICONS.youtube} YouTube`
@@ -53,7 +47,12 @@ export const _functions = {
   }
 }
 
-export const createEmbed = (type, title, description, fields = []) => {
+export const createEmbed = (
+  type: keyof typeof TITLE_ICONS,
+  title: string,
+  description: string | null,
+  fields: any[] = []
+) => {
   const embed = new Embed()
     .setColor(COLORS[type])
     .setTitle(`${TITLE_ICONS[type]} ${title}`)
@@ -78,7 +77,7 @@ export const createEmbed = (type, title, description, fields = []) => {
   return embed
 }
 
-export const createButtons = (configs) => {
+export const createButtons = (configs: any[]) => {
   const row = new ActionRow()
   const limit = Math.min(configs.length, MAX_BUTTONS_PER_ROW)
 
@@ -98,31 +97,31 @@ export const createButtons = (configs) => {
 }
 
 // Optimized: Direct calculation without intermediate variable
-export const formatDuration = (ms) => {
+export const formatDuration = (ms: number | undefined) => {
   if (!ms) return '00:00'
   return _functions.formatSeconds(Math.floor(ms / 1000))
 }
 
-export const determineSource = (uri) => {
+export const determineSource = (uri: string | undefined) => {
   if (!uri) return '❓ Unknown'
   return _functions.getPlatformFromUri(uri)
 }
 
 // Optimized: Reuse pre-compiled regex
-export const extractYouTubeId = (url) => {
+export const extractYouTubeId = (url: string | undefined) => {
   if (!url) return null
   const match = YT_REGEX.exec(url)
   return match?.[1] ?? null
 }
 
 export const handlePlaylistAutocomplete = async (
-  interaction,
-  playlistsCollection
+  interaction: any,
+  playlistsCollection: any
 ) => {
   const items = playlistsCollection.find({ userId: interaction.user?.id }) || []
   const options =
     items.length > 0
-      ? items.slice(0, MAX_AUTOCOMPLETE_OPTIONS).map((p) => ({
+      ? items.slice(0, MAX_AUTOCOMPLETE_OPTIONS).map((p: any) => ({
           name: String(p.name || '').slice(0, 100),
           value: String(p.name || '')
         }))
@@ -131,7 +130,7 @@ export const handlePlaylistAutocomplete = async (
   return interaction.respond(options)
 }
 
-export const handleTrackAutocomplete = async (interaction) => {
+export const handleTrackAutocomplete = async (interaction: any) => {
   try {
     const raw = interaction.getInput?.()
     const query =
@@ -150,7 +149,7 @@ export const handleTrackAutocomplete = async (interaction) => {
     const tracks = Array.isArray(res?.tracks) ? res.tracks : []
     const options =
       tracks.length > 0
-        ? tracks.slice(0, MAX_AUTOCOMPLETE_OPTIONS).map((track) => ({
+        ? tracks.slice(0, MAX_AUTOCOMPLETE_OPTIONS).map((track: any) => ({
             name: String(track.title || track.uri || 'Unknown').slice(0, 100),
             value: String(track.uri || '')
           }))
@@ -165,8 +164,8 @@ export const handleTrackAutocomplete = async (interaction) => {
 }
 
 export const handleTrackIndexAutocomplete = async (
-  interaction,
-  playlistsCollection
+  interaction: any,
+  playlistsCollection: any
 ) => {
   const playlistName = interaction.options.getString('playlist')
   if (!playlistName) {
@@ -192,7 +191,7 @@ export const handleTrackIndexAutocomplete = async (
   }
 
   const options = tracks.map((track, index) => ({
-    name: `${index + 1}. ${String(track.title || 'Untitled').slice(0, 80)}`,
+    name: `${index + 1}. ${String(track['title'] || 'Untitled').slice(0, 80)}`,
     value: String(index + 1)
   }))
 
@@ -200,7 +199,7 @@ export const handleTrackIndexAutocomplete = async (
 }
 
 // Optimized: Fisher-Yates shuffle with single swap
-export const shuffleArray = (array) => {
+export const shuffleArray = (array: any[]) => {
   const shuffled = [...array]
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))

@@ -1,12 +1,14 @@
+// biome-ignore assist/source/organizeImports: <unresolved>
 import {
-  type CommandContext,
-  createStringOption,
   Declare,
   Options,
-  SubCommand
+  SubCommand,
+  createStringOption,
+  type CommandContext
 } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
 import { ICONS, LIMITS } from '../../shared/constants'
+import type { Track } from '../../shared/types'
 import {
   createButtons,
   createEmbed,
@@ -17,33 +19,16 @@ import {
   handleTrackAutocomplete
 } from '../../shared/utils'
 import {
-  getPlaylistsCollection,
-  getTracksCollection,
-  getPlaylistWithTracks,
   getDatabase,
-  getPlaylistTracks
+  getPlaylistsCollection,
+  getTracksCollection
 } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
 
 const playlistsCollection = getPlaylistsCollection()
 const tracksCollection = getTracksCollection()
 
-interface PlaylistTrack {
-  playlistId: string
-  title: string
-  uri: string
-  author: string
-  duration: number
-  addedAt: string
-  addedBy: string
-  source: string
-  identifier: string
-  isStream?: boolean
-  isSeekable?: boolean
-  position?: number
-  artworkUrl?: string | null
-  isrc?: string | null
-}
+// using Track from shared/types
 
 const TRACK_SEPARATOR_RE = /[,;\n]+/
 const YOUTUBE_PLAYLIST_RE =
@@ -90,7 +75,10 @@ export const _functions = {
         const idx = getNextIndex()
         if (idx >= items.length) return
         try {
-          await fn(items[idx], idx)
+          const item = items[idx]
+          if (item !== undefined) {
+            await fn(item, idx)
+          }
         } catch (err) {
           console.error(`mapPool task ${idx} failed:`, err)
         }
@@ -105,21 +93,21 @@ export const _functions = {
   name: 'add',
   description: '➕ Add tracks to playlist'
 })
+
 @Options({
   playlist: createStringOption({
     description: 'Playlist name',
     required: true,
-    autocomplete: async (interaction: any) =>
+    autocomplete: async (interaction) =>
       handlePlaylistAutocomplete(interaction, playlistsCollection)
   }),
   tracks: createStringOption({
-    description:
-      'Tracks to add (URL, title, multiple separated by commas, or a playlist link)',
+    description: 'Track names or URLs (comma/newline separated)',
     required: true,
-    autocomplete: async (interaction: any) =>
+    autocomplete: async (interaction) =>
       handleTrackAutocomplete(interaction)
   })
-})
+} as any)
 export class AddCommand extends SubCommand {
   async run(ctx: CommandContext) {
     const { playlist: playlistName, tracks: rawQuery } = ctx.options as {
@@ -132,7 +120,7 @@ export class AddCommand extends SubCommand {
     const playlistDb = playlistsCollection.findOne({
       userId,
       name: playlistName
-    }) as any
+    })
 
     if (!playlistDb) {
       return ctx.write({
@@ -179,23 +167,24 @@ export class AddCommand extends SubCommand {
     const existingUris = tracksCollection.find(
       { playlistId: playlistDb._id },
       { fields: ['uri'] }
-    )
+    ) as unknown as { uri: string }[]
     for (const tr of existingUris)
       existingCanonical.add(_functions.canonicalizeUri(tr.uri))
 
     const tokens = _functions.splitInput(rawQuery)
     const isSingleYouTubePlaylist =
-      tokens.length === 1 && YOUTUBE_PLAYLIST_RE.test(tokens[0])
+      tokens.length === 1 && YOUTUBE_PLAYLIST_RE.test(tokens[0] as string)
 
-    const toAdd: PlaylistTrack[] = []
+    const toAdd: Track[] = []
 
     const baseTime = Date.now()
-    const pushTrack = (track: any) => {
+    const pushTrack = (track: { info: any }) => {
       const uri = track?.info?.uri
       if (!uri || toAdd.length >= availableSlots) return
       const canonical = _functions.canonicalizeUri(uri)
       if (existingCanonical.has(canonical)) return
-      const newTrack: PlaylistTrack = {
+      const newTrack: Track = {
+        _id: `tr_${Math.random().toString(36).slice(2, 11)}_${Date.now() + toAdd.length}`,
         playlistId: playlistDb._id,
         title: track.info.title || 'Unknown',
         uri,
@@ -221,27 +210,24 @@ export class AddCommand extends SubCommand {
         requester: ctx.author
       })
       if (!res) return
-      const type = _functions.normalizeLoadType((res as any).loadType)
+      const type = _functions.normalizeLoadType(res.loadType)
       if (type === 'LOAD_FAILED' || type === 'NO_MATCHES') return
-      const tracks = Array.isArray((res as any).tracks)
-        ? (res as any).tracks
-        : []
+      const tracks = Array.isArray(res.tracks) ? res.tracks : []
       if (tracks.length === 0) return
-      const isPlaylist =
-        type.includes('PLAYLIST') || !!(res as any).playlistInfo
+      const isPlaylist = type.includes('PLAYLIST') || !!res.playlistInfo
       if (isPlaylist) {
         for (const tr of tracks) {
           if (toAdd.length >= availableSlots) break
-          pushTrack(tr)
+          if (tr) pushTrack(tr as any)
         }
       } else {
-        pushTrack(tracks[0])
+        if (tracks[0]) pushTrack(tracks[0] as any)
       }
     }
 
     try {
       if (isSingleYouTubePlaylist) {
-        await resolveOne(tokens[0])
+        await resolveOne(tokens[0] as string)
       } else {
         const uniqueTokens = Array.from(new Set(tokens))
         const limit = Math.min(CONCURRENCY, availableSlots || 1)
@@ -272,7 +258,8 @@ export class AddCommand extends SubCommand {
       if (toAdd.length > availableSlots) toAdd.length = availableSlots
 
       const addedDuration = toAdd.reduce((sum, t) => sum + (t.duration || 0), 0)
-      const newTotalDuration = (playlistDb.totalDuration || 0) + addedDuration
+      const newTotalDuration =
+        (playlistDb.totalDuration || 0) + addedDuration
       const newTotalTracks = currentTracksCount + toAdd.length
 
       // Atomic update for tracks and playlist metadata
@@ -280,7 +267,7 @@ export class AddCommand extends SubCommand {
         getDatabase().transaction(() => {
           tracksCollection.insert(toAdd)
           playlistsCollection.update(
-            { _id: (playlistDb as any)._id },
+            { _id: playlistDb._id },
             {
               lastModified: timestamp,
               totalDuration: newTotalDuration,
@@ -307,12 +294,24 @@ export class AddCommand extends SubCommand {
         })
       }
       const primary = toAdd[0]
+      if (!primary) {
+        return ctx.editOrReply({
+          embeds: [
+            createEmbed(
+              'warning',
+              t.playlist?.add?.nothingAdded || 'Nothing Added',
+              'No new tracks were added.'
+            )
+          ]
+        })
+      }
+
       const embed = createEmbed(
         'success',
         toAdd.length > 1
           ? t.playlist?.add?.tracksAdded || 'Tracks Added'
           : t.playlist?.add?.trackAdded || 'Track Added',
-        undefined,
+        null,
         [
           {
             name: `${ICONS.music} ${toAdd.length > 1 ? t.playlist?.add?.tracks || 'Tracks' : t.playlist?.add?.track || 'Track'}`,

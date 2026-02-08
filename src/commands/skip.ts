@@ -18,8 +18,8 @@ export default class skipCmds extends Command {
       const { client } = ctx
       const t = ctx.t.get(getContextLanguage(ctx))
 
-      const player = client.aqua.players.get(ctx.guildId!)
-      if (player.queue.length === 0) {
+      const player = client.aqua.players.get(ctx.guildId as string)
+      if (!player || player.queue.length === 0) {
         await ctx.editOrReply({
           embeds: [
             new Embed()
@@ -38,8 +38,8 @@ export default class skipCmds extends Command {
         ],
         flags: 64
       })
-    } catch (error) {
-      if (error.code === 10065) return
+    } catch (error: any) {
+      if (error?.code === 10065) return
     }
   }
 }

@@ -17,7 +17,10 @@ export default class skipCmds extends Command {
     try {
       const { client } = ctx
       const t = ctx.t.get(getContextLanguage(ctx))
-      const player = client.aqua.players.get(ctx.guildId!)
+      const player = client.aqua.players.get(ctx.guildId as string)
+      if (!player) return
+
+      player.nodes.rest.loadTracks('something')
 
       player.stop()
 
@@ -27,8 +30,8 @@ export default class skipCmds extends Command {
         ],
         flags: 64
       })
-    } catch (error) {
-      if (error.code === 10065) return
+    } catch (error: any) {
+      if (error?.code === 10065) return
     }
   }
 }

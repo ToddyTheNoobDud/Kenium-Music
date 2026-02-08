@@ -28,7 +28,11 @@ export default class exportcmds extends Command {
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
 
-      const player = client.aqua.players.get(ctx.guildId!)
+      const guildId = ctx.guildId
+      if (!guildId) return
+
+      const player = client.aqua.players.get(guildId)
+      if (!player) return
 
       if (player.queue.length === 0) {
         await ctx.editOrReply({
@@ -54,6 +58,7 @@ export default class exportcmds extends Command {
 
       for (let i = 0; i < player.queue.length; i++) {
         const song = player.queue[i]
+        if (!song) continue
         const uri = song.info.uri
 
         queueLines.push(
@@ -99,8 +104,8 @@ export default class exportcmds extends Command {
         files: [attachment],
         flags: 64
       })
-    } catch (error) {
-      if (error.code === 10065) return
+    } catch (error: any) {
+      if (error?.code === 10065) return
     }
   }
 }

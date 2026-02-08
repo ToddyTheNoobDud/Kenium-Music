@@ -11,8 +11,8 @@ import {
   Options
 } from 'seyfert'
 import { ButtonStyle, ComponentType } from 'seyfert/lib/types'
-import { Musixmatch } from '../utils/musiclyrics'
 import { getContextLanguage } from '../utils/i18n'
+import { Musixmatch } from '../utils/musiclyrics'
 
 // Create singleton instance
 const MUSIXMATCH = new Musixmatch()
@@ -20,6 +20,7 @@ const MAX_EMBED_LENGTH = 1800
 const EMBED_COLOR = 0x100e09
 const COLLECTOR_TIMEOUT = 300_000
 
+// biome-ignore lint/suspicious/noExplicitAny: thele is a dynamic translation object
 function createErrorEmbed(message: string, thele: any) {
   return new Embed()
     .setColor(0xe74c3c)
@@ -32,8 +33,14 @@ function formatTimestamp(ms: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
 
-function formatLyrics(lines: any[], plainText: string) {
-  if (!lines?.length) return plainText || ''
+interface LyricsLine {
+  line: string
+  timestamp?: number
+  range?: { start: number; end?: number }
+}
+
+function formatLyrics(lines: LyricsLine[] | null, plainText: string) {
+  if (!lines || lines.length === 0) return plainText || ''
 
   return lines
     .map((line) => {
@@ -74,6 +81,7 @@ function chunkContent(content: string, maxLength = MAX_EMBED_LENGTH) {
 function createNavigationRow(
   currentPage: number,
   totalPages: number,
+  // biome-ignore lint/suspicious/noExplicitAny: thele is a dynamic translation object
   thele: any
 ) {
   const row = new ActionRow().addComponents(
@@ -109,7 +117,20 @@ function createNavigationRow(
   return row
 }
 
-async function displayLyricsUI(ctx: CommandContext, data: any, thele: any) {
+async function displayLyricsUI(
+  ctx: CommandContext,
+  data: {
+    lines: LyricsLine[] | null
+    lyrics: string
+    title?: string
+    artist?: string
+    albumArt?: string
+    source?: string
+    track?: { author?: string }
+  },
+  // biome-ignore lint/suspicious/noExplicitAny: thele is a dynamic translation object
+  thele: any
+) {
   const formattedLyrics = formatLyrics(data.lines, data.lyrics)
   const chunks = chunkContent(formattedLyrics)
   let currentPage = 0
@@ -144,7 +165,7 @@ async function displayLyricsUI(ctx: CommandContext, data: any, thele: any) {
       idle: COLLECTOR_TIMEOUT
     } as {
       componentType: ComponentType
-      filter: (i: any) => boolean
+      filter: (i: { user: { id: string } }) => boolean
       idle: number
     })
 
@@ -179,7 +200,10 @@ async function displayLyricsUI(ctx: CommandContext, data: any, thele: any) {
   }
 }
 
-async function fetchMusixmatchLyrics(query: string, currentTrack: any) {
+async function fetchMusixmatchLyrics(
+  query: string,
+  currentTrack: { title?: string; author?: string }
+) {
   let searchQuery = query
 
   if (!searchQuery && currentTrack) {
@@ -218,7 +242,7 @@ async function fetchMusixmatchLyrics(query: string, currentTrack: any) {
   search: createStringOption({
     description: 'Song title to search for',
     required: false
-  })
+  }) as any
 })
 @Declare({
   name: 'lyrics',
@@ -230,7 +254,10 @@ export default class LyricsCommand extends Command {
     const lang = getContextLanguage(ctx)
     const thele = ctx.t.get(lang)
     if (!ctx.deferred) await ctx.deferReply()
-    const player = ctx.client.aqua.players.get(ctx.guildId)
+    const guildId = ctx.guildId
+    if (!guildId) return
+
+    const player = ctx.client.aqua.players.get(guildId)
 
     if (!player) {
       await ctx.editOrReply({
@@ -245,9 +272,9 @@ export default class LyricsCommand extends Command {
 
       // Primary lyrics source
       try {
-        lyricsResult = await fetchMusixmatchLyrics(search, player.current)
-      } catch (primaryError) {
-        console.log('Primary lyrics failed:', primaryError.message)
+        lyricsResult = await fetchMusixmatchLyrics(search || '', player.current as any)
+      } catch (primaryError: unknown) {
+        console.log('Primary lyrics failed:', (primaryError as any)?.message)
       }
 
       if (!lyricsResult) {

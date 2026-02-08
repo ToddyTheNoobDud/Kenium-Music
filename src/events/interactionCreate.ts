@@ -1,16 +1,16 @@
 import { Container, createEvent } from 'seyfert'
 import { ICONS, LIMITS } from '../shared/constants'
+import { MUSIC_PLATFORMS, PLAYBACK_E } from '../shared/emojis'
 import {
   createButtons,
   createEmbed,
   formatDuration,
   shuffleArray
 } from '../shared/utils'
-import { MUSIC_PLATFORMS, PLAYBACK_E } from '../shared/emojis'
 import {
   getPlaylistsCollection,
-  getTracksCollection,
-  getPlaylistTracks
+  getPlaylistTracks,
+  getTracksCollection
 } from '../utils/db'
 
 const MAX_TITLE_LENGTH = 60
@@ -28,22 +28,23 @@ const playlistsCollection = getPlaylistsCollection()
 const tracksCollection = getTracksCollection()
 
 export const _functions = {
-  clamp: (n, min, max) => (n < min ? min : n > max ? max : n),
+  clamp: (n: number, min: number, max: number) =>
+    n < min ? min : n > max ? max : n,
 
-  getQueueLength: (queue) => queue?.length ?? queue?.size ?? 0,
+  getQueueLength: (queue: any) => queue?.size ?? queue?.length ?? 0,
 
-  formatTime: (ms) => {
+  formatTime: (ms: number | undefined) => {
     const s = Math.floor((ms || 0) / 1000)
-    const pad = (n) => String(n).padStart(2, '0')
+    const pad = (n: number) => String(n).padStart(2, '0')
     return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`
   },
 
-  sanitizeTitle: (text) =>
+  sanitizeTitle: (text: string | undefined) =>
     String(text || '')
       .replace(TITLE_SANITIZE_RE, '')
       .trim(),
 
-  truncateText: (text, maxLength = MAX_TITLE_LENGTH) => {
+  truncateText: (text: string | undefined, maxLength = MAX_TITLE_LENGTH) => {
     if (!text) return ''
     if (text.length <= maxLength) return text
     const processed = _functions.sanitizeTitle(text)
@@ -51,10 +52,10 @@ export const _functions = {
     return `${processed.slice(0, maxLength - 3).trimEnd()}...`
   },
 
-  titleCaseWordBoundaries: (text) =>
+  titleCaseWordBoundaries: (text: string | undefined) =>
     String(text || '').replace(WORD_START_RE, (c) => c.toUpperCase()),
 
-  getPlatform: (uri) => {
+  getPlatform: (uri: string | undefined) => {
     if (!uri) return MUSIC_PLATFORMS.youtube
     const s = uri.toLowerCase()
     if (s.includes('soundcloud')) return MUSIC_PLATFORMS.soundcloud
@@ -64,7 +65,7 @@ export const _functions = {
     return MUSIC_PLATFORMS.youtube
   },
 
-  getSourceIcon: (uri) => {
+  getSourceIcon: (uri: string | undefined) => {
     if (!uri) return ICONS.music
     const s = uri.toLowerCase()
     if (s.includes('youtu')) return ICONS.youtube
@@ -73,13 +74,13 @@ export const _functions = {
     return ICONS.music
   },
 
-  extractYouTubeId: (uri) => {
+  extractYouTubeId: (uri: string | undefined) => {
     if (!uri) return null
     const s = String(uri)
     const lower = s.toLowerCase()
     if (!lower.includes('youtu')) return null
 
-    const isValidId = (id) => {
+    const isValidId = (id: string) => {
       if (!id || id.length !== 11) return false
       for (let i = 0; i < id.length; i++) {
         const c = id.charCodeAt(i)
@@ -94,7 +95,7 @@ export const _functions = {
       return true
     }
 
-    const cutAtDelim = (str) => {
+    const cutAtDelim = (str: string) => {
       let end = str.length
       for (const d of ['?', '&', '/', '#']) {
         const idx = str.indexOf(d)
@@ -119,15 +120,15 @@ export const _functions = {
     return isValidId(id) ? id : null
   },
 
-  setPlayerVolume: (player, volume) => player?.setVolume?.(volume),
+  setPlayerVolume: (player: any, volume: number) => player?.setVolume?.(volume),
 
-  addToQueueFront: (queue, item) => {
+  addToQueueFront: (queue: any, item: any) => {
     if (!queue) return
     if (typeof queue.unshift === 'function') queue.unshift(item)
     else queue.add?.(item)?.catch?.(() => {})
   },
 
-  safeDefer: async (interaction, flags = 64) => {
+  safeDefer: async (interaction: any, flags = 64) => {
     try {
       await interaction.deferReply(flags)
       return true
@@ -141,12 +142,12 @@ export const _functions = {
     }
   },
 
-  safeReply: (interaction, content) =>
+  safeReply: (interaction: any, content: string | any) =>
     interaction.editOrReply({ content }).catch(() => {}),
-  safeFollowup: (interaction, content) =>
+  safeFollowup: (interaction: any, content: string | any) =>
     interaction.followup({ content }).catch(() => {}),
 
-  parsePlaylistButtonId: (customId) => {
+  parsePlaylistButtonId: (customId: any) => {
     if (!customId) return null
     const parts = customId.split('_')
     if (parts.length < 3) return null
@@ -178,7 +179,7 @@ export const _functions = {
     return null
   },
 
-  updateNowPlayingEmbed: async (player, client) => {
+  updateNowPlayingEmbed: async (player: any, client: any) => {
     const msg = player?.nowPlayingMessage
     if (!msg?.edit || !player?.current) {
       if (player) player.nowPlayingMessage = null
@@ -195,9 +196,9 @@ export const _functions = {
   },
 
   resolveTracksAndEnqueue: async (
-    tracks,
-    resolveFn,
-    enqueueFn,
+    tracks: any[],
+    resolveFn: (track: any) => Promise<any>,
+    enqueueFn: (track: any) => void,
     limit = RESOLVE_CONCURRENCY
   ) => {
     const list = Array.isArray(tracks) ? tracks : []
@@ -213,7 +214,7 @@ export const _functions = {
   }
 }
 
-export const createNowPlayingEmbed = (player, track, client) => {
+export const createNowPlayingEmbed = (player: any, track: any, client: any) => {
   const { position = 0, volume = 0, loop, paused } = player || {}
   const { title = 'Unknown', uri = '', length = 0, requester } = track || {}
 
@@ -289,7 +290,7 @@ export const createNowPlayingEmbed = (player, track, client) => {
   })
 }
 
-const adjustVolume = async (player, delta) => {
+const adjustVolume = async (player: any, delta: number) => {
   const vol = _functions.clamp(
     (player?.volume || 0) + delta,
     MIN_VOLUME,
@@ -302,11 +303,14 @@ const adjustVolume = async (player, delta) => {
   }
 }
 
-const actionHandlers = {
-  volume_down: (player) => adjustVolume(player, -VOLUME_STEP),
-  volume_up: (player) => adjustVolume(player, VOLUME_STEP),
+const actionHandlers: Record<
+  string,
+  (player: any) => { message: string; shouldUpdate: boolean } | Promise<any>
+> = {
+  volume_down: (player: any) => adjustVolume(player, -VOLUME_STEP),
+  volume_up: (player: any) => adjustVolume(player, VOLUME_STEP),
 
-  previous: (player) => {
+  previous: (player: any) => {
     if (!player?.previous)
       return { message: '❌ No previous track available', shouldUpdate: false }
     if (player.current) _functions.addToQueueFront(player.queue, player.current)
@@ -315,17 +319,17 @@ const actionHandlers = {
     return { message: '⏮️ Playing the previous track.', shouldUpdate: false }
   },
 
-  resume: (player) => {
+  resume: (player: any) => {
     player.pause?.(false)
     return { message: '▶️ Resumed playback.', shouldUpdate: true }
   },
 
-  pause: (player) => {
+  pause: (player: any) => {
     player.pause?.(true)
     return { message: '⏸️ Paused playback.', shouldUpdate: true }
   },
 
-  skip: (player) => {
+  skip: (player: any) => {
     if (!_functions.getQueueLength(player?.queue))
       return {
         message: '❌ No tracks in queue to skip to.',
@@ -336,7 +340,12 @@ const actionHandlers = {
   }
 }
 
-const buildPlaylistPage = (playlist, playlistName, userId, page) => {
+const buildPlaylistPage = (
+  playlist: any,
+  playlistName: string,
+  userId: string,
+  page: number | undefined
+) => {
   const total = tracksCollection.count({ playlistId: playlist._id })
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.min(Math.max(1, page || 1), totalPages)
@@ -373,13 +382,13 @@ const buildPlaylistPage = (playlist, playlistName, userId, page) => {
       value: tracks
         .map((t, i) => {
           const pos = String(startIdx + i + 1).padStart(2, '0')
-          return `\`${pos}.\` **${t.title}**\n     ${ICONS.artist} ${t.author || 'Unknown'} • ${ICONS.duration} ${formatDuration(t.duration || 0)} ${_functions.getSourceIcon(t.uri)}`
+          return `\`${pos}.\` **${t.title}**\n     ${ICONS.artist} ${t.author || 'Unknown'} • ${ICONS.duration} ${formatDuration((t.duration as number) || 0)} ${_functions.getSourceIcon(t.uri as string | undefined)}`
         })
         .join('\n\n'),
       inline: false
     })
 
-    const firstVideoId = _functions.extractYouTubeId(tracks[0]?.uri)
+    const firstVideoId = _functions.extractYouTubeId(tracks[0]?.uri as string | undefined)
     if (firstVideoId)
       embed.setThumbnail(
         `https://img.youtube.com/vi/${firstVideoId}/maxresdefault.jpg`
@@ -425,8 +434,13 @@ const buildPlaylistPage = (playlist, playlistName, userId, page) => {
   return { embed, components }
 }
 
-const playlistActionHandlers = {
-  play_playlist: async (interaction, client, userId, playlistName) => {
+const playlistActionHandlers: Record<string, any> = {
+  play_playlist: async (
+    interaction: any,
+    client: any,
+    userId: string,
+    playlistName: string
+  ) => {
     const playlist = playlistsCollection.findOne({
       userId,
       name: playlistName
@@ -434,7 +448,9 @@ const playlistActionHandlers = {
     if (!playlist)
       return { message: '❌ Playlist not found', shouldUpdate: false }
 
-    const tracks = tracksCollection.find({ playlistId: playlist._id })
+    const tracks = tracksCollection.find({
+      playlistId: playlist._id
+    })
     if (!tracks.length)
       return { message: '❌ Playlist is empty', shouldUpdate: false }
 
@@ -463,11 +479,11 @@ const playlistActionHandlers = {
       RESOLVE_CONCURRENCY
     )
 
-    playlistsCollection.update(
+    playlistsCollection.updateAtomic(
       { _id: playlist._id },
       {
-        playCount: (playlist.playCount || 0) + 1,
-        lastPlayedAt: new Date().toISOString()
+        $inc: { playCount: 1 },
+        $set: { lastPlayedAt: new Date().toISOString() }
       }
     )
 
@@ -478,7 +494,12 @@ const playlistActionHandlers = {
     }
   },
 
-  shuffle_playlist: async (interaction, client, userId, playlistName) => {
+  shuffle_playlist: async (
+    interaction: any,
+    client: any,
+    userId: string,
+    playlistName: string
+  ) => {
     const playlist = playlistsCollection.findOne({
       userId,
       name: playlistName
@@ -486,13 +507,9 @@ const playlistActionHandlers = {
     if (!playlist)
       return { message: '❌ Playlist not found', shouldUpdate: false }
 
-    // We don't shuffle in the DB anymore if we want to preserve order,
-    // but the original code did a shuffle in DB.
-    // In normalized schema, we should probably just shuffle the fetched array
-    // OR add an 'order' column. For now, let's keep it simple:
-    // Fetch all tracks, shuffle them, and play immediately.
-
-    const tracks = tracksCollection.find({ playlistId: playlist._id })
+    const tracks = tracksCollection.find({
+      playlistId: playlist._id
+    })
     if (!tracks.length)
       return { message: '❌ Playlist is empty', shouldUpdate: false }
 
@@ -518,8 +535,9 @@ const playlistActionHandlers = {
 
     await _functions.resolveTracksAndEnqueue(
       shuffled,
-      (t) => client.aqua.resolve({ query: t.uri, requester: interaction.user }),
-      (track) => player.queue.add(track),
+      (t: any) =>
+        client.aqua.resolve({ query: t.uri, requester: interaction.user }),
+      (track: any) => player.queue.add(track),
       RESOLVE_CONCURRENCY
     )
 
@@ -530,7 +548,13 @@ const playlistActionHandlers = {
     }
   },
 
-  playlist_prev: async (interaction, _client, userId, playlistName, page) => {
+  playlist_prev: async (
+    interaction: any,
+    _client: any,
+    userId: string,
+    playlistName: string,
+    page: number | undefined
+  ) => {
     const playlist = playlistsCollection.findOne({
       userId,
       name: playlistName
@@ -547,7 +571,13 @@ const playlistActionHandlers = {
     return { message: '', shouldUpdate: false }
   },
 
-  playlist_next: async (interaction, _client, userId, playlistName, page) => {
+  playlist_next: async (
+    interaction: any,
+    _client: any,
+    userId: string,
+    playlistName: string,
+    page: number | undefined
+  ) => {
     const playlist = playlistsCollection.findOne({
       userId,
       name: playlistName
@@ -569,26 +599,26 @@ export default createEvent({
   data: { name: 'interactionCreate' },
   run: async (interaction, client) => {
     if (
-      !interaction.isButton?.() ||
-      !interaction.customId ||
-      !interaction.guildId
+      !interaction?.isButton?.() ||
+      !interaction?.customId ||
+      !interaction?.guildId
     )
       return
     if (interaction.customId.startsWith('ignore_')) return
 
     const parsed = _functions.parsePlaylistButtonId(interaction.customId)
-    if (parsed && playlistActionHandlers[parsed.action]) {
+    if (parsed && (playlistActionHandlers as any)[parsed.action]) {
       if (parsed.userId !== interaction.user.id) return
       if (!(await _functions.safeDefer(interaction))) return
       try {
-        const result = await playlistActionHandlers[parsed.action](
+        const result = await (playlistActionHandlers as any)[parsed.action](
           interaction,
           client,
           parsed.userId,
           parsed.playlistName || '',
           parsed.page
         )
-        if (result && result.message)
+        if (result?.message)
           await _functions.safeFollowup(interaction, result.message)
       } catch (err) {
         console.error('Playlist button error:', err)
@@ -623,7 +653,7 @@ export default createEvent({
         '❌ You are not allowed to use this button.'
       )
 
-    const handler = actionHandlers[interaction.customId]
+    const handler = (actionHandlers as any)[interaction.customId]
     if (!handler)
       return _functions.safeReply(
         interaction,

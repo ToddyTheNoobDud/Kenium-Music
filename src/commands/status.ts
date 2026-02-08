@@ -1,4 +1,4 @@
-import { cpus, freemem, loadavg, totalmem } from 'node:os'
+import { cpus, loadavg } from 'node:os'
 import { Cooldown, CooldownType } from '@slipher/cooldown'
 import {
   Command,
@@ -107,9 +107,6 @@ export default class statusCmds extends Command {
       CPU_CACHE.lastCheck = now
     }
 
-    const totalMemory = totalmem()
-    const freeMemory = freemem()
-    const usedMemory = totalMemory - freeMemory
 
     const nodes = [...client.aqua.nodeMap.values()]
 
@@ -122,7 +119,7 @@ export default class statusCmds extends Command {
     const { stats = {} as any } = activeNode || {}
     const { playingPlayers = 0 } = stats
 
-    const guilds = client.cache.guilds.values() || []
+    const guilds = Array.from(client.cache.guilds?.values() || [])
     const userCount = guilds.reduce(
       (total, guild) => total + (guild.memberCount || 0),
       0
@@ -140,7 +137,7 @@ export default class statusCmds extends Command {
         {
           inline: true,
           name: '`📋` Info',
-          value: `\`📦\` Guilds: ${guilds.length}\n\`👤\`Users: ${userCount}\n\`🎤\`Players: ${client.aqua.players.size} / Playing: ${playingPlayers}`
+          value: `\`📦\` Guilds: ${guilds.length}\n\`👤\`Users: ${userCount}\n\`🎤\`Players: ${client.aqua.players.size} / Playing: ${playingPlayers || 0}`
         },
         {
           inline: true,

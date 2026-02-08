@@ -17,11 +17,17 @@ export default class previoiusCmds extends Command {
     try {
       const { client } = ctx
 
-      const player = client.aqua.players.get(ctx.guildId!)
+      const guildId = ctx.guildId
+      if (!guildId) return
+
+      const player = client.aqua.players.get(guildId)
+      if (!player) return
 
       if (player.current) player.queue.unshift(player.current)
 
-      player.queue.unshift(player.previous)
+      if (player.previous) {
+        player.queue.unshift(player.previous)
+      }
       player.stop()
 
       if (!player.playing && !player.paused && !player.queue.length) {
@@ -40,8 +46,8 @@ export default class previoiusCmds extends Command {
         ],
         flags: 64
       })
-    } catch (error) {
-      if (error.code === 10065) return
+    } catch (error: any) {
+      if (error?.code === 10065) return
     }
   }
 }

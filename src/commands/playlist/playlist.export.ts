@@ -1,12 +1,13 @@
 import {
   AttachmentBuilder,
-  type CommandContext,
-  createStringOption,
   Declare,
   Embed,
   Options,
-  SubCommand
+  SubCommand,
+  createStringOption,
+  type CommandContext
 } from 'seyfert'
+import type { Playlist, Track } from '../../shared/types'
 import { handlePlaylistAutocomplete } from '../../shared/utils'
 import { getPlaylistsCollection, getTracksCollection } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
@@ -49,8 +50,8 @@ function createEmbed(
   }
 
   const embed = new Embed()
-    .setColor(colors[type] || colors.default)
-    .setTitle(`${icons[type] || icons.default} ${title}`)
+    .setColor((colors as any)[type] || colors.default)
+    .setTitle(`${(icons as any)[type] || icons.default} ${title}`)
     .setTimestamp()
     .setFooter({
       text: `${ICONS.tracks} Kenium Music • Playlist System`,
@@ -69,34 +70,21 @@ function createEmbed(
   return embed
 }
 
-function _formatDuration(ms: number): string {
-  if (!ms || ms === 0) return '00:00'
-  const totalSeconds = Math.floor(ms / 1000)
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds
-      .toString()
-      .padStart(2, '0')}`
-  }
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`
-}
 
 @Declare({
   name: 'export',
   description: '📤 Export a playlist'
 })
+// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
 @Options({
   name: createStringOption({
     description: 'Playlist name',
     required: true,
-    autocomplete: async (interaction: any) => {
+    autocomplete: async (interaction) => {
       return handlePlaylistAutocomplete(interaction, playlistsCollection)
     }
   })
-})
+} as any)
 export class ExportCommand extends SubCommand {
   async run(ctx: CommandContext) {
     const { name } = ctx.options as { name: string }

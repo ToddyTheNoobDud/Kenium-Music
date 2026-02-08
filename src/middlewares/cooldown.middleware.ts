@@ -2,7 +2,7 @@ import { createMiddleware, Formatter } from 'seyfert'
 import { TimestampStyle } from 'seyfert/lib/common'
 
 export const cooldownMiddleware = createMiddleware<void>(
-  async ({ context, next, stop }) => {
+  async ({ context, next }) => {
     const inCooldown = context.client.cooldown.context(context)
 
     typeof inCooldown === 'number'

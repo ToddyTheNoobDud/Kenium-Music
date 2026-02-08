@@ -1,3 +1,4 @@
+import type { Player } from 'aqualink'
 import {
   Command,
   type CommandContext,
@@ -18,7 +19,7 @@ import { getContextLanguage } from '../utils/i18n'
       { name: 'song', value: 'track' },
       { name: 'queue', value: 'queue' }
     ]
-  })
+  }) as any
 })
 @Middlewares(['checkVoice', 'checkPlayer'])
 @Declare({
@@ -33,10 +34,13 @@ export default class LoopCommand extends Command {
       const t = ctx.t.get(lang)
       const { loop } = ctx.options as { loop: string }
 
-      const player = client.aqua.players.get(ctx.guildId!)
+      const player = client.aqua.players.get(ctx.guildId || '') as (Player & {
+        setLoop(v: number): void
+      }) | undefined
+      if (!player) return
       const loopMap: Record<string, number> = { none: 0, track: 1, queue: 2 }
       const loopValue = loopMap[loop] ?? 0
-      ;(player as any).setLoop(loopValue)
+      player.setLoop(loopValue)
 
       const status =
         loopValue === 0
@@ -56,7 +60,7 @@ export default class LoopCommand extends Command {
         embeds: [new Embed().setColor(0x100e09).setDescription(description)],
         flags: 64
       })
-    } catch (error) {
+    } catch (error: unknown) {
       if ((error as any)?.code === 10065) return
     }
   }

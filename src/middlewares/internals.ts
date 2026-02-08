@@ -6,7 +6,7 @@ export const checkPlayer = createMiddleware<void>(
 
     const { client } = context
 
-    const player = client.aqua.players.get(context.guildId!)
+    const player = client.aqua.players.get(context.guildId)
 
     if (!player) {
       await context.editOrReply({
@@ -31,7 +31,7 @@ export const checkVoice = createMiddleware<void>(
     if (!context.inGuild()) return next()
 
     const memberVoice = await context.member?.voice().catch(() => null)
-    const botvoice = await (await context.me()).voice().catch(() => null)
+    const botvoice = await (await context.me())?.voice().catch(() => null)
     if (
       !memberVoice ||
       (botvoice && botvoice.channelId !== memberVoice.channelId)
@@ -59,7 +59,7 @@ export const checkTrack = createMiddleware<void>(
 
     const { client } = context
 
-    const player = client.aqua.players.get(context.guildId!)
+    const player = client.aqua.players.get(context.guildId)
 
     if (!player?.current) {
       await context.editOrReply({

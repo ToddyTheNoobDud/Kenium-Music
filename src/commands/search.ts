@@ -36,7 +36,7 @@ const formatDuration = (ms: number): string => {
 
 const parseEmoji = (emoji: string): { name: string; id?: string } | null => {
   const match = REGEX_PATTERNS.CUSTOM_EMOJI.exec(emoji)
-  return match ? { name: match[1], id: match[2] } : { name: emoji }
+  return match ? { name: match[1] as string, id: match[2] as string } : { name: emoji }
 }
 
 const sanitizeQuery = (query: string): string => {
@@ -62,7 +62,7 @@ const sanitizeQuery = (query: string): string => {
       { name: 'Deezer', value: 'deezer' }
     ]
   })
-})
+} as any)
 @Middlewares(['checkVoice'])
 @Declare({
   name: 'search',
@@ -136,7 +136,10 @@ export default class SearchCommand extends Command {
     ctx: CommandContext,
     thele: any
   ): Promise<any> {
-    let player = ctx.client.aqua.players.get(ctx.interaction.guildId)
+    const guildId = ctx.interaction.guildId
+    if (!guildId) return null
+
+    let player = ctx.client.aqua.players.get(guildId as string)
 
     if (!player) {
       const voiceChannel = (await ctx.interaction.member?.voice())?.channelId
@@ -147,7 +150,7 @@ export default class SearchCommand extends Command {
 
       try {
         player = await ctx.client.aqua.createConnection({
-          guildId: ctx.guildId!,
+          guildId: guildId as string,
           voiceChannel,
           textChannel: ctx.channelId,
           deaf: true,
@@ -178,7 +181,7 @@ export default class SearchCommand extends Command {
         requester: ctx.interaction.user
       })
       return result.tracks?.slice(0, CONFIG.MAX_RESULTS) || []
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Search tracks error for ${source}:`, error)
       return []
     }
@@ -220,33 +223,6 @@ export default class SearchCommand extends Command {
     })
   }
 
-  private createMultiPlatformContainer(
-    query: string,
-    tracks: any[],
-    thele: any
-  ): Container {
-    return new Container({
-      components: [
-        {
-          type: 10,
-          content: `### 🎵 **${thele.commands.search.name.toUpperCase()}**\n> \`${query}\``
-        },
-        { type: 14, divider: true, spacing: 1 },
-        {
-          type: 10,
-          content: this.createTrackList(tracks, { emoji: '🎵' }, thele)
-        },
-        { type: 14, divider: true, spacing: 2 },
-        {
-          type: 1,
-          components: this.createSelectionButtons(
-            Math.min(tracks.length, CONFIG.MAX_RESULTS)
-          )
-        }
-      ],
-      accent_color: 0x5865f2
-    })
-  }
 
   private createPlatformButtons(currentPlatform: any): any[] {
     return Object.entries(MUSIC_PLATFORMS).map(([key, platform]) => {
@@ -335,38 +311,6 @@ export default class SearchCommand extends Command {
     })
   }
 
-  private setupMultiPlatformHandler(
-    message: any,
-    ctx: CommandContext,
-    player: any,
-    tracks: any[],
-    thele: any
-  ): void {
-    const collector = message.createComponentCollector({
-      filter: (i: any) => i.user.id === ctx.interaction.user.id,
-      idle: CONFIG.INTERACTION_TIMEOUT,
-      onStop: () => {
-        this.activeCollectors.delete(collector)
-        message
-          .delete?.()
-          .catch(() => message.edit?.({ components: [] }).catch(() => {}))
-      }
-    })
-
-    this.activeCollectors.add(collector)
-
-    // Handle track selection for multi-platform
-    for (let i = 0; i < Math.min(tracks.length, CONFIG.MAX_RESULTS); i++) {
-      collector.run(`ignore_select_${i}`, async (interaction: any) => {
-        try {
-          await interaction.deferUpdate()
-          await this.handleTrackSelection(interaction, player, tracks, thele)
-        } catch (error) {
-          console.error('Multi-platform track selection error:', error)
-        }
-      })
-    }
-  }
 
   private async handleTrackSelection(
     i: any,

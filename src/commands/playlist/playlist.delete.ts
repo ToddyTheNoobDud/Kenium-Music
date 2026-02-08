@@ -1,32 +1,36 @@
 import {
-  type CommandContext,
-  createStringOption,
   Declare,
   Options,
-  SubCommand
+  SubCommand,
+  createStringOption,
+  type CommandContext
 } from 'seyfert'
 import { createEmbed, handlePlaylistAutocomplete } from '../../shared/utils'
 import {
+  getDatabase,
   getPlaylistsCollection,
-  getTracksCollection,
-  getDatabase
+  getTracksCollection
 } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
+
+import type { Playlist } from '../../shared/types'
 
 const playlistsCollection = getPlaylistsCollection()
 @Declare({
   name: 'delete',
   description: '🗑️ Delete a playlist'
 })
+// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
 @Options({
   name: createStringOption({
     description: 'Playlist name',
     required: true,
-    autocomplete: async (interaction: any) => {
+    autocomplete: async (interaction) => {
+      const playlistsCollection = getPlaylistsCollection()
       return handlePlaylistAutocomplete(interaction, playlistsCollection)
     }
   })
-})
+} as any)
 export class DeleteCommand extends SubCommand {
   async run(ctx: CommandContext) {
     const { name: playlistName } = ctx.options as { name: string }
@@ -55,8 +59,11 @@ export class DeleteCommand extends SubCommand {
     }
 
     getDatabase().transaction(() => {
-      getTracksCollection().delete({ playlistId: playlist._id })
-      playlistsCollection.delete({ _id: playlist._id })
+      const playlistId = playlist._id
+      if (playlistId) {
+        getTracksCollection().delete({ playlistId })
+        playlistsCollection.delete({ _id: playlistId })
+      }
     })
 
     const embed = createEmbed(

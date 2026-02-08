@@ -7,7 +7,7 @@ import {
   Embed,
   Middlewares
 } from 'seyfert'
-import { ButtonStyle, ComponentType } from 'seyfert/lib/types'
+import { ButtonStyle } from 'seyfert/lib/types'
 import { getContextLanguage } from '../utils/i18n'
 
 const CONFIG = {
@@ -64,9 +64,21 @@ const CONFIG = {
 
 // Optimized regex patterns (compiled once)
 const COMMIT_TYPE_REGEX = /^([a-z]+)(?:\([^)]+\))?:\s*/i
-const COMMIT_MESSAGE_CLEANUP_REGEX = /^\w+(?:\([^)]+\))?:\s*/
+const COMMIT_MESSAGE_CLEAN_REGEX = /^\w+(?:\([^)]+\))?:\s*/
 
-async function fetchCommits(): Promise<any[]> {
+interface GithubCommit {
+  sha: string
+  html_url: string
+  commit: {
+    message: string
+    author: {
+      name: string
+      date: string
+    }
+  }
+}
+
+async function fetchCommits(): Promise<Record<string, unknown>[]> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 4000) // Reduced timeout
 
@@ -85,10 +97,10 @@ async function fetchCommits(): Promise<any[]> {
       throw new Error(`API Error: ${response.status}`)
     }
 
-    return await response.json()
-  } catch (error) {
+    return (await response.json()) as Record<string, unknown>[]
+  } catch (error: unknown) {
     clearTimeout(timeoutId)
-    if (error.name === 'AbortError') {
+    if ((error as any)?.name === 'AbortError') {
       throw new Error('Request timeout')
     }
     throw error
@@ -99,7 +111,7 @@ function formatCommitMessage(message: string): string {
   if (!message?.trim()) return 'No message'
 
   // Single regex operation instead of match + slice
-  const cleanMessage = message.replace(COMMIT_MESSAGE_CLEANUP_REGEX, '')
+  const cleanMessage = message.replace(COMMIT_MESSAGE_CLEAN_REGEX, '')
   const typeMatch = COMMIT_TYPE_REGEX.exec(message)
 
   // Optimized truncation
@@ -108,13 +120,14 @@ function formatCommitMessage(message: string): string {
       ? `${cleanMessage.slice(0, CONFIG.DISPLAY.COMMIT_MESSAGE_MAX_LENGTH)}...`
       : cleanMessage
 
-  return typeMatch
+  return typeMatch?.[1]
     ? `\`${typeMatch[1].toUpperCase()}\` ${truncated}`
     : truncated
 }
 
 function createChangelogPage(
   ctx: CommandContext,
+  // biome-ignore lint/suspicious/noExplicitAny: library requirement
   thele: any,
   currentPage: 'changelog' | 'commits' = 'changelog'
 ): Container {
@@ -147,13 +160,13 @@ function createChangelogPage(
         components: [
           {
             type: 2,
-            label: `${thele.invite.github}${CONFIG.DISPLAY.EMOJIS.REPO}`,
+            label: `${thele.invite.github as string}${CONFIG.DISPLAY.EMOJIS.REPO}`,
             style: 5,
             url: CONFIG.GITHUB.REPO_URL
           },
           {
             type: 2,
-            label: `${thele.invite.supportServer}${CONFIG.DISPLAY.EMOJIS.ISSUE}`,
+            label: `${thele.invite.supportServer as string}${CONFIG.DISPLAY.EMOJIS.ISSUE}`,
             style: 5,
             url: CONFIG.GITHUB.ISSUES_URL
           }
@@ -167,7 +180,8 @@ function createChangelogPage(
 
 function createCommitsPage(
   ctx: CommandContext,
-  commits: any[],
+  commits: GithubCommit[],
+  // biome-ignore lint/suspicious/noExplicitAny: library requirement
   thele: any,
   currentPage: 'changelog' | 'commits' = 'commits'
 ): Container {
@@ -176,12 +190,10 @@ function createCommitsPage(
     .map((commit) => {
       const shortSha = commit.sha.slice(0, 7)
       const message = formatCommitMessage(commit.commit.message)
-      const author = commit.commit.author.name
       const timestamp = Math.floor(
         new Date(commit.commit.author.date).getTime() / 1000
       )
-
-      return `> [\`${shortSha}\`](${commit.html_url}) ${message} by **${author}** <t:${timestamp}:R>`
+      return `> [\`${shortSha}\`](${commit.html_url}) ${message} by **${commit.commit.author.name}** <t:${timestamp}:R>`
     })
     .join('\n')
 
@@ -214,19 +226,19 @@ function createCommitsPage(
         components: [
           {
             type: 2,
-            label: `${thele.invite.github}${CONFIG.DISPLAY.EMOJIS.REPO}`,
+            label: `${thele.invite.github as string}${CONFIG.DISPLAY.EMOJIS.REPO}`,
             style: 5,
             url: CONFIG.GITHUB.REPO_URL
           },
           {
             type: 2,
-            label: `${thele.common.next}${CONFIG.DISPLAY.EMOJIS.COMMITS}`,
+            label: `${thele.common.next as string}${CONFIG.DISPLAY.EMOJIS.COMMITS}`,
             style: 5,
             url: CONFIG.GITHUB.COMMITS_URL
           },
           {
             type: 2,
-            label: `${thele.invite.supportServer}${CONFIG.DISPLAY.EMOJIS.ISSUE}`,
+            label: `${thele.invite.supportServer as string}${CONFIG.DISPLAY.EMOJIS.ISSUE}`,
             style: 5,
             url: CONFIG.GITHUB.ISSUES_URL
           }
@@ -240,15 +252,19 @@ function createCommitsPage(
 
 function createNavigationButtons(
   currentPage: 'changelog' | 'commits',
+  // biome-ignore lint/suspicious/noExplicitAny: library requirement
   thele: any
 ) {
+  const changelog = thele.changelog as string
+  const commits = thele.commits as string
+
   return {
     type: 1,
     components: [
       {
         type: 2,
         custom_id: 'ignore_changelog_page',
-        label: thele.common.previous || 'Changelog',
+        label: changelog,
         emoji: { name: '📝' },
         style:
           currentPage === 'changelog'
@@ -259,7 +275,7 @@ function createNavigationButtons(
       {
         type: 2,
         custom_id: 'ignore_commits_page',
-        label: thele.common.next || 'Commits',
+        label: commits,
         emoji: { name: '📜' },
         style:
           currentPage === 'commits'
@@ -284,11 +300,12 @@ function createNavigationButtons(
 })
 @Middlewares(['cooldown'])
 export default class Changelog extends Command {
-  private activeCollectors = new WeakSet<any>()
+  private activeCollectors = new WeakSet<object>()
 
   public override async run(ctx: CommandContext): Promise<void> {
     const lang = getContextLanguage(ctx)
-    const thele = ctx.t.get(lang)
+    // biome-ignore lint/suspicious/noExplicitAny: library requirement
+    const thele = ctx.t.get(lang) as any
 
     try {
       if (!ctx.deferred) await ctx.deferReply(true)
@@ -307,7 +324,12 @@ export default class Changelog extends Command {
       )
 
       // Set up button interaction handler
-      this.setupNavigationHandler(message, ctx, commits, thele)
+      this.setupNavigationHandler(
+        message,
+        ctx,
+        commits as unknown as GithubCommit[],
+        thele
+      )
     } catch (error) {
       console.error('Changelog error:', error)
 
@@ -315,25 +337,42 @@ export default class Changelog extends Command {
         .setColor(CONFIG.COLORS.ERROR)
         .setTitle(thele.errors.general)
         .setDescription(
-          `${thele.errors.commandError}\n\`\`\`\n${error.message || thele.common.unknown}\n\`\`\``
+          `${thele.errors.commandError}\n\`\`\`\n${(error as Error).message || thele.common.unknown}\n\`\`\``
         )
+        .addFields([
+          {
+            name: thele.github.title,
+            value: `[${thele.github.label}](${CONFIG.GITHUB.REPO_URL})`,
+            inline: true
+          },
+          {
+            name: thele.supportServer.title,
+            value: `[${thele.supportServer.label}](${CONFIG.GITHUB.ISSUES_URL})`,
+            inline: true
+          }
+        ])
         .setFooter({
           text: `Made with ❤️ by ${CONFIG.BOT.DEVELOPER}`,
-          iconUrl: ctx.client.me.avatarURL()
+          iconUrl: ctx.client.me.avatarURL() || ''
         })
 
-      await ctx.editOrReply({ embeds: [errorEmbed] })
+      await ctx.editOrReply({
+        embeds: [errorEmbed as unknown as Embed]
+      })
     }
   }
 
   private setupNavigationHandler(
+    // biome-ignore lint/suspicious/noExplicitAny: library requirement
     message: any,
     ctx: CommandContext,
-    commits: any[],
+    commits: GithubCommit[],
+    // biome-ignore lint/suspicious/noExplicitAny: library requirement
     thele: any
   ): void {
     const collector = message.createComponentCollector({
-      filter: (i: any) => i.user.id === ctx.interaction.user.id,
+      filter: (i: { user: { id: string } }) =>
+        i.user.id === ctx.interaction.user.id,
       idle: 300000, // 5 minutes timeout
       onStop: () => {
         this.activeCollectors.delete(collector)
@@ -344,6 +383,7 @@ export default class Changelog extends Command {
     this.activeCollectors.add(collector)
 
     // Handle changelog page button
+    // biome-ignore lint/suspicious/noExplicitAny: library requirement
     collector.run('ignore_changelog_page', async (interaction: any) => {
       try {
         await interaction.deferUpdate()
@@ -363,6 +403,7 @@ export default class Changelog extends Command {
     })
 
     // Handle commits page button
+    // biome-ignore lint/suspicious/noExplicitAny: library requirement
     collector.run('ignore_commits_page', async (interaction: any) => {
       try {
         await interaction.deferUpdate()

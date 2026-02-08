@@ -1,3 +1,4 @@
+import type { CommandContext } from 'seyfert'
 import { getGuildLang } from './db_helper'
 
 // Optimized: Using Set for O(1) validation
@@ -15,7 +16,7 @@ const VALID_LANGS = new Set([
   'th'
 ])
 
-const AVAILABLE_LANGUAGES = Object.freeze({
+const AVAILABLE_LANGUAGES: Record<string, string> = Object.freeze({
   en: 'English',
   br: 'Português (Brasil)',
   es: 'Espanhol (ES)',
@@ -32,18 +33,18 @@ const AVAILABLE_LANGUAGES = Object.freeze({
 const REPLACEMENT_REGEX = /\{(\w+)\}/g
 
 export const _functions = {
-  isValidLang: (lang) => VALID_LANGS.has(lang),
-  getContextLang: (guildId) => {
+  isValidLang: (lang: string) => VALID_LANGS.has(lang),
+  getContextLang: (guildId: string | undefined): string => {
     if (!guildId) return 'en'
     const guildLang = getGuildLang(guildId)
     return VALID_LANGS.has(guildLang) ? guildLang : 'en'
   }
 }
 
-export const getContextLanguage = (ctx) =>
+export const getContextLanguage = (ctx: CommandContext): string =>
   _functions.getContextLang(ctx.guildId)
 
-export const getContextTranslations = (ctx) => {
+export const getContextTranslations = (ctx: CommandContext): any => {
   const lang = getContextLanguage(ctx)
   try {
     return ctx.t.get(lang)
@@ -54,18 +55,25 @@ export const getContextTranslations = (ctx) => {
 
 export const isValidLanguage = _functions.isValidLang
 
-export const getLanguageDisplayName = (lang) =>
-  VALID_LANGS.has(lang) ? AVAILABLE_LANGUAGES[lang] : lang
+export const getLanguageDisplayName = (lang: string): string =>
+  VALID_LANGS.has(lang) ? (AVAILABLE_LANGUAGES[lang] as string) : lang
 
 export const getLanguageChoices = () =>
   Object.entries(AVAILABLE_LANGUAGES).map(([value, name]) => ({ name, value }))
 
-export const formatLocalizedString = (template, replacements) =>
-  template.replace(REPLACEMENT_REGEX, (match, key) =>
+export const formatLocalizedString = (
+  template: string,
+  replacements: Record<string, string | number>
+) =>
+  template.replace(REPLACEMENT_REGEX, (match: string, key: string) =>
     String(replacements[key] ?? match)
   )
 
-export const safeTranslate = (translations, key, fallback = key) => {
+export const safeTranslate = (
+  translations: any,
+  key: string,
+  fallback = key
+): string => {
   const keys = key.split('.')
   let current = translations
 

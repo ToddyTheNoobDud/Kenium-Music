@@ -35,7 +35,7 @@ export default class importcmds extends Command {
       const { client } = ctx
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
-      const { file } = ctx.options as { file: any }
+      const { file } = ctx.options as { file: { url: string } }
 
       const response = await fetch(file.url)
       const fileContent = await response.text()
@@ -50,7 +50,9 @@ export default class importcmds extends Command {
         })
         return
       }
-      const player = client.aqua.players.get(ctx.guildId!)
+      if (!ctx.guildId) return
+      const player = client.aqua.players.get(ctx.guildId)
+      if (!player) return
 
       const numberRegex = /^\d+\.\s*/
       const urlRegex =
@@ -69,13 +71,13 @@ export default class importcmds extends Command {
 
           const [first, second] = parts
 
-          if (urlRegex.test(first)) {
+          if (first && urlRegex.test(first)) {
             return { url: first, title: second || '' }
           }
 
           return {
             url: second || '',
-            title: first.replace(numberRegex, '')
+            title: first?.replace(numberRegex, '') || ''
           }
         })
         .filter((track) => track.url && urlRegex.test(track.url))
@@ -115,7 +117,7 @@ export default class importcmds extends Command {
         const results = await Promise.allSettled(
           batch.map(async (track) => {
             const result = await client.aqua.resolve({
-              query: track.url,
+              query: track.url || '',
               requester: ctx.interaction.user
             })
 
@@ -178,8 +180,8 @@ export default class importcmds extends Command {
         .setTimestamp()
 
       await ctx.editOrReply({ embeds: [resultEmbed], flags: 64 })
-    } catch (error) {
-      if (error.code === 10065) return
+    } catch (error: unknown) {
+      if ((error as any)?.code === 10065) return
     }
   }
 }

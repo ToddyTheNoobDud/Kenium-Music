@@ -1,13 +1,15 @@
 import { Cooldown, CooldownType } from '@slipher/cooldown'
+import type { Player } from 'aqualink'
 import {
   Command,
   type CommandContext,
+  Container,
   Declare,
   Middlewares,
-  Container
+  type UsingClient
 } from 'seyfert'
-import { getContextLanguage } from '../utils/i18n'
 import { _functions } from '../events/interactionCreate'
+import { getContextLanguage } from '../utils/i18n'
 
 @Cooldown({
   type: CooldownType.User,
@@ -20,7 +22,17 @@ import { _functions } from '../events/interactionCreate'
 })
 @Middlewares(['cooldown', 'checkPlayer'])
 export default class nowplayngcmds extends Command {
-  private createNowPlayingUI(player: any, track: any, client: any) {
+  private createNowPlayingUI(
+    player: Player,
+    track: {
+      title?: string
+      uri?: string
+      length?: number
+      requester?: { username?: string }
+      info?: { artworkUrl?: string | null }
+    },
+    client: UsingClient
+  ) {
     const { position = 0, volume = 0, loop } = player || {}
     const { title = 'Unknown', uri = '', length = 0, requester } = track || {}
     const platform = _functions.getPlatform(uri)
@@ -72,7 +84,12 @@ export default class nowplayngcmds extends Command {
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
 
-      const player = client.aqua.players.get(ctx.guildId!)
+      const guildId = ctx.guildId
+      if (!guildId) return
+
+      const player = client.aqua.players.get(guildId)
+      if (!player) return
+
       const track = player.current
 
       if (!track) {

@@ -1,15 +1,15 @@
 import { Cooldown, CooldownType } from '@slipher/cooldown'
+import type { Player } from 'aqualink'
 import {
   Command,
   type CommandContext,
+  Container,
   Declare,
   Embed,
-  Middlewares,
-  Container
+  Middlewares
 } from 'seyfert'
-import { lru } from 'tiny-lru'
-import { Musixmatch } from '../utils/musiclyrics'
 import { getContextLanguage } from '../utils/i18n'
+import { Musixmatch } from '../utils/musiclyrics'
 
 const MUSIXMATCH = new Musixmatch()
 
@@ -19,7 +19,6 @@ const ERROR_COLOR = 0xe74c3c
 const SESSION_TIMEOUT_MS = 300000
 const SONG_END_BUFFER_MS = 5000
 
-const MAX_SESSIONS = 100
 const MAX_DRIFT_MS = 10000
 
 const MIN_EDIT_DELAY_MS = 150
@@ -37,9 +36,10 @@ type LyricLine = {
 }
 
 interface KaraokeSession {
+  // biome-ignore lint/suspicious/noExplicitAny: message is a dynamic Discord message object
   message: any
   lines: LyricLine[]
-  player: any
+  player: Player
 
   updateTimer: NodeJS.Timeout
   timeout: NodeJS.Timeout
@@ -80,7 +80,9 @@ const _findCurrentLineIndex = (lines: LyricLine[], currentTimeMs: number) => {
 
   while (left <= right) {
     const mid = Math.floor((left + right) / 2)
-    const ts = _lineStartMs(lines[mid])
+    const currentLine = lines[mid]
+    if (!currentLine) break
+    const ts = _lineStartMs(currentLine)
 
     if (ts <= currentTimeMs) {
       result = mid
@@ -146,6 +148,8 @@ const _createKaraokeStageContainer = (
   const current = lines[safeIdx]
   const next = lines[safeIdx + 1]
 
+  if (!current) return new Container({ components: [] })
+
   const segStart = _lineStartMs(current)
   const segEnd = next ? _lineStartMs(next) : segStart + 4000
 
@@ -187,6 +191,7 @@ const _createKaraokeStageContainer = (
 
 const _fetchKaraokeLyrics = async (
   query: string | undefined,
+  // biome-ignore lint/suspicious/noExplicitAny: currentTrack is a dynamic track object
   currentTrack: any
 ) => {
   let searchQuery = query?.trim() ?? ''
@@ -216,26 +221,26 @@ const _fetchKaraokeLyrics = async (
   }
 }
 
-class KaraokeSessionRegistry {
-  private static cache = lru<KaraokeSession>(MAX_SESSIONS)
+const KaraokeSessionRegistry = {
+  cache: new Map<string, KaraokeSession>(),
 
-  static get(guildId: string) {
+  get(guildId: string) {
     return KaraokeSessionRegistry.cache.get(guildId)
-  }
+  },
 
-  static has(guildId: string) {
+  has(guildId: string) {
     const session = KaraokeSessionRegistry.cache.get(guildId)
     if (!session) return false
 
-    return session.player && session.player.connected
-  }
+    return session.player?.connected
+  },
 
-  static async add(guildId: string, session: KaraokeSession) {
+  async add(guildId: string, session: KaraokeSession) {
     await KaraokeSessionRegistry.cleanup(guildId)
     KaraokeSessionRegistry.cache.set(guildId, session)
-  }
+  },
 
-  static async cleanup(guildId: string) {
+  async cleanup(guildId: string) {
     const session = KaraokeSessionRegistry.cache.get(guildId)
     if (!session) return
 
@@ -259,9 +264,9 @@ class KaraokeSessionRegistry {
     }
 
     KaraokeSessionRegistry.cache.delete(guildId)
-  }
+  },
 
-  static async cleanupAll() {
+  async cleanupAll() {
     const keys = KaraokeSessionRegistry.cache.keys()
     for (const key of keys) {
       await KaraokeSessionRegistry.cleanup(key)
@@ -306,6 +311,7 @@ export default class KaraokeCommand extends Command {
     return session.fallbackStartPosition + elapsedMs
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: player is a dynamic player object
   private _isPlayerPaused(player: any): boolean {
     return player?.paused === true || player?.playing === false
   }
@@ -324,6 +330,7 @@ export default class KaraokeCommand extends Command {
     const safeIdx = Math.max(0, idx)
 
     const current = lines[safeIdx]
+    if (!current) return 1000
     const next = lines[safeIdx + 1]
 
     const segStart = _lineStartMs(current)
@@ -364,9 +371,12 @@ export default class KaraokeCommand extends Command {
     if (session.updateTimer.unref) session.updateTimer.unref()
   }
 
-  private async _tick(guildId: string) {
+  private async _tick(guildId: string, errorCount = 0): Promise<void> {
     const session = KaraokeSessionRegistry.get(guildId)
-    if (!session) return
+    if (!session || session.player.destroyed) {
+      await KaraokeSessionRegistry.cleanup(guildId)
+      return
+    }
 
     if (!KaraokeSessionRegistry.has(guildId)) {
       await KaraokeSessionRegistry.cleanup(guildId)
@@ -391,12 +401,20 @@ export default class KaraokeCommand extends Command {
       isPaused
     )
 
-    const edited = await session.message
-      .edit({ components: [container] })
-      .then(() => true)
-      .catch(() => false)
+    try {
+      await session.message.edit({ components: [container] })
+    } catch (error) {
+      const err = error as { code?: number }
+      if (err.code === 10065 || err.code === 10008) {
+        await KaraokeSessionRegistry.cleanup(guildId)
+        return
+      }
 
-    if (!edited) {
+      if (errorCount < 3) {
+        this._scheduleNextTick(guildId, 1000)
+        return
+      }
+
       await KaraokeSessionRegistry.cleanup(guildId)
       return
     }
@@ -411,7 +429,10 @@ export default class KaraokeCommand extends Command {
     const lang = getContextLanguage(ctx)
     const t = ctx.t.get(lang)
 
-    const player = ctx.client.aqua.players.get(ctx.guildId)
+    const guildId = ctx.guildId
+    if (!guildId) return
+
+    const player = ctx.client.aqua.players.get(guildId)
     if (!player) {
       await ctx.editOrReply({
         embeds: [_createErrorEmbed(t.karaoke.noActivePlayer, lang, ctx)]
@@ -419,14 +440,14 @@ export default class KaraokeCommand extends Command {
       return
     }
 
-    if (KaraokeSessionRegistry.has(ctx.guildId)) {
+    if (KaraokeSessionRegistry.has(guildId)) {
       await ctx.editOrReply({
         embeds: [_createErrorEmbed(t.karaoke.sessionAlreadyActive, lang, ctx)]
       })
       return
     }
 
-    await KaraokeSessionRegistry.cleanup(ctx.guildId)
+    await KaraokeSessionRegistry.cleanup(guildId)
 
     const result = await _fetchKaraokeLyrics(undefined, player.current)
     if (!result) {
@@ -454,14 +475,14 @@ export default class KaraokeCommand extends Command {
     if (!message) return
 
     const timeout = setTimeout(() => {
-      KaraokeSessionRegistry.cleanup(ctx.guildId)
+      KaraokeSessionRegistry.cleanup(guildId)
     }, SESSION_TIMEOUT_MS)
     if (timeout.unref) timeout.unref()
 
     const updateTimer = setTimeout(() => {}, 0)
     if (updateTimer.unref) updateTimer.unref()
 
-    await KaraokeSessionRegistry.add(ctx.guildId, {
+    await KaraokeSessionRegistry.add(guildId, {
       message,
       lines: result.lines,
       player,
@@ -472,7 +493,7 @@ export default class KaraokeCommand extends Command {
       title
     })
 
-    this._scheduleNextTick(ctx.guildId, 0)
+    this._scheduleNextTick(guildId, 0)
   }
 }
 

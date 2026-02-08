@@ -1,5 +1,5 @@
-// Optimized: Removed duplicate color values, using single reference
-const BASE_COLOR = 0x100e09
+// Single color constant used throughout the app
+export const EMBED_COLOR = 0x100e09
 
 export const ICONS = Object.freeze({
   music: '🎵',
@@ -23,13 +23,13 @@ export const ICONS = Object.freeze({
   delete: '🗑️'
 })
 
-// Optimized: All colors use same value, simplified to single constant
+// All colors use same value for consistent branding
 export const COLORS = Object.freeze({
-  primary: BASE_COLOR,
-  success: BASE_COLOR,
-  error: BASE_COLOR,
-  warning: BASE_COLOR,
-  info: BASE_COLOR
+  primary: EMBED_COLOR,
+  success: EMBED_COLOR,
+  error: EMBED_COLOR,
+  warning: EMBED_COLOR,
+  info: EMBED_COLOR
 })
 
 export const LIMITS = Object.freeze({

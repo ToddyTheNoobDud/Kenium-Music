@@ -1,27 +1,29 @@
 import process from 'node:process'
 import 'dotenv/config'
+import { CooldownManager } from '@slipher/cooldown'
+import { Aqua } from 'aqualink'
 import {
   Client,
   type HttpClient,
-  type ParseClient,
   LimitedMemoryAdapter,
-  type ParseMiddlewares,
-  type ParseLocales
+  type ParseClient,
+  type ParseLocales,
+  type ParseMiddlewares
 } from 'seyfert'
-import { CooldownManager } from '@slipher/cooldown'
-import { middlewares } from './src/middlewares/middlewares'
-import { Aqua } from 'aqualink'
+import type { Player, Track } from 'aqualink'
 import {
-  createNowPlayingEmbed,
-  _functions
+  cleanupAllKaraokeSessions,
+  cleanupKaraokeSession,
+  hasKaraokeSession
+} from './src/commands/karaoke'
+import {
+  _functions,
+  createNowPlayingEmbed
 } from './src/events/interactionCreate'
 import type English from './src/languages/en'
-import {
-  hasKaraokeSession,
-  cleanupKaraokeSession,
-  cleanupAllKaraokeSessions
-} from './src/commands/karaoke'
+import { middlewares } from './src/middlewares/middlewares'
 import { closeDatabase, initDatabase } from './src/utils/db'
+
 // Constants
 const PRESENCE_UPDATE_INTERVAL = 60000
 const VOICE_STATUS_LENGTH = 30
@@ -42,11 +44,11 @@ const aqua = new Aqua(
   client,
   [
     {
-      host: NODE_HOST,
-      auth: NODE_PASSWORD,
+      host: NODE_HOST as string,
+      auth: NODE_PASSWORD as string,
       ssl: NODE_SECURE === 'true',
-      port: NODE_PORT,
-      name: NODE_NAME
+      port: NODE_PORT as string,
+      name: NODE_NAME as string
     }
   ],
   {
@@ -65,7 +67,7 @@ aqua.init(id)
 Object.assign(client, { aqua })
 
 const state = {
-  presenceInterval: null,
+  presenceInterval: null as NodeJS.Timeout | null,
   lastVoiceStatusUpdate: 0,
   lastErrorLog: 0,
   cachedGuildCount: 0,
@@ -73,7 +75,7 @@ const state = {
   lastCountUpdate: 0
 }
 
-const cleanupPlayer = (player) => {
+const cleanupPlayer = (player: Player) => {
   const voiceChannel = player.voiceChannel || player._lastVoiceChannel
   if (voiceChannel)
     client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
@@ -91,33 +93,35 @@ const shutdown = async () => {
     clearInterval(state.presenceInterval)
     state.presenceInterval = null
   }
-  await aqua.savePlayer().catch(() => {})
-  await cleanupAllKaraokeSessions().catch(() => {})
+  await aqua.savePlayer().catch((e) => console.log(e))
+  await cleanupAllKaraokeSessions().catch((e) => console.log(e))
   closeDatabase()
   process.exit(0)
 }
 
-export const updatePresence = (clientInstance) => {
+
+const PRESENCE_ACTIVITIES = Object.freeze([
+  {
+    name: '⚡ Kenium 4.9.2 ⚡',
+    type: 1,
+    url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
+  },
+  {
+    name: '{users} users',
+    type: 1,
+    url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
+  },
+  {
+    name: '{guilds} servers',
+    type: 1,
+    url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
+  }
+])
+
+export const updatePresence = (clientInstance: Client) => {
   if (state.presenceInterval) clearInterval(state.presenceInterval)
 
   let activityIndex = 0
-  const activities = [
-    {
-      name: '⚡ Kenium 4.9.2 ⚡',
-      type: 1,
-      url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
-    },
-    {
-      name: '{users} users',
-      type: 1,
-      url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
-    },
-    {
-      name: '{guilds} servers',
-      type: 1,
-      url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
-    }
-  ]
 
   const timer = setInterval(() => {
     if (!clientInstance.me?.id) return
@@ -132,13 +136,16 @@ export const updatePresence = (clientInstance) => {
       state.lastCountUpdate = now
     }
 
-    const currentActivity = activities[activityIndex++ % activities.length]
+    const currentActivity =
+      PRESENCE_ACTIVITIES[activityIndex++ % PRESENCE_ACTIVITIES.length]
+    if (!currentActivity) return
     const activityName = currentActivity.name
       .replace('{users}', String(state.cachedUserCount))
       .replace('{guilds}', String(state.cachedGuildCount))
 
     clientInstance.gateway?.setPresence({
       activities: [{ ...currentActivity, name: activityName }],
+      // @ts-expect-error
       status: 'idle',
       since: now,
       afk: true
@@ -146,7 +153,7 @@ export const updatePresence = (clientInstance) => {
   }, PRESENCE_UPDATE_INTERVAL)
 
   if (timer.unref) timer.unref()
-  state.presenceInterval = timer
+  state.presenceInterval = timer as unknown as NodeJS.Timeout
 }
 
 client.setServices({
@@ -167,8 +174,8 @@ client.setServices({
   }
 })
 
-aqua.on('trackStart', async (player, track, payload) => {
-  const channel = client.cache.channels.get(player.textChannel)
+aqua.on('trackStart', async (player: Player, track: Track, payload: any) => {
+  const channel = client.cache.channels?.get(player.textChannel)
   if (!channel) return
   if (payload?.resumed) return
 
@@ -205,8 +212,8 @@ aqua.on('trackStart', async (player, track, payload) => {
   }
 })
 
-aqua.on('trackError', async (player, track, payload) => {
-  const channel = client.cache.channels.get(player.textChannel)
+aqua.on('trackError', async (player: Player, track: Track, payload: any) => {
+  const channel = client.cache.channels?.get(player.textChannel)
   if (!channel) return
 
   const errorMsg = payload.exception?.message || 'Playback failed'
@@ -220,13 +227,10 @@ aqua.on('trackError', async (player, track, payload) => {
 })
 
 aqua.on('debug', (message) => {
-  console.log(message)
-})
-aqua.on('debug', (message) => {
   client.logger.debug(`[Aqua Debug] ${message}`)
 })
 
-const cleanupHandler = (player) => cleanupPlayer(player)
+const cleanupHandler = (player: Player) => cleanupPlayer(player)
 aqua.on('playerDestroy', cleanupHandler)
 aqua.on('queueEnd', cleanupHandler)
 aqua.on('trackEnd', cleanupHandler)
@@ -261,11 +265,10 @@ client
       .uploadCommands({ cachePath: './commands.json' })
       .catch(() => {})
     await initDatabase().catch(console.error)
-    aqua.loadPlayers().catch(() => {})
-    client.cooldown = new CooldownManager(client as any)
+    client.cooldown = new CooldownManager(client as unknown as Client)
     updatePresence(client)
   })
-  .catch((error) => {
+  .catch((_error) => {
     process.exit(1)
   })
 
