@@ -154,7 +154,9 @@ class VoiceManager {
     if (this.stopped) return
     this.cleanupTimer = _functions.unrefTimeout(() => {
       if (this.stopped) return
-      this.breaker.cleanup()
+      try {
+        this.breaker.cleanup()
+      } catch {}
       this.setupCleanup()
     }, CLEANUP_INTERVAL)
   }
@@ -429,7 +431,8 @@ class VoiceManager {
   cleanup() {
     this.stopped = true
     for (const t of this.timeouts.values()) _functions.clearTimer(t)
-    for (const p of (this.pending as any).values()) _functions.clearTimer(p.timer)
+    for (const p of (this.pending as any).values())
+      _functions.clearTimer(p.timer)
     _functions.clearTimer(this.cleanupTimer)
 
     this.timeouts.clear()

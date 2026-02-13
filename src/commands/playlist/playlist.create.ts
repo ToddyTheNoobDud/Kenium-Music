@@ -1,9 +1,9 @@
 import {
+  type CommandContext,
+  createStringOption,
   Declare,
   Options,
-  SubCommand,
-  createStringOption,
-  type CommandContext
+  SubCommand
 } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
 import { ICONS, LIMITS } from '../../shared/constants'

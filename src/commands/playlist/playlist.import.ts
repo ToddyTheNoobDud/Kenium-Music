@@ -1,12 +1,12 @@
 import {
+  type Attachment,
+  type CommandContext,
+  createAttachmentOption,
+  createStringOption,
   Declare,
   Embed,
   Options,
-  SubCommand,
-  createAttachmentOption,
-  createStringOption,
-  type Attachment,
-  type CommandContext
+  SubCommand
 } from 'seyfert'
 import type { Playlist, Track } from '../../shared/types'
 import {
@@ -205,18 +205,20 @@ export class ImportCommand extends SubCommand {
 
           playlistsCollection.insert(insertedPlaylist)
 
-          const tracksToInsert: Track[] = validTracks.map((track: any, i: number) => ({
-            _id: `tr_${Math.random().toString(36).slice(2, 11)}_${Date.now() + i}`,
-            playlistId: insertedPlaylist._id,
-            title: track.title,
-            uri: track.uri,
-            author: track.author,
-            duration: track.duration,
-            addedAt: timestamp,
-            addedBy: userId,
-            source: track.source || determineSource(track.uri),
-            identifier: track.identifier || ''
-          }))
+          const tracksToInsert: Track[] = validTracks.map(
+            (track: any, i: number) => ({
+              _id: `tr_${Math.random().toString(36).slice(2, 11)}_${Date.now() + i}`,
+              playlistId: insertedPlaylist._id,
+              title: track.title,
+              uri: track.uri,
+              author: track.author,
+              duration: track.duration,
+              addedAt: timestamp,
+              addedBy: userId,
+              source: track.source || determineSource(track.uri),
+              identifier: track.identifier || ''
+            })
+          )
 
           tracksCollection.insert(tracksToInsert)
         })

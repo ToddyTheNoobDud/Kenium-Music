@@ -8,8 +8,13 @@ const BATCH_SIZE = 10
 const BATCH_DELAY = 500
 const STARTUP_DELAY = 6000
 
-const settingsCollection = getSettingsCollection()
+let settingsCollection: ReturnType<typeof getSettingsCollection> | null = null
 let clientInstance: any = null
+
+const getSettings = () => {
+  if (!settingsCollection) settingsCollection = getSettingsCollection()
+  return settingsCollection
+}
 
 const updateNickname = async (guild: any) => {
   const botMember = guild.members?.me
@@ -109,7 +114,7 @@ const processGuild = async (client: any, settings: any) => {
 const processAutoJoin = async (client: any) => {
   client.logger.info('[24/7] Scanning database for 24/7 guilds...')
 
-  const enabled = settingsCollection.find(
+  const enabled = getSettings().find(
     {
       twentyFourSevenEnabled: true,
       voiceChannelId: { $ne: null },

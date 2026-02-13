@@ -21,7 +21,7 @@ const SONG_END_BUFFER_MS = 5000
 
 const MAX_DRIFT_MS = 10000
 
-const MIN_EDIT_DELAY_MS = 150
+const MIN_EDIT_DELAY_MS = 1200
 const MAX_EDIT_DELAY_MS = 2000
 const SCHEDULER_JITTER_MS = 25
 
@@ -358,14 +358,14 @@ export default class KaraokeCommand extends Command {
     return delay
   }
 
-  private _scheduleNextTick(guildId: string, delayMs: number) {
+  private _scheduleNextTick(guildId: string, delayMs: number, errorCount = 0) {
     const session = KaraokeSessionRegistry.get(guildId)
     if (!session) return
 
     clearTimeout(session.updateTimer)
 
     session.updateTimer = setTimeout(() => {
-      this._tick(guildId).catch(() => KaraokeSessionRegistry.cleanup(guildId))
+      this._tick(guildId, errorCount).catch(() => KaraokeSessionRegistry.cleanup(guildId))
     }, delayMs)
 
     if (session.updateTimer.unref) session.updateTimer.unref()
@@ -411,7 +411,7 @@ export default class KaraokeCommand extends Command {
       }
 
       if (errorCount < 3) {
-        this._scheduleNextTick(guildId, 1000)
+        this._scheduleNextTick(guildId, 1000, errorCount + 1)
         return
       }
 
@@ -420,7 +420,7 @@ export default class KaraokeCommand extends Command {
     }
 
     const delay = this._computeNextEditDelayMs(session, currentTimeMs, isPaused)
-    this._scheduleNextTick(guildId, delay)
+    this._scheduleNextTick(guildId, delay, 0)
   }
 
   public override async run(ctx: CommandContext): Promise<void> {
@@ -493,7 +493,7 @@ export default class KaraokeCommand extends Command {
       title
     })
 
-    this._scheduleNextTick(guildId, 0)
+    this._scheduleNextTick(guildId, 0, 0)
   }
 }
 

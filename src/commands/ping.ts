@@ -33,7 +33,10 @@ const _functions = {
       .setTitle(t.ping.title)
       .setDescription(description)
       .setTimestamp()
-      .setFooter({ text: `Shard ${shardId}`, ...(avatarURL ? { iconUrl: avatarURL } : {}) })
+      .setFooter({
+        text: `Shard ${shardId}`,
+        ...(avatarURL ? { iconUrl: avatarURL } : {})
+      })
   },
 
   getPlayerPing: (client: UsingClient, guildId: string): number => {

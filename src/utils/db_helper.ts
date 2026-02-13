@@ -72,8 +72,6 @@ export const _functions = {
   })
 }
 
-
-
 class DatabaseManager {
   static instance: DatabaseManager | null = null
 
@@ -171,9 +169,7 @@ class DatabaseManager {
           const existingDocs = collection.find({
             _id: { $in: idsToFetch }
           }) as GuildSettings[]
-          existingMap = new Map(
-            existingDocs.map((d) => [String(d._id), d])
-          )
+          existingMap = new Map(existingDocs.map((d) => [String(d._id), d]))
         }
 
         const nowIso = new Date().toISOString()

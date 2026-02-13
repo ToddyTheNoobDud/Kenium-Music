@@ -145,12 +145,15 @@ export class Musixmatch {
     } catch {}
   }
 
-  async apiGet(url: string): Promise<any> {
+  async apiGet(url: string, externalSignal?: AbortSignal): Promise<any> {
     const controller = new AbortController()
     const timeoutId = setTimeout(
       () => controller.abort(),
       this.requestTimeoutMs
     )
+
+    const onExternalAbort = () => controller.abort()
+    externalSignal?.addEventListener('abort', onExternalAbort, { once: true })
 
     try {
       const response = await fetch(url, {
@@ -169,6 +172,7 @@ export class Musixmatch {
       return data.message.body
     } finally {
       clearTimeout(timeoutId)
+      externalSignal?.removeEventListener('abort', onExternalAbort)
     }
   }
 
@@ -240,7 +244,8 @@ export class Musixmatch {
 
   async callMxm(
     endpoint: string,
-    params: Record<string, string | undefined>
+    params: Record<string, string | undefined>,
+    signal?: AbortSignal
   ): Promise<any> {
     try {
       const token = await this.getToken()
@@ -249,7 +254,7 @@ export class Musixmatch {
         app_id: APP_ID,
         usertoken: token
       })
-      return await this.apiGet(url)
+      return await this.apiGet(url, signal)
     } catch (err) {
       if (_functions.isAuthError(err)) {
         await this.resetToken(err.hint?.toLowerCase().includes('captcha'))
@@ -347,8 +352,13 @@ export class Musixmatch {
     this.cache.set(key, { value, expires: Date.now() + this.cacheTTL })
   }
 
-  async raceForFirst<T>(promises: Promise<T | null>[]): Promise<T | null> {
-    if (!promises.length) return null
+  async raceForFirst<T>(
+    factories: Array<(signal: AbortSignal) => Promise<T | null>>
+  ): Promise<T | null> {
+    if (!factories.length) return null
+    const controller = new AbortController()
+    const promises = factories.map((fn) => fn(controller.signal))
+
     return new Promise((resolve) => {
       let completed = 0
       let resolved = false
@@ -358,6 +368,7 @@ export class Musixmatch {
         if (resolved) return ++completed
         if (result) {
           resolved = true
+          controller.abort()
           return resolve(result)
         }
         if (++completed === total) resolve(null)
@@ -384,32 +395,48 @@ export class Musixmatch {
 
     try {
       if (parsed.artist) {
-        const macroPromise = this.callMxm(ENDPOINTS.ALT_LYRICS, {
-          format: 'json',
-          namespace: 'lyrics_richsynched',
-          subtitle_format: 'mxm',
-          q_artist: parsed.artist,
-          q_track: parsed.title
-        }).then((body) => this.formatMacroResult(body))
+        result = await this.raceForFirst([
+          (signal) =>
+            this.callMxm(
+              ENDPOINTS.ALT_LYRICS,
+              {
+                format: 'json',
+                namespace: 'lyrics_richsynched',
+                subtitle_format: 'mxm',
+                q_artist: parsed.artist,
+                q_track: parsed.title
+              },
+              signal
+            ).then((body) => this.formatMacroResult(body)),
 
-        const searchPromise = this.callMxm(ENDPOINTS.SEARCH, {
-          page_size: '1',
-          page: '1',
-          s_track_rating: 'desc',
-          q_track: parsed.title,
-          q_artist: parsed.artist
-        }).then(async (body) => {
-          const track = body?.track_list?.[0]?.track
-          if (!track) return null
-          const lyricsBody = await this.callMxm(ENDPOINTS.LYRICS, {
-            subtitle_format: 'mxm',
-            track_id: String(track.track_id)
-          })
-          const subtitles = lyricsBody?.subtitle?.subtitle_body
-          return subtitles ? this.formatResult(subtitles, null, track) : null
-        })
-
-        result = await this.raceForFirst([macroPromise, searchPromise])
+          (signal) =>
+            this.callMxm(
+              ENDPOINTS.SEARCH,
+              {
+                page_size: '1',
+                page: '1',
+                s_track_rating: 'desc',
+                q_track: parsed.title,
+                q_artist: parsed.artist
+              },
+              signal
+            ).then(async (body) => {
+              const track = body?.track_list?.[0]?.track
+              if (!track) return null
+              const lyricsBody = await this.callMxm(
+                ENDPOINTS.LYRICS,
+                {
+                  subtitle_format: 'mxm',
+                  track_id: String(track.track_id)
+                },
+                signal
+              )
+              const subtitles = lyricsBody?.subtitle?.subtitle_body
+              return subtitles
+                ? this.formatResult(subtitles, null, track)
+                : null
+            })
+        ])
       } else {
         const searchBody = await this.callMxm(ENDPOINTS.SEARCH, {
           page_size: '1',

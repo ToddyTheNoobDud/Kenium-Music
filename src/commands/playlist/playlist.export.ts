@@ -1,11 +1,11 @@
 import {
   AttachmentBuilder,
+  type CommandContext,
+  createStringOption,
   Declare,
   Embed,
   Options,
-  SubCommand,
-  createStringOption,
-  type CommandContext
+  SubCommand
 } from 'seyfert'
 import type { Playlist, Track } from '../../shared/types'
 import { handlePlaylistAutocomplete } from '../../shared/utils'
@@ -69,7 +69,6 @@ function createEmbed(
 
   return embed
 }
-
 
 @Declare({
   name: 'export',

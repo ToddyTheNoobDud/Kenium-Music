@@ -36,7 +36,9 @@ const formatDuration = (ms: number): string => {
 
 const parseEmoji = (emoji: string): { name: string; id?: string } | null => {
   const match = REGEX_PATTERNS.CUSTOM_EMOJI.exec(emoji)
-  return match ? { name: match[1] as string, id: match[2] as string } : { name: emoji }
+  return match
+    ? { name: match[1] as string, id: match[2] as string }
+    : { name: emoji }
 }
 
 const sanitizeQuery = (query: string): string => {
@@ -223,7 +225,6 @@ export default class SearchCommand extends Command {
     })
   }
 
-
   private createPlatformButtons(currentPlatform: any): any[] {
     return Object.entries(MUSIC_PLATFORMS).map(([key, platform]) => {
       const emoji = parseEmoji(platform.emoji) || parseEmoji(platform.icon)
@@ -310,7 +311,6 @@ export default class SearchCommand extends Command {
       )
     })
   }
-
 
   private async handleTrackSelection(
     i: any,

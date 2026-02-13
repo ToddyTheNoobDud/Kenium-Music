@@ -21,7 +21,6 @@ const TITLE_ICONS = Object.freeze({
   info: 'ℹ️'
 })
 
-
 export const _functions = {
   formatSeconds: (totalSeconds: number) => {
     const hours = Math.floor(totalSeconds / 3600)

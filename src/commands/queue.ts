@@ -401,7 +401,9 @@ export default class QueueCommand extends Command {
     const lang = getContextLanguage(ctx)
     const thele = ctx.t.get(lang)
     try {
-      const player = ctx.client?.aqua?.players?.get(ctx.interaction.guildId as string)
+      const player = ctx.client?.aqua?.players?.get(
+        ctx.interaction.guildId as string
+      )
       if (!player) {
         await ctx.editOrReply({
           content: thele.queue.noActivePlayerFound,

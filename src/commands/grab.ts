@@ -31,7 +31,6 @@ interface GrabTrack {
 })
 @Middlewares(['checkPlayer'])
 export default class Grab extends Command {
-
   private createGrabNowPlayingUI(
     player: GrabPlayer,
     track: GrabTrack,

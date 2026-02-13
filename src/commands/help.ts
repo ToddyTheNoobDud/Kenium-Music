@@ -10,8 +10,8 @@ const EPHEMERAL_FLAG = 64 | 32768
 })
 export default class HelpCommand extends Command {
   public override async run(ctx: CommandContext) {
-    const commands = Array.from(ctx.client.commands.values).sort((a: any, b: any) =>
-      a.name.localeCompare(b.name)
+    const commands = Array.from(ctx.client.commands.values).sort(
+      (a: any, b: any) => a.name.localeCompare(b.name)
     )
 
     const registeredCommands = await ctx.client.proxy

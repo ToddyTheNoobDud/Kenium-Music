@@ -1,6 +1,6 @@
+import type { Playlist, Track } from '../shared/types'
 import { migrateDatabase } from './migration'
 import { SimpleDB } from './simpleDB'
-import type { Playlist, Track } from '../shared/types'
 
 let dbInstance: SimpleDB | null = null
 

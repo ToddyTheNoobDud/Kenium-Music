@@ -272,7 +272,10 @@ export default class LyricsCommand extends Command {
 
       // Primary lyrics source
       try {
-        lyricsResult = await fetchMusixmatchLyrics(search || '', player.current as any)
+        lyricsResult = await fetchMusixmatchLyrics(
+          search || '',
+          player.current as any
+        )
       } catch (primaryError: unknown) {
         console.log('Primary lyrics failed:', (primaryError as any)?.message)
       }

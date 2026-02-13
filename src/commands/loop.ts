@@ -34,9 +34,11 @@ export default class LoopCommand extends Command {
       const t = ctx.t.get(lang)
       const { loop } = ctx.options as { loop: string }
 
-      const player = client.aqua.players.get(ctx.guildId || '') as (Player & {
-        setLoop(v: number): void
-      }) | undefined
+      const player = client.aqua.players.get(ctx.guildId || '') as
+        | (Player & {
+            setLoop(v: number): void
+          })
+        | undefined
       if (!player) return
       const loopMap: Record<string, number> = { none: 0, track: 1, queue: 2 }
       const loopValue = loopMap[loop] ?? 0

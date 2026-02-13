@@ -15,11 +15,19 @@ export default createEvent({
         player.connection._lastVoiceDataUpdate = 0
       }
 
+      if (!player.textChannel && player._lastTextChannel) {
+        player.textChannel = player._lastTextChannel
+      }
+
       if (player.nowPlayingMessage) {
-        client.messages.fetch(
-          player.nowPlayingMessage.channelId,
-          player.textChannel
-        )
+        client.messages
+          .fetch(
+            player.nowPlayingMessage.id,
+            player.nowPlayingMessage.channelId
+          )
+          .catch(() => {
+            player.nowPlayingMessage = null
+          })
       }
 
       player.send({

@@ -24,8 +24,17 @@ const RESOLVE_CONCURRENCY = 5
 const TITLE_SANITIZE_RE = /[^\w\s\-_.]/g
 const WORD_START_RE = /\b\w/g
 
-const playlistsCollection = getPlaylistsCollection()
-const tracksCollection = getTracksCollection()
+let _playlistsCol: ReturnType<typeof getPlaylistsCollection> | null = null
+let _tracksCol: ReturnType<typeof getTracksCollection> | null = null
+
+const playlistsCol = () => {
+  if (!_playlistsCol) _playlistsCol = getPlaylistsCollection()
+  return _playlistsCol
+}
+const tracksCol = () => {
+  if (!_tracksCol) _tracksCol = getTracksCollection()
+  return _tracksCol
+}
 
 export const _functions = {
   clamp: (n: number, min: number, max: number) =>
@@ -346,7 +355,7 @@ const buildPlaylistPage = (
   userId: string,
   page: number | undefined
 ) => {
-  const total = tracksCollection.count({ playlistId: playlist._id })
+  const total = tracksCol().count({ playlistId: playlist._id })
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.min(Math.max(1, page || 1), totalPages)
   const startIdx = (currentPage - 1) * PAGE_SIZE
@@ -388,7 +397,9 @@ const buildPlaylistPage = (
       inline: false
     })
 
-    const firstVideoId = _functions.extractYouTubeId(tracks[0]?.uri as string | undefined)
+    const firstVideoId = _functions.extractYouTubeId(
+      tracks[0]?.uri as string | undefined
+    )
     if (firstVideoId)
       embed.setThumbnail(
         `https://img.youtube.com/vi/${firstVideoId}/maxresdefault.jpg`
@@ -441,14 +452,14 @@ const playlistActionHandlers: Record<string, any> = {
     userId: string,
     playlistName: string
   ) => {
-    const playlist = playlistsCollection.findOne({
+    const playlist = playlistsCol().findOne({
       userId,
       name: playlistName
     })
     if (!playlist)
       return { message: '❌ Playlist not found', shouldUpdate: false }
 
-    const tracks = tracksCollection.find({
+    const tracks = tracksCol().find({
       playlistId: playlist._id
     })
     if (!tracks.length)
@@ -479,7 +490,7 @@ const playlistActionHandlers: Record<string, any> = {
       RESOLVE_CONCURRENCY
     )
 
-    playlistsCollection.updateAtomic(
+    playlistsCol().updateAtomic(
       { _id: playlist._id },
       {
         $inc: { playCount: 1 },
@@ -500,14 +511,14 @@ const playlistActionHandlers: Record<string, any> = {
     userId: string,
     playlistName: string
   ) => {
-    const playlist = playlistsCollection.findOne({
+    const playlist = playlistsCol().findOne({
       userId,
       name: playlistName
     })
     if (!playlist)
       return { message: '❌ Playlist not found', shouldUpdate: false }
 
-    const tracks = tracksCollection.find({
+    const tracks = tracksCol().find({
       playlistId: playlist._id
     })
     if (!tracks.length)
@@ -555,7 +566,7 @@ const playlistActionHandlers: Record<string, any> = {
     playlistName: string,
     page: number | undefined
   ) => {
-    const playlist = playlistsCollection.findOne({
+    const playlist = playlistsCol().findOne({
       userId,
       name: playlistName
     })
@@ -578,7 +589,7 @@ const playlistActionHandlers: Record<string, any> = {
     playlistName: string,
     page: number | undefined
   ) => {
-    const playlist = playlistsCollection.findOne({
+    const playlist = playlistsCol().findOne({
       userId,
       name: playlistName
     })

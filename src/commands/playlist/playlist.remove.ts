@@ -1,10 +1,10 @@
 import {
-  Declare,
-  Options,
-  SubCommand,
+  type CommandContext,
   createIntegerOption,
   createStringOption,
-  type CommandContext
+  Declare,
+  Options,
+  SubCommand
 } from 'seyfert'
 import { ICONS } from '../../shared/constants'
 import {
@@ -15,8 +15,8 @@ import {
 } from '../../shared/utils'
 import {
   getDatabase,
-  getPlaylistTracks,
   getPlaylistsCollection,
+  getPlaylistTracks,
   getTracksCollection
 } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
@@ -120,8 +120,7 @@ export class RemoveCommand extends SubCommand {
     const timestamp = new Date().toISOString()
     const newTotalDuration = Math.max(
       0,
-      (playlist.totalDuration || 0) -
-        (removedTrack.duration || 0)
+      (playlist.totalDuration || 0) - (removedTrack.duration || 0)
     )
 
     // Use atomic operation with proper error handling

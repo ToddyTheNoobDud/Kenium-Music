@@ -1,10 +1,11 @@
 import {
+  type CommandContext,
+  createStringOption,
   Declare,
   Options,
-  SubCommand,
-  createStringOption,
-  type CommandContext
+  SubCommand
 } from 'seyfert'
+import type { Playlist } from '../../shared/types'
 import { createEmbed, handlePlaylistAutocomplete } from '../../shared/utils'
 import {
   getDatabase,
@@ -12,8 +13,6 @@ import {
   getTracksCollection
 } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
-
-import type { Playlist } from '../../shared/types'
 
 const playlistsCollection = getPlaylistsCollection()
 @Declare({

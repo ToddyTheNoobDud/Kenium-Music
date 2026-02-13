@@ -56,7 +56,9 @@ const createAutocompleteResults = (
     required: false,
     autocomplete: async (interaction) => {
       try {
-        const player = interaction.client.aqua.players.get(interaction.guildId || '')
+        const player = interaction.client.aqua.players.get(
+          interaction.guildId || ''
+        )
         const focused = interaction.getInput()?.toLowerCase() || ''
         const results = createAutocompleteResults(
           (player?.queue as any) || [],
@@ -74,7 +76,9 @@ const createAutocompleteResults = (
     required: false,
     autocomplete: async (interaction) => {
       try {
-        const player = interaction.client.aqua.players.get(interaction.guildId || '')
+        const player = interaction.client.aqua.players.get(
+          interaction.guildId || ''
+        )
         const focused = interaction.getInput()?.toLowerCase() || ''
         const results = createAutocompleteResults(
           (player?.queue as any) || [],
@@ -181,8 +185,10 @@ export default class JumpCommand extends Command {
     player.stop()
 
     const successMsg =
-      (t as any).commands?.jump?.jumpedTo?.replace('{position}', position.toString()) ||
-      `Jumped to song ${position}`
+      (t as any).commands?.jump?.jumpedTo?.replace(
+        '{position}',
+        position.toString()
+      ) || `Jumped to song ${position}`
 
     await ctx.editOrReply({ content: successMsg, flags: 64 })
   }

@@ -69,7 +69,7 @@ interface SQLiteDB {
     fn: (fn: () => unknown) => unknown
   ) => (fn: () => unknown) => unknown
 
-
+  // bun:sqlite (used for pragmas in this file)
   run?: (sql: string) => unknown
 }
 
@@ -507,10 +507,13 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
       for (const doc of items) {
         const _id = (doc as any)._id || randomUUID()
 
-        const shouldLookupCreatedAt = !!(doc as any)._id && !(doc as any).createdAt
+        const shouldLookupCreatedAt =
+          !!(doc as any)._id && !(doc as any).createdAt
         const existing =
           shouldLookupCreatedAt && (doc as any)._id
-            ? this.createdAtByIdStmt.get<{ createdAt: string }>((doc as any)._id)
+            ? this.createdAtByIdStmt.get<{ createdAt: string }>(
+                (doc as any)._id
+              )
             : undefined
 
         const createdAt = (doc as any).createdAt || existing?.createdAt || now
@@ -589,7 +592,8 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
       const proj: any = {}
       if (doc._id) proj._id = doc._id
       if (fields) {
-        for (const f of fields) if (Object.hasOwn(doc, f)) proj[f] = (doc as any)[f]
+        for (const f of fields)
+          if (Object.hasOwn(doc, f)) proj[f] = (doc as any)[f]
       }
       out.push(proj as T & Required<Document>)
     }
@@ -597,7 +601,10 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
     return out
   }
 
-  findOne(query: Query = {}, opts?: FindOptions): (T & Required<Document>) | null {
+  findOne(
+    query: Query = {},
+    opts?: FindOptions
+  ): (T & Required<Document>) | null {
     return this.find(query, { ...opts, limit: 1 })[0] ?? null
   }
 
@@ -614,7 +621,10 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
     return res.changes > 0
   }
 
-  private updateWhere(query: Query, mut: (doc: T & Required<Document>) => T & Required<Document>): number {
+  private updateWhere(
+    query: Query,
+    mut: (doc: T & Required<Document>) => T & Required<Document>
+  ): number {
     if (!query || !Object.keys(query).length)
       throw new Error('Update query cannot be empty')
 
@@ -671,7 +681,10 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
 
       if (ops.$inc) {
         for (const [k, v] of Object.entries(ops.$inc)) {
-          (next as any)[k] = (typeof (next as any)[k] === 'number' ? ((next as any)[k] as number) : 0) + v
+          ;(next as any)[k] =
+            (typeof (next as any)[k] === 'number'
+              ? ((next as any)[k] as number)
+              : 0) + v
         }
       }
 
@@ -687,7 +700,9 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
         for (const [k, v] of Object.entries(ops.$pull)) {
           const cur = (next as any)[k]
           if (Array.isArray(cur))
-            (next as any)[k] = (cur as JsonValue[]).filter((x: JsonValue) => x !== v)
+            (next as any)[k] = (cur as JsonValue[]).filter(
+              (x: JsonValue) => x !== v
+            )
         }
       }
 
@@ -804,7 +819,8 @@ export class SimpleDB extends EventEmitter {
       'foreign_keys = ON',
       'busy_timeout = 30000',
       'journal_size_limit = 5242880',
-      'auto_vacuum = INCREMENTAL'
+      'auto_vacuum = INCREMENTAL',
+      'trusted_schema = OFF'
     ])
 
     this._checkpointStmt = this.db.prepare('PRAGMA wal_checkpoint(PASSIVE)')
@@ -887,6 +903,7 @@ export class SimpleDB extends EventEmitter {
   checkpointPassive(): void {
     try {
       this._checkpointStmt?.run()
+      this.db.prepare('PRAGMA incremental_vacuum(64)').run()
     } catch (err) {
       console.error('[SimpleDB] Passive checkpoint failed:', err)
     }

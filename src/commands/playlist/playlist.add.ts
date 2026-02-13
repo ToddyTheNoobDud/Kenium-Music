@@ -104,8 +104,7 @@ export const _functions = {
   tracks: createStringOption({
     description: 'Track names or URLs (comma/newline separated)',
     required: true,
-    autocomplete: async (interaction) =>
-      handleTrackAutocomplete(interaction)
+    autocomplete: async (interaction) => handleTrackAutocomplete(interaction)
   })
 } as any)
 export class AddCommand extends SubCommand {
@@ -258,8 +257,7 @@ export class AddCommand extends SubCommand {
       if (toAdd.length > availableSlots) toAdd.length = availableSlots
 
       const addedDuration = toAdd.reduce((sum, t) => sum + (t.duration || 0), 0)
-      const newTotalDuration =
-        (playlistDb.totalDuration || 0) + addedDuration
+      const newTotalDuration = (playlistDb.totalDuration || 0) + addedDuration
       const newTotalTracks = currentTracksCount + toAdd.length
 
       // Atomic update for tracks and playlist metadata

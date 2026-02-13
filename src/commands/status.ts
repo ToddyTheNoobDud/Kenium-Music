@@ -107,7 +107,6 @@ export default class statusCmds extends Command {
       CPU_CACHE.lastCheck = now
     }
 
-
     const nodes = [...client.aqua.nodeMap.values()]
 
     const sortedNodes = [...nodes].sort((a, b) => {

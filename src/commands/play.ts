@@ -17,6 +17,7 @@ const MAX_AUTOCOMPLETE_RESULTS = 4
 const THROTTLE_INTERVAL_MS = 250
 const SEARCH_TTL_MS = 25_000
 const EMBED_COLOR = 0x100e09
+const MAX_DEBOUNCE_ENTRIES = 500
 const MIN_QUERY_LENGTH = 2
 const MAX_TITLE_LENGTH = 70
 const MAX_AUTHOR_LENGTH = 18
@@ -220,6 +221,15 @@ const _handleAutocomplete = async (interaction: any): Promise<void> => {
     }, AUTOCOMPLETE_DEBOUNCE_MS)
 
     _functions.safeUnref(timer)
+
+    if (debounceTimers.size >= MAX_DEBOUNCE_ENTRIES) {
+      const firstKey = debounceTimers.keys().next().value
+      if (firstKey) {
+        const tm = debounceTimers.get(firstKey)
+        if (tm) clearTimeout(tm)
+        debounceTimers.delete(firstKey)
+      }
+    }
     debounceTimers.set(userId, timer)
   })
 }

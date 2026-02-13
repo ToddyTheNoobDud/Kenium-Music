@@ -1,12 +1,12 @@
 import { Cooldown, CooldownType } from '@slipher/cooldown'
 import {
+  type CommandContext,
+  createBooleanOption,
+  createStringOption,
   Declare,
   Middlewares,
   Options,
-  SubCommand,
-  createBooleanOption,
-  createStringOption,
-  type CommandContext
+  SubCommand
 } from 'seyfert'
 import { ICONS } from '../../shared/constants'
 import type { Track } from '../../shared/types'
@@ -231,7 +231,9 @@ export class PlayCommand extends SubCommand {
             shuffle
               ? tp?.shuffling || 'Shuffling Playlist'
               : tp?.playing || 'Playing Playlist',
-            failedCount > 0 ? `\n\n⚠️ ${failedCount} track(s) could not be loaded` : null,
+            failedCount > 0
+              ? `\n\n⚠️ ${failedCount} track(s) could not be loaded`
+              : null,
             [
               {
                 name: `${ICONS.playlist} ${tp?.playlist || 'Playlist'}`,
@@ -250,7 +252,9 @@ export class PlayCommand extends SubCommand {
               },
               {
                 name: `${ICONS.music} ${tp?.channel || 'Channel'}`,
-                value: _functions.getChannelName(voiceState as { channel: { name: string }; channelId: string }),
+                value: _functions.getChannelName(
+                  voiceState as { channel: { name: string }; channelId: string }
+                ),
                 inline: true
               },
               {

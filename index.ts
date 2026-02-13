@@ -1,6 +1,7 @@
 import process from 'node:process'
 import 'dotenv/config'
 import { CooldownManager } from '@slipher/cooldown'
+import type { Player, Track } from 'aqualink'
 import { Aqua } from 'aqualink'
 import {
   Client,
@@ -10,7 +11,6 @@ import {
   type ParseLocales,
   type ParseMiddlewares
 } from 'seyfert'
-import type { Player, Track } from 'aqualink'
 import {
   cleanupAllKaraokeSessions,
   cleanupKaraokeSession,
@@ -63,7 +63,6 @@ const aqua = new Aqua(
   }
 )
 
-aqua.init(id)
 Object.assign(client, { aqua })
 
 const state = {
@@ -98,7 +97,6 @@ const shutdown = async () => {
   closeDatabase()
   process.exit(0)
 }
-
 
 const PRESENCE_ACTIVITIES = Object.freeze([
   {
@@ -136,8 +134,8 @@ export const updatePresence = (clientInstance: Client) => {
       state.lastCountUpdate = now
     }
 
-    const currentActivity =
-      PRESENCE_ACTIVITIES[activityIndex++ % PRESENCE_ACTIVITIES.length]
+    const currentActivity = PRESENCE_ACTIVITIES[activityIndex]
+    activityIndex = (activityIndex + 1) % PRESENCE_ACTIVITIES.length
     if (!currentActivity) return
     const activityName = currentActivity.name
       .replace('{users}', String(state.cachedUserCount))
@@ -174,7 +172,7 @@ client.setServices({
   }
 })
 
-aqua.on('trackStart', async (player: Player, track: Track, payload: any) => {
+aqua.on('trackStart', async (player: Player, track: Track, payload: { resumed?: boolean }) => {
   const channel = client.cache.channels?.get(player.textChannel)
   if (!channel) return
   if (payload?.resumed) return
@@ -212,7 +210,7 @@ aqua.on('trackStart', async (player: Player, track: Track, payload: any) => {
   }
 })
 
-aqua.on('trackError', async (player: Player, track: Track, payload: any) => {
+aqua.on('trackError', async (player: Player, track: Track, payload: { exception?: { message?: string } }) => {
   const channel = client.cache.channels?.get(player.textChannel)
   if (!channel) return
 
@@ -265,7 +263,7 @@ client
       .uploadCommands({ cachePath: './commands.json' })
       .catch(() => {})
     await initDatabase().catch(console.error)
-    client.cooldown = new CooldownManager(client as unknown as Client)
+    client.cooldown = new CooldownManager(client as any)
     updatePresence(client)
   })
   .catch((_error) => {
