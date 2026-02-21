@@ -1,32 +1,37 @@
 import { Cooldown, CooldownType } from '@slipher/cooldown'
 import type { Player } from 'aqualink'
 import {
+  Button,
   Command,
   type CommandContext,
   Container,
   Declare,
-  Embed,
-  Middlewares
+  Middlewares,
+  Section,
+  Separator,
+  TextDisplay
 } from 'seyfert'
+import { ButtonStyle, MessageFlags, Spacing } from 'seyfert/lib/types'
 import { getContextLanguage } from '../utils/i18n'
 import { Musixmatch } from '../utils/musiclyrics'
 
 const MUSIXMATCH = new Musixmatch()
 
-const EMBED_COLOR = 0x100e09
-const ERROR_COLOR = 0xe74c3c
+const ACCENT_COLOR = '#100e09'
+const ERROR_COLOR = '#e74c3c'
 
 const SESSION_TIMEOUT_MS = 300000
 const SONG_END_BUFFER_MS = 5000
+const AUTO_DELETE_MS = 10000
 
 const MAX_DRIFT_MS = 10000
 
-const MIN_EDIT_DELAY_MS = 1200
+const MIN_EDIT_DELAY_MS = 350
 const MAX_EDIT_DELAY_MS = 2000
 const SCHEDULER_JITTER_MS = 25
 
-const VIEW_PAST_LINES = 2
-const VIEW_NEXT_LINES = 2
+const VIEW_PAST_LINES = 1
+const VIEW_NEXT_LINES = 4
 const PROGRESS_BAR_LENGTH = 14
 
 type LyricLine = {
@@ -44,21 +49,56 @@ interface KaraokeSession {
   updateTimer: NodeJS.Timeout
   timeout: NodeJS.Timeout
 
+  // biome-ignore lint/suspicious/noExplicitAny: collector is a dynamic object
+  collector: any
+
   fallbackStartPosition: number
   fallbackStartTime: number
   title: string
+  stoppedByUser: boolean
 }
 
-const _createErrorEmbed = (
+// biome-ignore lint/suspicious/noExplicitAny: msg is a dynamic Discord message object
+const _autoDelete = (msg: any, delay = AUTO_DELETE_MS) => {
+  if (!msg?.delete) return
+  const timer = setTimeout(() => {
+    msg.delete().catch(() => null)
+  }, delay)
+  if (timer.unref) timer.unref()
+}
+
+const _divider = () =>
+  new Separator().setDivider(true).setSpacing(Spacing.Small)
+
+const _createErrorContainer = (
   message: string,
   lang: string,
   ctx: CommandContext
 ) => {
   const t = ctx.t.get(lang)
-  return new Embed()
+  return new Container()
     .setColor(ERROR_COLOR)
-    .setTitle(t.karaoke.error)
-    .setDescription(message)
+    .addComponents(
+      new TextDisplay().setContent(`❌ **${t.karaoke.error}**`),
+      _divider(),
+      new TextDisplay().setContent(message)
+    )
+}
+
+const _createEndedContainer = (reason: 'stopped' | 'finished' | 'error') => {
+  const messages = {
+    stopped: '⏹ Karaoke session was stopped by a user.',
+    finished: '🎵 Song ended — thanks for singing!',
+    error: '⚠️ The karaoke display has been closed.'
+  }
+
+  return new Container()
+    .setColor(ERROR_COLOR)
+    .addComponents(
+      new TextDisplay().setContent('🎙️ **Karaoke Stage**'),
+      _divider(),
+      new TextDisplay().setContent(messages[reason])
+    )
 }
 
 const _formatTimestamp = (ms: number) => {
@@ -106,20 +146,24 @@ const _createProgressBar = (
   const progress = Math.max(0, Math.min(1, elapsedMs / durationMs))
   const filled = Math.round(progress * PROGRESS_BAR_LENGTH)
 
-  return `▰${'▰'.repeat(filled)}${'═'.repeat(PROGRESS_BAR_LENGTH - filled)}`
+  return `${'▰'.repeat(Math.max(1, filled))}${'═'.repeat(PROGRESS_BAR_LENGTH - filled)}`
 }
 
 const _formatViewportLine = (
   line: LyricLine,
-  kind: 'past' | 'current' | 'next'
+  kind: 'past' | 'current' | 'next',
+  nextIndex?: number
 ) => {
-  const time = _formatTimestamp(_lineStartMs(line))
   const text = _cleanLyricText(line.line) || '…'
-  const base = `\`${time}\` ${text}`
 
-  if (kind === 'current') return `> **${base}**`
-  if (kind === 'past') return `*${base}*`
-  return base
+  switch (kind) {
+    case 'past':
+      return `-# ♫ *${text}*`
+    case 'current':
+      return `🎤 **${text}**`
+    case 'next':
+      return nextIndex === 0 ? `➜ ${text}` : `-# ♪ ${text}`
+  }
 }
 
 const _createKaraokeStageContainer = (
@@ -128,65 +172,113 @@ const _createKaraokeStageContainer = (
   currentTimeMs: number,
   isPaused: boolean
 ) => {
+  const stopButton = new Button()
+    .setCustomId('ignore_karaoke-stop')
+    .setLabel('⏹ Stop')
+    .setStyle(ButtonStyle.Secondary)
+
   if (!lines.length) {
-    return new Container({
-      accent_color: EMBED_COLOR,
-      components: [
-        { type: 10, content: `🎙️ **Karaoke Stage**` },
-        { type: 14, divider: true, spacing: 1 },
-        {
-          type: 10,
-          content: `No time-synced lyrics available for this track.`
-        }
-      ]
-    })
+    return new Container()
+      .setColor(ACCENT_COLOR)
+      .addComponents(
+        new TextDisplay().setContent('🎙️ **Karaoke Stage**'),
+        _divider(),
+        new TextDisplay().setContent(
+          'No time-synced lyrics available for this track.'
+        )
+      )
   }
 
   const currentIdx = _findCurrentLineIndex(lines, currentTimeMs)
-  const safeIdx = Math.max(0, currentIdx)
+  const status = isPaused ? '⏸ Paused' : '▶ Playing'
 
+  if (currentIdx < 0) {
+    const firstLine = lines[0]
+    const preview = lines.slice(0, Math.min(VIEW_NEXT_LINES + 1, lines.length))
+    const previewText = preview
+      .map((l, i) => _formatViewportLine(l, 'next', i))
+      .join('\n')
+
+    const timeUntil = firstLine ? _lineStartMs(firstLine) - currentTimeMs : 0
+    const countdown =
+      timeUntil > 0
+        ? `⏳ Lyrics begin in **${Math.ceil(timeUntil / 1000)}s**…`
+        : ''
+
+    const bodyParts = [countdown, '', previewText].filter(Boolean).join('\n')
+
+    return new Container()
+      .setColor(ACCENT_COLOR)
+      .addComponents(
+        new TextDisplay().setContent(`🎙️ **${title}** · ${status}`),
+        _divider(),
+        new TextDisplay().setContent(bodyParts),
+        _divider(),
+        new Section()
+          .addComponents(
+            new TextDisplay().setContent('-# Get ready to sing! 🎶')
+          )
+          .setAccessory(stopButton)
+      )
+  }
+
+  const safeIdx = currentIdx
   const current = lines[safeIdx]
+  if (!current) {
+    return new Container()
+      .setColor(ACCENT_COLOR)
+      .addComponents(new TextDisplay().setContent('…'))
+  }
+
   const next = lines[safeIdx + 1]
-
-  if (!current) return new Container({ components: [] })
-
   const segStart = _lineStartMs(current)
   const segEnd = next ? _lineStartMs(next) : segStart + 4000
 
-  const status = isPaused ? '⏸ Paused' : '▶ Playing'
   const bar = _createProgressBar(currentTimeMs, segStart, segEnd)
 
   const pastStart = Math.max(0, safeIdx - VIEW_PAST_LINES)
   const past = lines.slice(pastStart, safeIdx)
   const upcoming = lines.slice(safeIdx + 1, safeIdx + 1 + VIEW_NEXT_LINES)
 
-  const viewport = [
-    ...past.map((l) => _formatViewportLine(l, 'past')),
-    _formatViewportLine(current, 'current'),
-    ...upcoming.map((l) => _formatViewportLine(l, 'next'))
-  ].join('\n')
+  const viewportParts: string[] = []
 
-  return new Container({
-    accent_color: EMBED_COLOR,
-    components: [
-      {
-        type: 10,
-        content: `🎙️ **Karaoke Stage**\n**${title}** • ${status}`
-      },
-      { type: 14, divider: true, spacing: 1 },
-      {
-        type: 10,
-        content: `${bar}  \`${_formatTimestamp(currentTimeMs)}\``
-      },
-      { type: 14, divider: true, spacing: 1 },
-      { type: 10, content: viewport },
-      { type: 14, divider: true, spacing: 1 },
-      {
-        type: 10,
-        content: `*Tip: the highlighted line is what you should sing right now.*`
-      }
-    ]
-  })
+  if (past.length) {
+    viewportParts.push(
+      past.map((l) => _formatViewportLine(l, 'past')).join('\n')
+    )
+    viewportParts.push('')
+  }
+
+  viewportParts.push(_formatViewportLine(current, 'current'))
+  viewportParts.push(`-# ${bar}  ${_formatTimestamp(currentTimeMs)}`)
+
+  if (upcoming.length) {
+    viewportParts.push('')
+    viewportParts.push(
+      upcoming.map((l, i) => _formatViewportLine(l, 'next', i)).join('\n')
+    )
+  } else if (safeIdx === lines.length - 1) {
+    viewportParts.push('')
+    viewportParts.push('-# 🎵 Last line — song ending soon…')
+  }
+
+  const viewport = viewportParts.join('\n')
+
+  return new Container()
+    .setColor(ACCENT_COLOR)
+    .addComponents(
+      new TextDisplay().setContent(`🎙️ **${title}** · ${status}`),
+      _divider(),
+      new TextDisplay().setContent(viewport),
+      _divider(),
+      new Section()
+        .addComponents(
+          new TextDisplay().setContent(
+            '-# Follow the 🎤 line · Lyrics sync with playback'
+          )
+        )
+        .setAccessory(stopButton)
+    )
 }
 
 const _fetchKaraokeLyrics = async (
@@ -231,45 +323,46 @@ const KaraokeSessionRegistry = {
   has(guildId: string) {
     const session = KaraokeSessionRegistry.cache.get(guildId)
     if (!session) return false
-
     return session.player?.connected
   },
 
   async add(guildId: string, session: KaraokeSession) {
-    await KaraokeSessionRegistry.cleanup(guildId)
+    await KaraokeSessionRegistry.cleanup(guildId, 'error')
     KaraokeSessionRegistry.cache.set(guildId, session)
   },
 
-  async cleanup(guildId: string) {
+  async cleanup(
+    guildId: string,
+    reason: 'stopped' | 'finished' | 'error' = 'error'
+  ) {
     const session = KaraokeSessionRegistry.cache.get(guildId)
     if (!session) return
 
     clearTimeout(session.updateTimer)
     clearTimeout(session.timeout)
 
-    if (session.message?.delete) {
-      await session.message.delete().catch(() => null)
-    } else if (session.message?.edit) {
+    if (session.collector?.stop) {
+      session.collector.stop('cleanup')
+    }
+
+    if (session.message?.edit) {
       await session.message
         .edit({
-          embeds: [
-            new Embed()
-              .setColor(ERROR_COLOR)
-              .setTitle('Karaoke session ended')
-              .setDescription('The karaoke display has been closed.')
-          ],
-          components: []
+          components: [_createEndedContainer(reason)],
+          flags: MessageFlags.IsComponentsV2
         })
         .catch(() => null)
+
+      _autoDelete(session.message)
     }
 
     KaraokeSessionRegistry.cache.delete(guildId)
   },
 
   async cleanupAll() {
-    const keys = KaraokeSessionRegistry.cache.keys()
+    const keys = [...KaraokeSessionRegistry.cache.keys()]
     for (const key of keys) {
-      await KaraokeSessionRegistry.cleanup(key)
+      await KaraokeSessionRegistry.cleanup(key, 'error')
     }
     KaraokeSessionRegistry.cache.clear()
   }
@@ -365,7 +458,9 @@ export default class KaraokeCommand extends Command {
     clearTimeout(session.updateTimer)
 
     session.updateTimer = setTimeout(() => {
-      this._tick(guildId, errorCount).catch(() => KaraokeSessionRegistry.cleanup(guildId))
+      this._tick(guildId, errorCount).catch(() =>
+        KaraokeSessionRegistry.cleanup(guildId, 'error')
+      )
     }, delayMs)
 
     if (session.updateTimer.unref) session.updateTimer.unref()
@@ -373,13 +468,16 @@ export default class KaraokeCommand extends Command {
 
   private async _tick(guildId: string, errorCount = 0): Promise<void> {
     const session = KaraokeSessionRegistry.get(guildId)
-    if (!session || session.player.destroyed) {
-      await KaraokeSessionRegistry.cleanup(guildId)
+    if (!session || session.stoppedByUser || session.player.destroyed) {
+      await KaraokeSessionRegistry.cleanup(
+        guildId,
+        session?.stoppedByUser ? 'stopped' : 'error'
+      )
       return
     }
 
     if (!KaraokeSessionRegistry.has(guildId)) {
-      await KaraokeSessionRegistry.cleanup(guildId)
+      await KaraokeSessionRegistry.cleanup(guildId, 'error')
       return
     }
 
@@ -390,7 +488,7 @@ export default class KaraokeCommand extends Command {
     const lastTimestampMs = lastLine ? _lineStartMs(lastLine) : 0
 
     if (currentTimeMs > lastTimestampMs + SONG_END_BUFFER_MS) {
-      await KaraokeSessionRegistry.cleanup(guildId)
+      await KaraokeSessionRegistry.cleanup(guildId, 'finished')
       return
     }
 
@@ -402,11 +500,14 @@ export default class KaraokeCommand extends Command {
     )
 
     try {
-      await session.message.edit({ components: [container] })
+      await session.message.edit({
+        components: [container],
+        flags: MessageFlags.IsComponentsV2
+      })
     } catch (error) {
       const err = error as { code?: number }
       if (err.code === 10065 || err.code === 10008) {
-        await KaraokeSessionRegistry.cleanup(guildId)
+        await KaraokeSessionRegistry.cleanup(guildId, 'error')
         return
       }
 
@@ -415,12 +516,30 @@ export default class KaraokeCommand extends Command {
         return
       }
 
-      await KaraokeSessionRegistry.cleanup(guildId)
+      await KaraokeSessionRegistry.cleanup(guildId, 'error')
       return
     }
 
-    const delay = this._computeNextEditDelayMs(session, currentTimeMs, isPaused)
+    const delay = this._computeNextEditDelayMs(
+      session,
+      currentTimeMs,
+      isPaused
+    )
     this._scheduleNextTick(guildId, delay, 0)
+  }
+
+  private async _sendErrorAndAutoDelete(
+    ctx: CommandContext,
+    container: Container
+  ) {
+    const msg = await ctx.editOrReply(
+      {
+        components: [container],
+        flags: MessageFlags.IsComponentsV2
+      },
+      true
+    )
+    _autoDelete(msg)
   }
 
   public override async run(ctx: CommandContext): Promise<void> {
@@ -434,26 +553,29 @@ export default class KaraokeCommand extends Command {
 
     const player = ctx.client.aqua.players.get(guildId)
     if (!player) {
-      await ctx.editOrReply({
-        embeds: [_createErrorEmbed(t.karaoke.noActivePlayer, lang, ctx)]
-      })
+      await this._sendErrorAndAutoDelete(
+        ctx,
+        _createErrorContainer(t.karaoke.noActivePlayer, lang, ctx)
+      )
       return
     }
 
     if (KaraokeSessionRegistry.has(guildId)) {
-      await ctx.editOrReply({
-        embeds: [_createErrorEmbed(t.karaoke.sessionAlreadyActive, lang, ctx)]
-      })
+      await this._sendErrorAndAutoDelete(
+        ctx,
+        _createErrorContainer(t.karaoke.sessionAlreadyActive, lang, ctx)
+      )
       return
     }
 
-    await KaraokeSessionRegistry.cleanup(guildId)
+    await KaraokeSessionRegistry.cleanup(guildId, 'error')
 
     const result = await _fetchKaraokeLyrics(undefined, player.current)
     if (!result) {
-      await ctx.editOrReply({
-        embeds: [_createErrorEmbed(t.karaoke.noLyricsAvailable, lang, ctx)]
-      })
+      await this._sendErrorAndAutoDelete(
+        ctx,
+        _createErrorContainer(t.karaoke.noLyricsAvailable, lang, ctx)
+      )
       return
     }
 
@@ -468,14 +590,60 @@ export default class KaraokeCommand extends Command {
       isPaused
     )
 
-    const message = await ctx.editOrReply({
-      components: [container],
-      flags: 32768
-    })
+    const message = await ctx.editOrReply(
+      {
+        components: [container],
+        flags: MessageFlags.IsComponentsV2
+      },
+      true
+    )
     if (!message) return
 
+    const collector = message.createComponentCollector({
+      filter: (i: { isButton: () => boolean; customId: string }) =>
+        i.isButton() && i.customId === 'ignore_karaoke-stop',
+      onStop(_reason: string | undefined, _refresh: () => void) {},
+      idle: SESSION_TIMEOUT_MS
+    })
+
+    collector.run(
+      'ignore_karaoke-stop',
+      async (i: {
+        user: { id: string }
+        write: (opts: { content: string; flags: number }) => Promise<void>
+      }) => {
+        const session = KaraokeSessionRegistry.get(guildId)
+
+        const member = ctx.client.cache.members?.get(i.user.id, guildId)
+        const memberVoice =
+          member &&
+          'voice' in member &&
+          (member as { voice?: { channelId?: string } }).voice?.channelId
+        const playerVoice = session?.player?.voiceChannel
+
+        if (playerVoice && memberVoice && memberVoice !== playerVoice) {
+          await i.write({
+            content: '❌ You must be in the voice channel to stop karaoke.',
+            flags: 64
+          })
+          return
+        }
+
+        if (session) {
+          session.stoppedByUser = true
+        }
+
+        await KaraokeSessionRegistry.cleanup(guildId, 'stopped')
+
+        await i.write({
+          content: `⏹ Karaoke session stopped by <@${i.user.id}>.`,
+          flags: 64
+        })
+      }
+    )
+
     const timeout = setTimeout(() => {
-      KaraokeSessionRegistry.cleanup(guildId)
+      KaraokeSessionRegistry.cleanup(guildId, 'finished')
     }, SESSION_TIMEOUT_MS)
     if (timeout.unref) timeout.unref()
 
@@ -488,17 +656,22 @@ export default class KaraokeCommand extends Command {
       player,
       updateTimer,
       timeout,
+      collector,
       fallbackStartPosition: initialPosition,
       fallbackStartTime: Date.now(),
-      title
+      title,
+      stoppedByUser: false
     })
 
     this._scheduleNextTick(guildId, 0, 0)
   }
 }
 
-export const cleanupKaraokeSession = async (guildId: string) => {
-  await KaraokeSessionRegistry.cleanup(guildId)
+export const cleanupKaraokeSession = async (
+  guildId: string,
+  reason: 'stopped' | 'finished' | 'error' = 'error'
+) => {
+  await KaraokeSessionRegistry.cleanup(guildId, reason)
 }
 
 export const hasKaraokeSession = (guildId: string) => {

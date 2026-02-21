@@ -90,8 +90,6 @@ export function getTracksCollection() {
         `)
         .run()
 
-      // Optional but common:
-      collection.createIndex('playlistId')
       collection.createIndex('addedAt')
 
       _tracksIndexed = true

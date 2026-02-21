@@ -31,7 +31,10 @@ export const checkVoice = createMiddleware<void>(
     if (!context.inGuild()) return next()
 
     const memberVoice = await context.member?.voice().catch(() => null)
-    const botvoice = await (await context.me())?.voice().catch(() => null)
+
+    // @ts-ignore
+    const botId = context.client.botId
+    const botvoice = context.client.cache.voiceStates?.get(botId, context.guildId)
     if (
       !memberVoice ||
       (botvoice && botvoice.channelId !== memberVoice.channelId)

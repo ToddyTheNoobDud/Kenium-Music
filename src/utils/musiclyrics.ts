@@ -38,7 +38,6 @@ const ENDPOINTS = Object.freeze({
 const TIMESTAMP_REGEX = /\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]/g
 const BRACKET_JUNK =
   /\s*\[([^\]]*(?:official|lyrics?|video|audio|mv|visualizer|color\s*coded|hd|4k)[^\]]*)\]/gi
-const SEPARATORS = [' - ', ' – ', ' — ', ' ~ ', '-']
 
 const DEFAULT_HEADERS: Record<string, string> = Object.freeze({
   accept: 'application/json',
@@ -47,22 +46,18 @@ const DEFAULT_HEADERS: Record<string, string> = Object.freeze({
     'AWSELB=unknown; x-mxm-user-id=undefined; x-mxm-token-guid=undefined; mxm-encrypted-token='
 })
 
-// Shared helper functions
-const _functions = {
-  isAuthError(err: unknown): err is MxmApiError {
-    return err instanceof MxmApiError && (err.code === 401 || err.code === 403)
-  },
+const isAuthError = (err: unknown): err is MxmApiError =>
+  err instanceof MxmApiError && (err.code === 401 || err.code === 403)
 
-  extractMacroCalls(body: any) {
-    const calls = body?.macro_calls || {}
-    return {
-      lyrics: calls['track.lyrics.get']?.message?.body?.lyrics?.lyrics_body as
-        | string
-        | undefined,
-      track: calls['matcher.track.get']?.message?.body?.track as any,
-      subtitles: calls['track.subtitles.get']?.message?.body?.subtitle_list?.[0]
-        ?.subtitle?.subtitle_body as string | undefined
-    }
+const extractMacroCalls = (body: any) => {
+  const calls = body?.macro_calls
+  return {
+    lyrics: calls?.['track.lyrics.get']?.message?.body?.lyrics?.lyrics_body as
+      | string
+      | undefined,
+    track: calls?.['matcher.track.get']?.message?.body?.track as any,
+    subtitles: calls?.['track.subtitles.get']?.message?.body?.subtitle_list?.[0]
+      ?.subtitle?.subtitle_body as string | undefined
   }
 }
 
@@ -146,14 +141,14 @@ export class Musixmatch {
   }
 
   async apiGet(url: string, externalSignal?: AbortSignal): Promise<any> {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(
-      () => controller.abort(),
-      this.requestTimeoutMs
-    )
+    externalSignal?.throwIfAborted?.()
 
+    const controller = new AbortController()
     const onExternalAbort = () => controller.abort()
     externalSignal?.addEventListener('abort', onExternalAbort, { once: true })
+
+    const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs)
+    ;(timeoutId as any).unref?.()
 
     try {
       const response = await fetch(url, {
@@ -164,10 +159,8 @@ export class Musixmatch {
 
       const data = (await response.json()) as any
       const header = data?.message?.header
-
-      if (header?.status_code !== 200) {
+      if (header?.status_code !== 200)
         throw new MxmApiError(header?.status_code ?? 0, header?.hint)
-      }
 
       return data.message.body
     } finally {
@@ -195,7 +188,7 @@ export class Musixmatch {
   private async storeToken(token: string): Promise<string> {
     const expires = Date.now() + TOKEN_TTL
     this.tokenData = { value: token, expires }
-    await this.saveTokenToFile(token, expires)
+    this.saveTokenToFile(token, expires).catch(() => {})
     return token
   }
 
@@ -234,7 +227,7 @@ export class Musixmatch {
     try {
       return await this.storeToken(await this.fetchToken())
     } catch (err) {
-      if (_functions.isAuthError(err)) {
+      if (isAuthError(err)) {
         await this.resetToken(true)
         return await this.storeToken(await this.fetchToken())
       }
@@ -256,7 +249,8 @@ export class Musixmatch {
       })
       return await this.apiGet(url, signal)
     } catch (err) {
-      if (_functions.isAuthError(err)) {
+      if (isAuthError(err)) {
+        if (signal?.aborted) throw err
         await this.resetToken(err.hint?.toLowerCase().includes('captcha'))
         const newToken = await this.getToken(true)
         const url = this.buildUrl(endpoint, {
@@ -264,7 +258,7 @@ export class Musixmatch {
           app_id: APP_ID,
           usertoken: newToken
         })
-        return await this.apiGet(url)
+        return await this.apiGet(url, signal)
       }
       throw err
     }
@@ -294,17 +288,95 @@ export class Musixmatch {
     }
   }
 
+  private norm(s: string): string {
+    return s.replace(/\s+/g, ' ').trim()
+  }
+
+  private stripFeaturing(s: string): string {
+    const lower = s.toLowerCase()
+    let cut = -1
+    for (const m of [' feat.', ' ft.', ' featuring ']) {
+      const i = lower.indexOf(m)
+      if (i !== -1 && (cut === -1 || i < cut)) cut = i
+    }
+    return (cut === -1 ? s : s.slice(0, cut)).trim()
+  }
+
+  private stripTrailingParensJunk(s: string): string {
+    for (;;) {
+      s = s.trim()
+      if (!s.endsWith(')')) return s
+      const open = s.lastIndexOf('(')
+      if (open === -1) return s
+      const inside = s.slice(open + 1, -1).toLowerCase()
+      if (
+        inside.includes('official') ||
+        inside.includes('lyrics') ||
+        inside.includes('video') ||
+        inside.includes('audio') ||
+        inside.includes('mv') ||
+        inside.includes('visualizer') ||
+        inside.includes('hd') ||
+        inside.includes('4k')
+      ) {
+        s = s.slice(0, open)
+        continue
+      }
+      return s
+    }
+  }
+
   parseQuery(query: string): { artist?: string; title: string } {
-    const cleaned = query.replace(BRACKET_JUNK, '').trim()
-    for (const sep of SEPARATORS) {
+    let cleaned = this.norm(query.replace(BRACKET_JUNK, ''))
+    cleaned = this.stripTrailingParensJunk(cleaned)
+
+    if (
+      (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+      (cleaned.startsWith("'") && cleaned.endsWith("'"))
+    ) {
+      cleaned = cleaned.slice(1, -1).trim()
+    }
+
+    const splitBy = (sep: string) => {
       const idx = cleaned.indexOf(sep)
-      if (idx > 0 && idx < cleaned.length - sep.length) {
+      if (idx <= 0 || idx >= cleaned.length - sep.length) return null
+      const artist = cleaned.slice(0, idx).trim()
+      const title = cleaned.slice(idx + sep.length).trim()
+      return artist && title ? { artist, title } : null
+    }
+
+    let parts =
+      splitBy(' - ') || splitBy(' – ') || splitBy(' — ') || splitBy(' ~ ')
+
+    if (!parts) {
+      for (const ch of ['–', '—', '~', '-'] as const) {
+        const idx = cleaned.indexOf(ch)
+        if (idx <= 0 || idx >= cleaned.length - 1) continue
+        if (ch === '-' && cleaned[idx - 1] !== ' ' && cleaned[idx + 1] !== ' ')
+          continue
         const artist = cleaned.slice(0, idx).trim()
-        const title = cleaned.slice(idx + sep.length).trim()
-        if (artist && title) return { artist, title }
+        const title = cleaned.slice(idx + 1).trim()
+        if (artist && title) {
+          parts = { artist, title }
+          break
+        }
       }
     }
-    return { title: cleaned }
+
+    if (!parts && !cleaned.includes(' ')) {
+      const idx = cleaned.indexOf('-')
+      if (idx > 0 && idx === cleaned.lastIndexOf('-') && idx < cleaned.length - 1)
+        parts = { artist: cleaned.slice(0, idx), title: cleaned.slice(idx + 1) }
+    }
+
+    const artist = parts?.artist
+      ? this.stripFeaturing(this.stripTrailingParensJunk(this.norm(parts.artist)))
+      : undefined
+    const title = this.stripFeaturing(
+      this.stripTrailingParensJunk(this.norm(parts?.title ?? cleaned))
+    )
+
+    return artist ? { artist, title } : { title }
   }
 
   formatResult(
@@ -339,17 +411,25 @@ export class Musixmatch {
   getCached(key: string): LyricsResult | null | undefined {
     const entry = this.cache.get(key)
     if (!entry) return undefined
-    if (entry.expires > Date.now()) return entry.value
+    if (entry.expires <= Date.now()) {
+      this.cache.delete(key)
+      return undefined
+    }
     this.cache.delete(key)
-    return undefined
+    this.cache.set(key, entry)
+    return entry.value
   }
 
   setCached(key: string, value: LyricsResult | null): void {
-    if (this.cache.size >= this.maxCacheEntries) {
-      const firstKey = this.cache.keys().next().value
-      if (firstKey) this.cache.delete(firstKey)
+    const now = Date.now()
+    for (const [k, v] of this.cache) if (v.expires <= now) this.cache.delete(k)
+
+    while (this.cache.size >= this.maxCacheEntries) {
+      const firstKey = this.cache.keys().next().value as string | undefined
+      if (!firstKey) break
+      this.cache.delete(firstKey)
     }
-    this.cache.set(key, { value, expires: Date.now() + this.cacheTTL })
+    this.cache.set(key, { value, expires: now + this.cacheTTL })
   }
 
   async raceForFirst<T>(
@@ -359,30 +439,71 @@ export class Musixmatch {
     const controller = new AbortController()
     const promises = factories.map((fn) => fn(controller.signal))
 
-    return new Promise((resolve) => {
-      let completed = 0
-      let resolved = false
-      const total = promises.length
+    return await new Promise((resolve) => {
+      let pending = promises.length
+      let done = false
 
-      const settle = (result?: T | null) => {
-        if (resolved) return ++completed
-        if (result) {
-          resolved = true
+      const settle = (result: T | null) => {
+        if (done) return
+        if (result !== null) {
+          done = true
           controller.abort()
-          return resolve(result)
+          resolve(result)
+        } else if (--pending === 0) {
+          resolve(null)
         }
-        if (++completed === total) resolve(null)
       }
 
-      for (const p of promises) p.then(settle, () => settle())
+      for (const p of promises) p.then(settle, () => settle(null))
     })
   }
 
   private formatMacroResult(body: any): LyricsResult | null {
-    const { lyrics, track, subtitles } = _functions.extractMacroCalls(body)
+    const { lyrics, track, subtitles } = extractMacroCalls(body)
     return lyrics || subtitles
       ? this.formatResult(subtitles ?? null, lyrics ?? null, track ?? {})
       : null
+  }
+
+  private async searchSubtitles(
+    title: string,
+    artist: string | undefined,
+    signal?: AbortSignal
+  ): Promise<LyricsResult | null> {
+    const body = await this.callMxm(
+      ENDPOINTS.SEARCH,
+      {
+        page_size: artist ? '3' : '5',
+        page: '1',
+        s_track_rating: 'desc',
+        f_has_subtitle: '1',
+        q_track: title,
+        q_artist: artist,
+        q_track_artist: artist ? `${artist} ${title}` : undefined
+      },
+      signal
+    )
+
+    const list = body?.track_list
+    if (!Array.isArray(list) || !list.length) return null
+
+    for (const item of list) {
+      const track = item?.track
+      const id = track?.track_id
+      if (!id) continue
+      try {
+        const lyricsBody = await this.callMxm(
+          ENDPOINTS.LYRICS,
+          { subtitle_format: 'mxm', track_id: String(id) },
+          signal
+        )
+        const subtitles = lyricsBody?.subtitle?.subtitle_body
+        if (subtitles) return this.formatResult(subtitles, null, track)
+      } catch (e) {
+        if (signal?.aborted) throw e
+      }
+    }
+    return null
   }
 
   async findLyrics(query: string): Promise<LyricsResult | null> {
@@ -409,50 +530,10 @@ export class Musixmatch {
               signal
             ).then((body) => this.formatMacroResult(body)),
 
-          (signal) =>
-            this.callMxm(
-              ENDPOINTS.SEARCH,
-              {
-                page_size: '1',
-                page: '1',
-                s_track_rating: 'desc',
-                q_track: parsed.title,
-                q_artist: parsed.artist
-              },
-              signal
-            ).then(async (body) => {
-              const track = body?.track_list?.[0]?.track
-              if (!track) return null
-              const lyricsBody = await this.callMxm(
-                ENDPOINTS.LYRICS,
-                {
-                  subtitle_format: 'mxm',
-                  track_id: String(track.track_id)
-                },
-                signal
-              )
-              const subtitles = lyricsBody?.subtitle?.subtitle_body
-              return subtitles
-                ? this.formatResult(subtitles, null, track)
-                : null
-            })
+          (signal) => this.searchSubtitles(parsed.title, parsed.artist, signal)
         ])
       } else {
-        const searchBody = await this.callMxm(ENDPOINTS.SEARCH, {
-          page_size: '1',
-          page: '1',
-          s_track_rating: 'desc',
-          q_track: parsed.title
-        })
-        const track = searchBody?.track_list?.[0]?.track
-        if (track) {
-          const lyricsBody = await this.callMxm(ENDPOINTS.LYRICS, {
-            subtitle_format: 'mxm',
-            track_id: String(track.track_id)
-          })
-          const subtitles = lyricsBody?.subtitle?.subtitle_body
-          if (subtitles) result = this.formatResult(subtitles, null, track)
-        }
+        result = await this.searchSubtitles(parsed.title, undefined)
       }
 
       if (!result) {

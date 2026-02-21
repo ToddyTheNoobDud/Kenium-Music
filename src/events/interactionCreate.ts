@@ -445,6 +445,24 @@ const buildPlaylistPage = (
   return { embed, components }
 }
 
+const PLAYLIST_BATCH_SIZE = 50
+
+const getAllPlaylistTracksBatched = (playlistId: string): any[] => {
+  const all: any[] = []
+  let offset = 0
+  while (true) {
+    const batch = getPlaylistTracks(playlistId, {
+      limit: PLAYLIST_BATCH_SIZE,
+      skip: offset
+    })
+    if (!batch.length) break
+    all.push(...batch)
+    if (batch.length < PLAYLIST_BATCH_SIZE) break
+    offset += PLAYLIST_BATCH_SIZE
+  }
+  return all
+}
+
 const playlistActionHandlers: Record<string, any> = {
   play_playlist: async (
     interaction: any,
@@ -459,10 +477,8 @@ const playlistActionHandlers: Record<string, any> = {
     if (!playlist)
       return { message: '❌ Playlist not found', shouldUpdate: false }
 
-    const tracks = tracksCol().find({
-      playlistId: playlist._id
-    })
-    if (!tracks.length)
+    const trackCount = tracksCol().count({ playlistId: playlist._id })
+    if (trackCount === 0)
       return { message: '❌ Playlist is empty', shouldUpdate: false }
 
     let voiceState = null
@@ -483,12 +499,26 @@ const playlistActionHandlers: Record<string, any> = {
       deaf: true
     })
 
-    await _functions.resolveTracksAndEnqueue(
-      tracks,
-      (t) => client.aqua.resolve({ query: t.uri, requester: interaction.user }),
-      (track) => player.queue.add(track),
-      RESOLVE_CONCURRENCY
-    )
+    let loadedTracks = 0
+    let offset = 0
+    while (loadedTracks < trackCount) {
+      const batch = getPlaylistTracks(playlist._id, {
+        limit: PLAYLIST_BATCH_SIZE,
+        skip: offset
+      })
+      if (!batch.length) break
+
+      await _functions.resolveTracksAndEnqueue(
+        batch,
+        (t) =>
+          client.aqua.resolve({ query: t.uri, requester: interaction.user }),
+        (track) => player.queue.add(track),
+        RESOLVE_CONCURRENCY
+      )
+
+      loadedTracks += batch.length
+      offset += PLAYLIST_BATCH_SIZE
+    }
 
     playlistsCol().updateAtomic(
       { _id: playlist._id },
@@ -500,7 +530,7 @@ const playlistActionHandlers: Record<string, any> = {
 
     if (!player.playing && !player.paused && player.queue.size) player.play()
     return {
-      message: `▶️ Playing playlist "${playlistName}" with ${tracks.length} tracks`,
+      message: `▶️ Playing playlist "${playlistName}" with ${loadedTracks} tracks`,
       shouldUpdate: false
     }
   },
@@ -518,10 +548,8 @@ const playlistActionHandlers: Record<string, any> = {
     if (!playlist)
       return { message: '❌ Playlist not found', shouldUpdate: false }
 
-    const tracks = tracksCol().find({
-      playlistId: playlist._id
-    })
-    if (!tracks.length)
+    const trackCount = tracksCol().count({ playlistId: playlist._id })
+    if (trackCount === 0)
       return { message: '❌ Playlist is empty', shouldUpdate: false }
 
     let voiceState = null
@@ -542,7 +570,8 @@ const playlistActionHandlers: Record<string, any> = {
       deaf: true
     })
 
-    const shuffled = shuffleArray([...tracks])
+    const allTracks = getAllPlaylistTracksBatched(playlist._id)
+    const shuffled = shuffleArray(allTracks)
 
     await _functions.resolveTracksAndEnqueue(
       shuffled,

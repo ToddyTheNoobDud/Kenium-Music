@@ -5,6 +5,7 @@ import type { Player, Track } from 'aqualink'
 import { Aqua } from 'aqualink'
 import {
   Client,
+  type Container,
   type HttpClient,
   LimitedMemoryAdapter,
   type ParseClient,
@@ -20,6 +21,7 @@ import {
   _functions,
   createNowPlayingEmbed
 } from './src/events/interactionCreate'
+import { handleSocketClosed } from './src/events/voiceStateUpdate'
 import type English from './src/languages/en'
 import { middlewares } from './src/middlewares/middlewares'
 import { closeDatabase, initDatabase } from './src/utils/db'
@@ -98,6 +100,7 @@ const shutdown = async () => {
   process.exit(0)
 }
 
+// Pre-defined activities to avoid object recreation every interval
 const PRESENCE_ACTIVITIES = Object.freeze([
   {
     name: '⚡ Kenium 4.9.2 ⚡',
@@ -172,57 +175,81 @@ client.setServices({
   }
 })
 
-aqua.on('trackStart', async (player: Player, track: Track, payload: { resumed?: boolean }) => {
-  const channel = client.cache.channels?.get(player.textChannel)
-  if (!channel) return
-  if (payload?.resumed) return
+aqua.on('lyricsFound', (_player, track, payload) => {
+  console.log(
+    `Lyrics found for ${track.info?.title || track.title}: ${payload.lyrics?.length} lines`
+  )
+})
 
-  const embed = createNowPlayingEmbed(player, track, client)
-  const messageOptions = { components: [embed], flags: 4096 | 32768 }
-  const msg = player.nowPlayingMessage
+aqua.on('lyricsNotFound', (_player, track) => {
+  console.log(`Lyrics not found for ${track.info?.title || track.title}`)
+})
 
-  if (msg?.id && msg.edit) {
-    try {
-      await msg.edit(messageOptions)
-    } catch {
+aqua.on('lyricsLine', (_player, _track, payload) => {
+  console.log(JSON.stringify(payload))
+})
+
+aqua.on(
+  'trackStart',
+  async (player: Player, track: Track, payload: { resumed?: boolean }) => {
+    const channel = client.cache.channels?.get(player.textChannel)
+    if (!channel) return
+    if (payload?.resumed) return
+
+    const embed: Container = createNowPlayingEmbed(player, track, client)
+    const messageOptions = { components: [embed], flags: 4096 | 32768 }
+    const msg = player.nowPlayingMessage
+
+    if (msg?.id && msg.edit) {
+      try {
+        await msg.edit(messageOptions)
+      } catch {
+        const newMsg = await channel.client.messages
+          .write(channel.id, messageOptions)
+          .catch(() => null)
+        if (newMsg) player.nowPlayingMessage = newMsg
+      }
+    } else {
       const newMsg = await channel.client.messages
         .write(channel.id, messageOptions)
         .catch(() => null)
       if (newMsg) player.nowPlayingMessage = newMsg
     }
-  } else {
-    const newMsg = await channel.client.messages
-      .write(channel.id, messageOptions)
-      .catch(() => null)
-    if (newMsg) player.nowPlayingMessage = newMsg
-  }
 
-  const now = Date.now()
-  if (now - state.lastVoiceStatusUpdate > VOICE_STATUS_THROTTLE) {
-    state.lastVoiceStatusUpdate = now
-    const title = track.info?.title || track.title
-    if (title) {
-      const status = `⭐ ${_functions.truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.9.2`
-      client.channels
-        .setVoiceStatus(player.voiceChannel, status)
-        .catch(() => {})
+    const now = Date.now()
+    if (now - state.lastVoiceStatusUpdate > VOICE_STATUS_THROTTLE) {
+      state.lastVoiceStatusUpdate = now
+      const title = track.info?.title || track.title
+      if (title) {
+        const status = `⭐ ${_functions.truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.9.2`
+        client.channels
+          .setVoiceStatus(player.voiceChannel, status)
+          .catch(() => {})
+      }
     }
   }
-})
+)
 
-aqua.on('trackError', async (player: Player, track: Track, payload: { exception?: { message?: string } }) => {
-  const channel = client.cache.channels?.get(player.textChannel)
-  if (!channel) return
+aqua.on(
+  'trackError',
+  async (
+    player: Player,
+    track: Track,
+    payload: { exception?: { message?: string } }
+  ) => {
+    const channel = client.cache.channels?.get(player.textChannel)
+    if (!channel) return
 
-  const errorMsg = payload.exception?.message || 'Playback failed'
-  const title = _functions.truncateText(track.info?.title || track.title, 25)
+    const errorMsg = payload.exception?.message || 'Playback failed'
+    const title = _functions.truncateText(track.info?.title || track.title, 25)
 
-  await channel.client.messages
-    .write(channel.id, {
-      content: `❌ **${title}**: ${_functions.truncateText(errorMsg, 50)}`
-    })
-    .catch(() => {})
-})
+    await channel.client.messages
+      .write(channel.id, {
+        content: `❌ **${title}**: ${_functions.truncateText(errorMsg, 50)}`
+      })
+      .catch(() => {})
+  }
+)
 
 aqua.on('debug', (message) => {
   client.logger.debug(`[Aqua Debug] ${message}`)
@@ -241,12 +268,7 @@ aqua.on('socketClosed', (player, payload) => {
   client.logger.debug(
     `Socket closed [${player.guildId}], code: ${payload.code}`
   )
-})
-
-aqua.on('nodeConnect', (node) => {
-  client.logger.debug(
-    `Node [${node.name}] connected, IsNodeSecure: ${node.ssl}`
-  )
+  handleSocketClosed(player.guildId, payload.code, client)
 })
 
 aqua.on('nodeDisconnect', (_, reason) => {
@@ -263,7 +285,7 @@ client
       .uploadCommands({ cachePath: './commands.json' })
       .catch(() => {})
     await initDatabase().catch(console.error)
-    client.cooldown = new CooldownManager(client as any)
+    client.cooldown = new CooldownManager(client as never)
     updatePresence(client)
   })
   .catch((_error) => {

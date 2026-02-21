@@ -207,10 +207,13 @@ async function fetchMusixmatchLyrics(
   let searchQuery = query
 
   if (!searchQuery && currentTrack) {
-    searchQuery = currentTrack.title || ''
-    if (!searchQuery && currentTrack.author) {
-      searchQuery =
-        `${currentTrack.title || ''} ${currentTrack.author || ''}`.trim()
+    const title = currentTrack.title || ''
+    const author = currentTrack.author || ''
+
+    if (title && author) {
+      searchQuery = `${title} ${author}`
+    } else {
+      searchQuery = title || author
     }
   }
 

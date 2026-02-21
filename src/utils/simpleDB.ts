@@ -3,9 +3,15 @@ import { EventEmitter } from 'node:events'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+/**
+ * Minimal JSON types (to avoid `any`)
+ */
 type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonValue[] | { [k: string]: JsonValue }
 
+/**
+ * Query types (Mongo-like operators, minimal)
+ */
 type QueryOps = Partial<{
   $ne: JsonValue
   $in: JsonValue[]
@@ -43,7 +49,9 @@ interface SimpleDBOptions {
   cacheSize?: number
 }
 
-
+/**
+ * Minimal SQLite driver typing (works for better-sqlite3 + bun:sqlite usage in this file)
+ */
 type SQLiteRunResult = { changes: number }
 
 interface SQLiteStmt {
@@ -161,6 +169,7 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
   private readonly stmtCache = new Map<string, SQLiteStmt>()
   private readonly txRunner: TxRunner | null
 
+  // Pre-compiled statements for core operations
   private _insert?: SQLiteStmt
   private _byId?: SQLiteStmt
   private _updateById?: SQLiteStmt
@@ -168,9 +177,11 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
   private _countAll?: SQLiteStmt
   private _createdAtById?: SQLiteStmt
 
+  // Pre-compiled statements for common query patterns (kept for future use)
   private _findAll?: SQLiteStmt
   private _deleteAll?: SQLiteStmt
 
+  // Cache for field-specific prepared statements (playlistId, userId, etc.)
   private readonly fieldStmtCache = new Map<string, SQLiteStmt>()
 
   public get tableName() {
