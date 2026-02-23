@@ -247,6 +247,23 @@ class DatabaseManager {
     this.processBatchUpdates()
   }
 
+  async flushUpdatesAsync(maxRounds = 10) {
+    if (this.updateTimer) {
+      clearTimeout(this.updateTimer)
+      this.updateTimer = null
+    }
+
+    for (let round = 0; round < maxRounds; round++) {
+      if (this.updateQueue.size === 0) {
+        await this.processingMutex
+        if (this.updateQueue.size === 0) return
+      }
+
+      this.processBatchUpdates()
+      await this.processingMutex
+    }
+  }
+
   cleanup() {
     this.flushUpdates()
     this.cache.clear()
@@ -435,6 +452,7 @@ export const purgeInvalidSettings = () => {
 }
 
 export const cleanupDatabase = () => dbManager.cleanup()
+export const flushDatabaseUpdates = async () => dbManager.flushUpdatesAsync()
 
 export const getCacheStats = () => ({
   size: dbManager.cache.size,

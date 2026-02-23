@@ -86,21 +86,31 @@ type SQLiteCtor = new (path: string) => SQLiteDB
 const IS_BUN =
   typeof (process as unknown as { isBun?: unknown }).isBun !== 'undefined'
 
+let detectedDriver: 'bun:sqlite' | 'better-sqlite3' | null = null
+
 const DatabaseCtor: SQLiteCtor | null = (() => {
   try {
     if (IS_BUN) {
       const m: unknown = require('bun:sqlite')
       const ctor = (m as { default?: unknown })?.default ?? m
+      detectedDriver = 'bun:sqlite'
       return ctor as SQLiteCtor
     }
   } catch {}
 
   try {
     const m: unknown = require('better-sqlite3')
+    detectedDriver = 'better-sqlite3'
     return m as SQLiteCtor
   } catch {
+    detectedDriver = null
     return null
   }
+})()
+
+const SQLITE_DRIVER: 'bun:sqlite' | 'better-sqlite3' | null = (() => {
+  if (!DatabaseCtor) return null
+  return detectedDriver
 })()
 
 const VALID_NAME = /^[A-Za-z0-9_]+$/
@@ -807,8 +817,17 @@ export class SimpleDB extends EventEmitter {
     super()
 
     if (!DatabaseCtor) {
+      const hint = IS_BUN
+        ? 'Bun runtime detected. Ensure bun:sqlite is available or install better-sqlite3.'
+        : 'Node runtime detected. Install better-sqlite3 or run the project with Bun.'
       throw new Error(
-        'No SQLite driver found. Install "better-sqlite3" or run on Bun with "bun:sqlite".'
+        `No SQLite driver found. ${hint}`
+      )
+    }
+
+    if (!IS_BUN && SQLITE_DRIVER !== 'better-sqlite3') {
+      throw new Error(
+        'Invalid SQLite driver for Node runtime. Expected better-sqlite3.'
       )
     }
 
@@ -833,6 +852,11 @@ export class SimpleDB extends EventEmitter {
       'auto_vacuum = INCREMENTAL',
       'trusted_schema = OFF'
     ])
+
+    try {
+      // Recommended for long-lived connections.
+      this.db.prepare('PRAGMA optimize = 0x10002').run()
+    } catch {}
 
     this._checkpointStmt = this.db.prepare('PRAGMA wal_checkpoint(PASSIVE)')
     this.startCheckpointTimer()

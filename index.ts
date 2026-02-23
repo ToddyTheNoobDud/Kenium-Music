@@ -1,8 +1,7 @@
-import process from 'node:process'
+﻿import process from 'node:process'
 import 'dotenv/config'
 import { CooldownManager } from '@slipher/cooldown'
-import type { Player, Track } from 'aqualink'
-import { Aqua } from 'aqualink'
+import { Aqua, type Player, type Track } from 'aqualink'
 import {
   Client,
   type Container,
@@ -24,6 +23,7 @@ import {
 import { handleSocketClosed } from './src/events/voiceStateUpdate'
 import type English from './src/languages/en'
 import { middlewares } from './src/middlewares/middlewares'
+import { flushDatabaseUpdates } from './src/utils/db_helper'
 import { closeDatabase, initDatabase } from './src/utils/db'
 
 // Constants
@@ -34,6 +34,7 @@ const COUNT_CACHE_TTL = 30000
 
 const { NODE_HOST, NODE_PASSWORD, NODE_NAME, NODE_PORT, NODE_SECURE, id } =
   process.env
+const AQUALINK_TRACE = true
 
 if (!id) {
   console.error('Bot token (id) is not defined in environment variables.')
@@ -41,6 +42,7 @@ if (!id) {
 }
 
 const client = new Client({})
+
 
 const aqua = new Aqua(
   client,
@@ -59,9 +61,12 @@ const aqua = new Aqua(
     shouldDeleteMessage: true,
     infiniteReconnects: true,
     autoResume: true,
+    autoRegionMigrate: false,
     loadBalancer: 'random',
-    useHttp2: true,
-    leaveOnEnd: false
+    useHttp2: false,
+    leaveOnEnd: false,
+    debugTrace: false,
+    traceMaxEntries: 5000
   }
 )
 
@@ -81,12 +86,6 @@ const cleanupPlayer = (player: Player) => {
   if (voiceChannel)
     client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
   if (hasKaraokeSession(player.guildId)) cleanupKaraokeSession(player.guildId)
-
-  const msg = player.nowPlayingMessage
-  if (msg?.delete) {
-    msg.delete().catch(() => {})
-    player.nowPlayingMessage = null
-  }
 }
 
 const shutdown = async () => {
@@ -96,6 +95,9 @@ const shutdown = async () => {
   }
   await aqua.savePlayer().catch((e) => console.log(e))
   await cleanupAllKaraokeSessions().catch((e) => console.log(e))
+  await flushDatabaseUpdates().catch((e) =>
+    console.error('Failed to flush pending database updates:', e)
+  )
   closeDatabase()
   process.exit(0)
 }
@@ -191,27 +193,45 @@ aqua.on('lyricsLine', (_player, _track, payload) => {
 
 aqua.on(
   'trackStart',
-  async (player: Player, track: Track, payload: { resumed?: boolean }) => {
-    const channel = client.cache.channels?.get(player.textChannel)
-    if (!channel) return
-    if (payload?.resumed) return
+  async (
+    player: Player,
+    track: Track | null | undefined  ) => {
+    const activeTrack = (player.current as Track | null | undefined) || track
+    if (!activeTrack) return
 
-    const embed: Container = createNowPlayingEmbed(player, track, client)
-    const messageOptions = { components: [embed], flags: 4096 | 32768 }
     const msg = player.nowPlayingMessage
+    const textChannelId = player.textChannel || msg?.channelId
 
-    if (msg?.id && msg.edit) {
-      try {
-        await msg.edit(messageOptions)
-      } catch {
-        const newMsg = await channel.client.messages
-          .write(channel.id, messageOptions)
+    if (!textChannelId) return
+
+    const embed: Container = createNowPlayingEmbed(player, activeTrack, client)
+    const messageOptions = { components: [embed], flags: 4096 | 32768 }
+
+    const tryEditNowPlaying = async () => {
+      if (!msg?.id) return null
+      return (
+        (msg.edit
+          ? await msg.edit(messageOptions).catch(() => null)
+          : await client.messages
+              .edit(msg.id, textChannelId, messageOptions)
+              .catch(() => null)) || null
+      )
+    }
+
+    if (msg?.id) {
+      const edited = await tryEditNowPlaying()
+      if (edited) {
+        player.nowPlayingMessage = edited
+      } else {
+        player.nowPlayingMessage = null
+        const newMsg = await client.messages
+          .write(textChannelId, messageOptions)
           .catch(() => null)
         if (newMsg) player.nowPlayingMessage = newMsg
       }
     } else {
-      const newMsg = await channel.client.messages
-        .write(channel.id, messageOptions)
+      const newMsg = await client.messages
+        .write(textChannelId, messageOptions)
         .catch(() => null)
       if (newMsg) player.nowPlayingMessage = newMsg
     }
@@ -219,7 +239,7 @@ aqua.on(
     const now = Date.now()
     if (now - state.lastVoiceStatusUpdate > VOICE_STATUS_THROTTLE) {
       state.lastVoiceStatusUpdate = now
-      const title = track.info?.title || track.title
+      const title = activeTrack.info?.title || activeTrack.title
       if (title) {
         const status = `⭐ ${_functions.truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.9.2`
         client.channels
@@ -251,14 +271,40 @@ aqua.on(
   }
 )
 
-aqua.on('debug', (message) => {
-  client.logger.debug(`[Aqua Debug] ${message}`)
+aqua.on('debug', (source: string, message: string) => {
+  client.logger.debug(`[Aqua Debug:${source}] ${message}`)
 })
+
+if (AQUALINK_TRACE) {
+  const dumpTrace = (label: string, guildId?: string) => {
+    const raw = aqua.getTrace(300)
+    const rows = guildId
+      ? raw.filter(
+          (x) =>
+            x?.data?.guildId === guildId ||
+            x?.data?.guild_id === guildId ||
+            x?.data?.g === guildId
+        )
+      : raw
+    console.log(
+      `[AquaTrace] ${label} entries=${rows.length}\n${rows
+        .map((x) => `${x.seq}|${x.at}|${x.event}|${JSON.stringify(x.data)}`)
+        .join('\n')}`
+    )
+  }
+
+  aqua.on('socketClosed', (player, payload) => {
+    dumpTrace(`socketClosed code=${payload?.code}`, player.guildId)
+  })
+
+  aqua.on('nodeDisconnect', (_node, reason) => {
+    dumpTrace(`nodeDisconnect reason=${JSON.stringify(reason)}`)
+  })
+}
 
 const cleanupHandler = (player: Player) => cleanupPlayer(player)
 aqua.on('playerDestroy', cleanupHandler)
 aqua.on('queueEnd', cleanupHandler)
-aqua.on('trackEnd', cleanupHandler)
 
 aqua.on('nodeError', (node, error) => {
   console.error(`Node [${node.name}] error: ${error.message}`)

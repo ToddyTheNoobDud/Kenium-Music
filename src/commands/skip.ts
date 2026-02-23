@@ -19,7 +19,7 @@ export default class skipCmds extends Command {
       const t = ctx.t.get(getContextLanguage(ctx))
 
       const player = client.aqua.players.get(ctx.guildId as string)
-      if (!player || player.queue.length === 0) {
+      if (!player || player.queue.size === 0) {
         await ctx.editOrReply({
           embeds: [
             new Embed()

@@ -3,7 +3,7 @@
   "dependencies": {
     "@biomejs/biome": "^2.4.4",
     "@slipher/cooldown": "^0.0.7",
-    "aqualink": "2.19.1",
+    "aqualink": "^2.20.1",
     "dotenv": "^17.3.1",
     "seyfert": "^4.2.2",
     "tiny-lru": "^11.4.7",

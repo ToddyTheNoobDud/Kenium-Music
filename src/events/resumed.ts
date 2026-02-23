@@ -20,14 +20,13 @@ export default createEvent({
       }
 
       if (player.nowPlayingMessage) {
-        client.messages
+        const fetched = await client.messages
           .fetch(
             player.nowPlayingMessage.id,
             player.nowPlayingMessage.channelId
           )
-          .catch(() => {
-            player.nowPlayingMessage = null
-          })
+          .catch(() => null)
+        player.nowPlayingMessage = fetched || null
       }
 
       player.send({
