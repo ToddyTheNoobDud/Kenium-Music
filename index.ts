@@ -32,9 +32,8 @@ const VOICE_STATUS_LENGTH = 30
 const VOICE_STATUS_THROTTLE = 5000
 const COUNT_CACHE_TTL = 30000
 
-const { NODE_HOST, NODE_PASSWORD, NODE_NAME, NODE_PORT, NODE_SECURE, id } =
+const { NODE_HOST, NODE_PASSWORD, NODE_NAME, NODE_PORT, NODE_SECURE, AQUALINK_TRACE, id } =
   process.env
-const AQUALINK_TRACE = true
 
 if (!id) {
   console.error('Bot token (id) is not defined in environment variables.')
@@ -254,14 +253,17 @@ aqua.on(
   'trackError',
   async (
     player: Player,
-    track: Track,
+    track: Track | null | undefined,
     payload: { exception?: { message?: string } }
   ) => {
     const channel = client.cache.channels?.get(player.textChannel)
     if (!channel) return
 
     const errorMsg = payload.exception?.message || 'Playback failed'
-    const title = _functions.truncateText(track.info?.title || track.title, 25)
+    const fallbackTrack = (player.current as Track | null | undefined) || track
+    const rawTitle =
+      fallbackTrack?.info?.title || fallbackTrack?.title || 'Unknown track'
+    const title = _functions.truncateText(rawTitle, 25)
 
     await channel.client.messages
       .write(channel.id, {
@@ -273,6 +275,16 @@ aqua.on(
 
 aqua.on('debug', (source: string, message: string) => {
   client.logger.debug(`[Aqua Debug:${source}] ${message}`)
+})
+
+aqua.on('error', (sourceOrError: unknown, maybeError?: unknown) => {
+  const err =
+    maybeError instanceof Error
+      ? maybeError
+      : sourceOrError instanceof Error
+        ? sourceOrError
+        : new Error(String(maybeError || sourceOrError || 'Unknown Aqualink error'))
+  client.logger.warn(`[Aqua Error] ${err.message}`)
 })
 
 if (AQUALINK_TRACE) {
@@ -318,7 +330,9 @@ aqua.on('socketClosed', (player, payload) => {
 })
 
 aqua.on('nodeDisconnect', (_, reason) => {
-  client.logger.info(`Node disconnected: ${reason}`)
+  const details =
+    typeof reason === 'string' ? reason : JSON.stringify(reason ?? {})
+  client.logger.info(`Node disconnected: ${details}`)
 })
 
 process.on('SIGINT', shutdown)

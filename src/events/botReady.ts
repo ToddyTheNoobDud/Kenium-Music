@@ -7,14 +7,24 @@ const NICKNAME_SUFFIX = ' [24/7]'
 const BATCH_SIZE = 10
 const BATCH_DELAY = 500
 const STARTUP_DELAY = 6000
+const AQUA_RETRY_DELAY = 30000
 
 let settingsCollection: ReturnType<typeof getSettingsCollection> | null = null
 let clientInstance: any = null
+let autoJoinStarted = false
+let aquaRetryTimer: NodeJS.Timeout | null = null
 
 const getSettings = () => {
   if (!settingsCollection) settingsCollection = getSettingsCollection()
   return settingsCollection
 }
+
+const hasReadyAqua = (client: any) =>
+  !!(
+    client?.aqua?.initiated &&
+    Array.isArray(client?.aqua?.leastUsedNodes) &&
+    client.aqua.leastUsedNodes.length > 0
+  )
 
 const updateNickname = async (guild: any) => {
   const botMember = guild.members?.me
@@ -99,19 +109,40 @@ const processGuild = async (client: any, settings: any) => {
     )
   }
 
-  await Promise.all([
-    client.aqua.createConnection({
-      guildId,
-      voiceChannel: voiceChannelId,
-      textChannel: textChannelId,
-      deaf: true,
-      defaultVolume: 65
-    }),
-    updateNickname(guild)
-  ])
+  if (!hasReadyAqua(client)) {
+    client.logger.warn(
+      `[24/7] Skipping rejoin for ${guildId}: Aqua is not connected to any node.`
+    )
+    return
+  }
+
+  try {
+    await Promise.all([
+      client.aqua.createConnection({
+        guildId,
+        voiceChannel: voiceChannelId,
+        textChannel: textChannelId,
+        deaf: true,
+        defaultVolume: 65
+      }),
+      updateNickname(guild)
+    ])
+  } catch (err: any) {
+    client.logger.warn(
+      `[24/7] Failed to create player for ${guildId}: ${err?.message || err}`
+    )
+  }
 }
 
 const processAutoJoin = async (client: any) => {
+  if (autoJoinStarted) return
+  if (!hasReadyAqua(client)) {
+    client.logger.warn(
+      '[24/7] Auto-join skipped: Aqua has no connected Lavalink node yet.'
+    )
+    return
+  }
+  autoJoinStarted = true
   client.logger.info('[24/7] Scanning database for 24/7 guilds...')
 
   const enabled = getSettings().find(
@@ -155,13 +186,44 @@ const processAutoJoin = async (client: any) => {
   client.logger.info('[24/7] Startup auto-join process finished.')
 }
 
+const scheduleAquaRetry = (client: any) => {
+  if (aquaRetryTimer) clearTimeout(aquaRetryTimer)
+  aquaRetryTimer = setTimeout(
+    () => {
+      aquaRetryTimer = null
+      void tryInitAqua(client)
+    },
+    AQUA_RETRY_DELAY
+  )
+  aquaRetryTimer.unref?.()
+}
+
+const tryInitAqua = async (client: any) => {
+  if (!client?.botId) return false
+  if (hasReadyAqua(client)) return true
+  try {
+    await client.aqua.init(client.botId)
+    client.logger.info('[Aqua] Connected to Lavalink node(s).')
+    if (!autoJoinStarted) {
+      setTimeout(() => void processAutoJoin(client), STARTUP_DELAY)
+    }
+    return true
+  } catch (err: any) {
+    client.logger.warn(
+      `[Aqua] Init failed: ${err?.message || err}. Retrying in ${AQUA_RETRY_DELAY / 1000}s.`
+    )
+    scheduleAquaRetry(client)
+    return false
+  }
+}
+
 export default createEvent({
   data: { once: true, name: 'botReady' },
-  run: (user, client) => {
+  run: async (user, client) => {
     clientInstance = client
     if (!client.botId) client.botId = user.id
 
-    client.aqua.init(client.botId)
+    await tryInitAqua(client)
     updatePresence(client as any)
     client.logger.info(`${user.username} is ready`)
 
@@ -172,6 +234,8 @@ export default createEvent({
       )
     }
 
-    setTimeout(() => processAutoJoin(client), STARTUP_DELAY)
+    if (hasReadyAqua(client)) {
+      setTimeout(() => void processAutoJoin(client), STARTUP_DELAY)
+    }
   }
 })

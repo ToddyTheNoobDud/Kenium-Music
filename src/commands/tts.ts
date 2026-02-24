@@ -54,7 +54,7 @@ export default class TTSCommand extends Command {
       if (track) {
         player.queue.add(track)
         if (!player.playing && !player.paused && player.queue.size > 0) {
-          player.play()
+          void player.play().catch(() => {})
         }
       }
       ctx.write({

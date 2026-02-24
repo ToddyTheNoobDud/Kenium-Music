@@ -85,6 +85,18 @@ class VoiceManager {
     voiceId?: string,
     textId?: string
   ): Promise<boolean> {
+    const aqua = client?.aqua
+    if (
+      !aqua?.initiated ||
+      !Array.isArray(aqua?.leastUsedNodes) ||
+      aqua.leastUsedNodes.length === 0
+    ) {
+      client.logger.debug(
+        `[24/7] Rejoin skipped for ${guildId}: Aqua has no connected nodes.`
+      )
+      return false
+    }
+
     const pair = getChannelPair(guildId, voiceId, textId)
     if (!pair) return false
 
@@ -134,6 +146,17 @@ export const handleSocketClosed = (
   client: any
 ) => {
   if (!isTwentyFourSevenEnabled(guildId)) return
+  const aqua = client?.aqua
+  if (
+    !aqua?.initiated ||
+    !Array.isArray(aqua?.leastUsedNodes) ||
+    aqua.leastUsedNodes.length === 0
+  ) {
+    client.logger.debug(
+      `[24/7] Socket closed ${guildId}, code: ${code}. Skipping rejoin: no available nodes.`
+    )
+    return
+  }
 
   client.logger.debug(`[24/7] Socket closed ${guildId}, code: ${code}`)
 

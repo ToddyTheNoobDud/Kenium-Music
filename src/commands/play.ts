@@ -335,9 +335,7 @@ export default class Play extends Command {
       await ctx.editResponse({ embeds: [embed] })
 
       if (!player.playing && !player.paused && player.queue.size > 0) {
-        try {
-          player.play()
-        } catch {}
+        void player.play().catch(() => {})
       }
     } catch (err: any) {
       if (err?.code === 10065) return

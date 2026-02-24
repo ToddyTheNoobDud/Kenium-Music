@@ -528,7 +528,8 @@ const playlistActionHandlers: Record<string, any> = {
       }
     )
 
-    if (!player.playing && !player.paused && player.queue.size) player.play()
+    if (!player.playing && !player.paused && player.queue.size)
+      void player.play().catch(() => {})
     return {
       message: `▶️ Playing playlist "${playlistName}" with ${loadedTracks} tracks`,
       shouldUpdate: false
@@ -581,7 +582,8 @@ const playlistActionHandlers: Record<string, any> = {
       RESOLVE_CONCURRENCY
     )
 
-    if (!player.playing && !player.paused && player.queue.size) player.play()
+    if (!player.playing && !player.paused && player.queue.size)
+      void player.play().catch(() => {})
     return {
       message: `🔀 Playing shuffled playlist "${playlistName}"`,
       shouldUpdate: false

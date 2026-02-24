@@ -51,7 +51,7 @@ export default class roulettecmds extends Command {
 
       setTimeout(() => {
         if (!player.playing && !player.paused && player.queue.size > 0) {
-          player.play()
+          void player.play().catch(() => {})
         }
       }, 100)
 

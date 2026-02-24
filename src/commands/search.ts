@@ -332,7 +332,7 @@ export default class SearchCommand extends Command {
       )
 
       if (!player.playing && !player.paused && player.queue.size > 0) {
-        player.play()
+        void player.play().catch(() => {})
       }
     }
   }

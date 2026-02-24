@@ -30,8 +30,8 @@ export default class previoiusCmds extends Command {
       }
       player.stop()
 
-      if (!player.playing && !player.paused && !player.queue.length) {
-        player.play()
+      if (!player.playing && !player.paused && player.queue.size > 0) {
+        void player.play().catch(() => {})
       }
 
       await ctx.editOrReply({
