@@ -76,7 +76,7 @@ export default class PlayFile extends Command {
         player.queue.add(track)
 
         if (!player.playing && !player.paused && player.queue.size > 0) {
-          void player.play().catch(() => {})
+          player.play().catch(() => {})
         }
         await ctx.editOrReply({
           embeds: [

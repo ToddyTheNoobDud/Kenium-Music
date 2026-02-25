@@ -335,15 +335,18 @@ export default class Play extends Command {
       await ctx.editResponse({ embeds: [embed] })
 
       if (!player.playing && !player.paused && player.queue.size > 0) {
-        void player.play().catch(() => {})
+        player.play().catch((err) => { console.log(err)})
       }
     } catch (err: any) {
+      console.error(err)
       if (err?.code === 10065) return
       try {
         await ctx.editOrReply({
           content: t.errors?.general || 'An error occurred. Please try again.'
         })
-      } catch {}
+      } catch (err) {
+        console.error(err)
+      }
     }
   }
 }

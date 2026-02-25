@@ -221,7 +221,7 @@ export class PlayCommand extends SubCommand {
       }
 
       if (!player.playing && !player.paused)
-        void player.play().catch(() => {})
+        player.play().catch(() => {})
 
       const failedCount = total - loadedTracks.length
 

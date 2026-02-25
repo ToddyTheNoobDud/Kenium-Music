@@ -184,7 +184,6 @@ export default createEvent({
     if (!guildId) return
     if (oldState?.channelId === newState?.channelId) return
     if (!isTwentyFourSevenEnabled(guildId)) return
-
     const botId = getBotId(client)
     const userId = newState?.userId ?? oldState?.userId
 
