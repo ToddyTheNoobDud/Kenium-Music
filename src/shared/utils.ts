@@ -190,7 +190,7 @@ export const handleTrackIndexAutocomplete = async (
   }
 
   const options = tracks.map((track, index) => ({
-    name: `${index + 1}. ${String(track['title'] || 'Untitled').slice(0, 80)}`,
+    name: `${index + 1}. ${String(track.title || 'Untitled').slice(0, 80)}`,
     value: String(index + 1)
   }))
 

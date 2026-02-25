@@ -32,9 +32,12 @@ export const checkVoice = createMiddleware<void>(
 
     const memberVoice = await context.member?.voice().catch(() => null)
 
-    // @ts-ignore
+    // @ts-expect-error
     const botId = context.client.botId
-    const botvoice = context.client.cache.voiceStates?.get(botId, context.guildId)
+    const botvoice = context.client.cache.voiceStates?.get(
+      botId,
+      context.guildId
+    )
     if (
       !memberVoice ||
       (botvoice && botvoice.channelId !== memberVoice.channelId)

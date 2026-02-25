@@ -5,7 +5,7 @@ const handleEvent = (type: any, fn: any) => {
 }
 
 const logEvent = (eventType: string, message: any, origin: any) => {
-  console.error(`${eventType} (Origin: ${origin}):`, message);
+  console.error(`${eventType} (Origin: ${origin}):`, message)
 }
 
 if (!(process as any)[GLOBAL_HANDLER_FLAG]) {

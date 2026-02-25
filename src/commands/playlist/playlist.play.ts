@@ -220,8 +220,7 @@ export class PlayCommand extends SubCommand {
         console.error('Database error updating playlist stats:', dbError)
       }
 
-      if (!player.playing && !player.paused)
-        player.play().catch(() => {})
+      if (!player.playing && !player.paused) player.play().catch(() => {})
 
       const failedCount = total - loadedTracks.length
 

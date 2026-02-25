@@ -520,11 +520,7 @@ export default class KaraokeCommand extends Command {
       return
     }
 
-    const delay = this._computeNextEditDelayMs(
-      session,
-      currentTimeMs,
-      isPaused
-    )
+    const delay = this._computeNextEditDelayMs(session, currentTimeMs, isPaused)
     this._scheduleNextTick(guildId, delay, 0)
   }
 

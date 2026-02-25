@@ -66,8 +66,8 @@ export default class roulettecmds extends Command {
                 .replace('{title}', trackTitle)
                 .replace('{author}', trackAuthor)
             )
-          .setColor(0x00ff00)
-          .setFooter({
+            .setColor(0x00ff00)
+            .setFooter({
               text: `Position: ${randomIndex + 1}/${queue.length + 1}`
             })
         ],

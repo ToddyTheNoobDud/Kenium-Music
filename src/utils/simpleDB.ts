@@ -820,9 +820,7 @@ export class SimpleDB extends EventEmitter {
       const hint = IS_BUN
         ? 'Bun runtime detected. Ensure bun:sqlite is available or install better-sqlite3.'
         : 'Node runtime detected. Install better-sqlite3 or run the project with Bun.'
-      throw new Error(
-        `No SQLite driver found. ${hint}`
-      )
+      throw new Error(`No SQLite driver found. ${hint}`)
     }
 
     if (!IS_BUN && SQLITE_DRIVER !== 'better-sqlite3') {

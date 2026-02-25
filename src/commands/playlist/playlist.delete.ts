@@ -5,7 +5,6 @@ import {
   Options,
   SubCommand
 } from 'seyfert'
-import type { Playlist } from '../../shared/types'
 import { createEmbed, handlePlaylistAutocomplete } from '../../shared/utils'
 import {
   getDatabase,

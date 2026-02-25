@@ -20,11 +20,10 @@ import {
   _functions,
   createNowPlayingEmbed
 } from './src/events/interactionCreate'
-import { handleSocketClosed } from './src/events/voiceStateUpdate'
 import type English from './src/languages/en'
 import { middlewares } from './src/middlewares/middlewares'
-import { flushDatabaseUpdates } from './src/utils/db_helper'
 import { closeDatabase, initDatabase } from './src/utils/db'
+import { flushDatabaseUpdates } from './src/utils/db_helper'
 
 // Constants
 const PRESENCE_UPDATE_INTERVAL = 60000
@@ -32,8 +31,15 @@ const VOICE_STATUS_LENGTH = 30
 const VOICE_STATUS_THROTTLE = 5000
 const COUNT_CACHE_TTL = 30000
 
-const { NODE_HOST, NODE_PASSWORD, NODE_NAME, NODE_PORT, NODE_SECURE, AQUALINK_TRACE, id } =
-  process.env
+const {
+  NODE_HOST,
+  NODE_PASSWORD,
+  NODE_NAME,
+  NODE_PORT,
+  NODE_SECURE,
+  AQUALINK_TRACE,
+  id
+} = process.env
 
 if (!id) {
   console.error('Bot token (id) is not defined in environment variables.')
@@ -41,7 +47,6 @@ if (!id) {
 }
 
 const client = new Client({})
-
 
 const aqua = new Aqua(
   client,
@@ -60,7 +65,7 @@ const aqua = new Aqua(
     shouldDeleteMessage: true,
     infiniteReconnects: true,
     autoResume: true,
-    autoRegionMigrate: false,
+    autoRegionMigrate: true,
     loadBalancer: 'random',
     useHttp2: false,
     leaveOnEnd: false,
@@ -192,9 +197,7 @@ aqua.on('lyricsLine', (_player, _track, payload) => {
 
 aqua.on(
   'trackStart',
-  async (
-    player: Player,
-    track: Track | null | undefined  ) => {
+  async (player: Player, track: Track | null | undefined) => {
     const activeTrack = (player.current as Track | null | undefined) || track
     if (!activeTrack) return
 
@@ -283,7 +286,9 @@ aqua.on('error', (sourceOrError: unknown, maybeError?: unknown) => {
       ? maybeError
       : sourceOrError instanceof Error
         ? sourceOrError
-        : new Error(String(maybeError || sourceOrError || 'Unknown Aqualink error'))
+        : new Error(
+            String(maybeError || sourceOrError || 'Unknown Aqualink error')
+          )
   client.logger.warn(`[Aqua Error] ${err.message}`)
 })
 
@@ -326,7 +331,6 @@ aqua.on('socketClosed', (player, payload) => {
   client.logger.debug(
     `Socket closed [${player.guildId}], code: ${payload.code}`
   )
-  handleSocketClosed(player.guildId, payload.code, client)
 })
 
 aqua.on('nodeDisconnect', (_, reason) => {

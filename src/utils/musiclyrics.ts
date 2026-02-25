@@ -147,7 +147,10 @@ export class Musixmatch {
     const onExternalAbort = () => controller.abort()
     externalSignal?.addEventListener('abort', onExternalAbort, { once: true })
 
-    const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs)
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      this.requestTimeoutMs
+    )
     ;(timeoutId as any).unref?.()
 
     try {
@@ -365,12 +368,18 @@ export class Musixmatch {
 
     if (!parts && !cleaned.includes(' ')) {
       const idx = cleaned.indexOf('-')
-      if (idx > 0 && idx === cleaned.lastIndexOf('-') && idx < cleaned.length - 1)
+      if (
+        idx > 0 &&
+        idx === cleaned.lastIndexOf('-') &&
+        idx < cleaned.length - 1
+      )
         parts = { artist: cleaned.slice(0, idx), title: cleaned.slice(idx + 1) }
     }
 
     const artist = parts?.artist
-      ? this.stripFeaturing(this.stripTrailingParensJunk(this.norm(parts.artist)))
+      ? this.stripFeaturing(
+          this.stripTrailingParensJunk(this.norm(parts.artist))
+        )
       : undefined
     const title = this.stripFeaturing(
       this.stripTrailingParensJunk(this.norm(parts?.title ?? cleaned))

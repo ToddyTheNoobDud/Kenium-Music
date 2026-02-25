@@ -188,13 +188,10 @@ const processAutoJoin = async (client: any) => {
 
 const scheduleAquaRetry = (client: any) => {
   if (aquaRetryTimer) clearTimeout(aquaRetryTimer)
-  aquaRetryTimer = setTimeout(
-    () => {
-      aquaRetryTimer = null
-      void tryInitAqua(client)
-    },
-    AQUA_RETRY_DELAY
-  )
+  aquaRetryTimer = setTimeout(() => {
+    aquaRetryTimer = null
+    void tryInitAqua(client)
+  }, AQUA_RETRY_DELAY)
   aquaRetryTimer.unref?.()
 }
 

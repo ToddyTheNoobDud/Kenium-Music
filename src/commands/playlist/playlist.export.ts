@@ -7,7 +7,6 @@ import {
   Options,
   SubCommand
 } from 'seyfert'
-import type { Playlist, Track } from '../../shared/types'
 import { handlePlaylistAutocomplete } from '../../shared/utils'
 import { getPlaylistsCollection, getTracksCollection } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
