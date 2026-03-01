@@ -342,17 +342,17 @@ aqua.on('nodeDisconnect', (_, reason) => {
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
-client
-  .start()
+initDatabase()
+  .then(() => client.start())
   .then(async () => {
     await client
       .uploadCommands({ cachePath: './commands.json' })
       .catch(() => {})
-    await initDatabase().catch(console.error)
     client.cooldown = new CooldownManager(client as never)
     updatePresence(client)
   })
-  .catch((_error) => {
+  .catch((error) => {
+    console.error('Startup failed:', error)
     process.exit(1)
   })
 

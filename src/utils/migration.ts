@@ -5,6 +5,11 @@ interface RawSQLiteDB {
   backup?(path: string): Promise<void>
 }
 
+interface RawStmt<T = any> {
+  all?: () => T[]
+  iterate?: () => Iterable<T>
+}
+
 function tableExists(rawDb: RawSQLiteDB, tableName: string): boolean {
   try {
     return !!rawDb
@@ -66,10 +71,20 @@ export async function migrateDatabase() {
 
   const stmt = rawDb.prepare(
     `SELECT _id, doc, createdAt, updatedAt FROM ${sourceTable}`
-  )
+  ) as RawStmt<{
+    _id: string
+    doc: string
+    createdAt: string
+    updatedAt: string
+  }>
+
+  const rows =
+    typeof stmt.all === 'function'
+      ? stmt.all()
+      : Array.from(stmt.iterate?.() ?? [])
 
   db.transaction(() => {
-    for (const row of stmt.iterate()) {
+    for (const row of rows) {
       try {
         const doc = JSON.parse(row.doc)
         const tracks = Array.isArray(doc.tracks) ? doc.tracks : []

@@ -15,6 +15,7 @@ import {
   getTracksCollection
 } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
+import { generateSortableId } from '../../utils/simpleDB'
 
 const ICONS = {
   music: '🎵',
@@ -192,7 +193,7 @@ export class ImportCommand extends SubCommand {
       try {
         getDatabase().transaction(() => {
           const insertedPlaylist: Playlist = {
-            _id: `pl_${Math.random().toString(36).slice(2, 11)}_${Date.now()}`,
+            _id: generateSortableId(),
             userId,
             name: playlistName,
             description: data.description || 'Imported playlist',
@@ -206,8 +207,8 @@ export class ImportCommand extends SubCommand {
           playlistsCollection.insert(insertedPlaylist)
 
           const tracksToInsert: Track[] = validTracks.map(
-            (track: any, i: number) => ({
-              _id: `tr_${Math.random().toString(36).slice(2, 11)}_${Date.now() + i}`,
+            (track: any) => ({
+              _id: generateSortableId(),
               playlistId: insertedPlaylist._id,
               title: track.title,
               uri: track.uri,

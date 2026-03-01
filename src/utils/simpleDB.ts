@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -116,8 +116,37 @@ const SQLITE_DRIVER: 'bun:sqlite' | 'better-sqlite3' | null = (() => {
 const VALID_NAME = /^[A-Za-z0-9_]+$/
 const VALID_PATH = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/
 
+function bytesToUuid(bytes: Uint8Array): string {
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(
+    ''
+  )
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
+}
+
 const _functions = {
   now: () => new Date().toISOString(),
+
+  uuidV7: (): string => {
+    const bytes = randomBytes(16)
+    const ts = BigInt(Date.now())
+
+    // 48-bit unix timestamp (milliseconds)
+    bytes[0] = Number((ts >> 40n) & 0xffn)
+    bytes[1] = Number((ts >> 32n) & 0xffn)
+    bytes[2] = Number((ts >> 24n) & 0xffn)
+    bytes[3] = Number((ts >> 16n) & 0xffn)
+    bytes[4] = Number((ts >> 8n) & 0xffn)
+    bytes[5] = Number(ts & 0xffn)
+
+    // version 7 (0b0111xxxx)
+    bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x70
+    // RFC 4122 variant (0b10xxxxxx)
+    bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80
+
+    return bytesToUuid(bytes)
+  },
+
+  generateId: (): string => _functions.uuidV7(),
 
   isPlainObject: (v: unknown): v is Record<string, unknown> =>
     !!v && typeof v === 'object' && !Array.isArray(v),
@@ -170,6 +199,8 @@ const _functions = {
     }
   }
 }
+
+export const generateSortableId = (): string => _functions.generateId()
 
 class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
   private readonly db: SQLiteDB
@@ -526,7 +557,7 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
 
     _functions.runTx(this.txRunner, () => {
       for (const doc of items) {
-        const _id = (doc as any)._id || randomUUID()
+        const _id = (doc as any)._id || _functions.generateId()
 
         const shouldLookupCreatedAt =
           !!(doc as any)._id && !(doc as any).createdAt
@@ -590,6 +621,7 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
     }
     if (typeof opts.skip === 'number') {
       if (opts.skip < 0) throw new Error('skip must be >= 0')
+      if (typeof opts.limit !== 'number') querySql += ' LIMIT -1'
       querySql += ` OFFSET ${opts.skip}`
     }
 
@@ -672,6 +704,10 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
           updatedAt: now
         } as T & Required<Document>)
 
+        next._id = row._id
+        if (doc.createdAt && !next.createdAt) next.createdAt = doc.createdAt
+        next.updatedAt = now
+
         this.updateStmt.run(JSON.stringify(next), now, row._id)
         changed++
       }
@@ -689,7 +725,6 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
       }
       if (doc._id) next._id = doc._id
       if (doc.createdAt) next.createdAt = doc.createdAt
-      if (doc.updatedAt) next.updatedAt = doc.updatedAt
       return next as T & Required<Document>
     })
   }

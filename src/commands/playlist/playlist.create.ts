@@ -11,6 +11,7 @@ import type { Playlist } from '../../shared/types'
 import { createButtons, createEmbed } from '../../shared/utils'
 import { getPlaylistsCollection } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
+import { generateSortableId } from '../../utils/simpleDB'
 
 const playlistsCollection = getPlaylistsCollection()
 
@@ -85,7 +86,7 @@ export class CreateCommand extends SubCommand {
 
     const timestamp = new Date().toISOString()
     const playlist: Playlist = {
-      _id: `pl_${Math.random().toString(36).slice(2, 11)}_${Date.now()}`,
+      _id: generateSortableId(),
       userId,
       name,
       createdAt: timestamp,

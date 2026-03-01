@@ -24,6 +24,7 @@ import {
   getTracksCollection
 } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
+import { generateSortableId } from '../../utils/simpleDB'
 
 const playlistsCollection = getPlaylistsCollection()
 const tracksCollection = getTracksCollection()
@@ -183,7 +184,7 @@ export class AddCommand extends SubCommand {
       const canonical = _functions.canonicalizeUri(uri)
       if (existingCanonical.has(canonical)) return
       const newTrack: Track = {
-        _id: `tr_${Math.random().toString(36).slice(2, 11)}_${Date.now() + toAdd.length}`,
+        _id: generateSortableId(),
         playlistId: playlistDb._id,
         title: track.info.title || 'Unknown',
         uri,
