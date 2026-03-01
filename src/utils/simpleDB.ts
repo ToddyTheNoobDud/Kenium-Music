@@ -127,6 +127,16 @@ const _functions = {
   now: () => new Date().toISOString(),
 
   uuidV7: (): string => {
+    const bun = (
+      globalThis as unknown as {
+        Bun?: { randomUUIDv7?: () => string }
+      }
+    ).Bun
+
+    if (typeof bun?.randomUUIDv7 === 'function') {
+      return bun.randomUUIDv7()
+    }
+
     const bytes = randomBytes(16)
     const ts = BigInt(Date.now())
 
