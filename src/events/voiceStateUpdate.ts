@@ -2,13 +2,15 @@ import process from 'node:process'
 import { createEvent, Embed } from 'seyfert'
 import { lru } from 'tiny-lru'
 import { cleanupKaraokeSession, hasKaraokeSession } from '../commands/karaoke'
-import { getChannelIds, isTwentyFourSevenEnabled } from '../utils/db_helper'
+import { get247ChannelIds, isTwentyFourSevenEnabled } from '../utils/db_helper'
 
 const NO_SONG_TIMEOUT = 600000
 const REJOIN_DELAY = 5000
 const CLEANUP_INTERVAL = 300000
 const CACHE_SIZE = 1000
 const DEBOUNCE_DELAY = 50
+
+type RejoinOutcome = 'connected' | 'retry' | 'noop'
 
 const STATE_IDLE = 1
 const STATE_PLAYING = 2
@@ -43,11 +45,14 @@ const _functions = {
     voiceId?: string | null,
     textId?: string | null
   ) {
-    if (voiceId && textId) return [voiceId, textId] as const
-    const ids = getChannelIds(guildId)
-    return ids?.voiceChannelId && ids?.textChannelId
-      ? ([ids.voiceChannelId, ids.textChannelId] as const)
-      : null
+    const ids = get247ChannelIds(guildId)
+    const voiceChannelId = voiceId ?? ids?.voiceChannelId ?? null
+    if (!voiceChannelId) return null
+
+    return {
+      voiceChannelId,
+      textChannelId: textId ?? ids?.textChannelId ?? null
+    }
   },
   async fetchGuild(cache: any, client: any, guildId: string): Promise<any> {
     let guild = cache.get(guildId)
@@ -195,6 +200,7 @@ class VoiceManager {
       client.aqua.off('trackStart', old.trackStart)
       client.aqua.off('queueEnd', old.queueEnd)
       client.aqua.off('playerDestroy', old.playerDestroy)
+      if (old.socketClosed) client.aqua.off('socketClosed', old.socketClosed)
     }
 
     this.registered.add(client)
@@ -227,6 +233,19 @@ class VoiceManager {
         } else {
           this.states.delete(player.guildId)
         }
+      },
+
+      socketClosed: (player: any, payload: any) => {
+        const guildId = player?.guildId
+        if (!guildId || ![4014, 4022].includes(payload?.code)) return
+        if (!isTwentyFourSevenEnabled(guildId)) return
+
+        this.scheduleRejoin(
+          client,
+          guildId,
+          player?.voiceChannel,
+          player?.textChannel
+        )
       }
     }
 
@@ -234,6 +253,7 @@ class VoiceManager {
       aqua.on('trackStart', handlers.trackStart)
       aqua.on('queueEnd', handlers.queueEnd)
       aqua.on('playerDestroy', handlers.playerDestroy)
+      aqua.on('socketClosed', handlers.socketClosed)
     }
     client._voiceHandlers = handlers
   }
@@ -280,7 +300,13 @@ class VoiceManager {
 
       if (!player) {
         const pair = _functions.getChannelPair(guildId, null, null)
-        if (pair) this.scheduleRejoin(client, guildId, pair[0], pair[1])
+        if (pair)
+          this.scheduleRejoin(
+            client,
+            guildId,
+            pair.voiceChannelId,
+            pair.textChannelId || undefined
+          )
         return
       }
 
@@ -303,12 +329,22 @@ class VoiceManager {
       () => {
         if (!this.setState(guildId, STATE_REJOINING)) return
         void (async () => {
+          let outcome: RejoinOutcome = 'retry'
           try {
-            await this.rejoinChannel(client, guildId, voiceId, textId)
-            this.breaker.recordResult(guildId, true)
+            outcome = await this.rejoinChannel(client, guildId, voiceId, textId)
           } catch {
-            this.breaker.recordResult(guildId, false)
+            outcome = 'retry'
+          }
+
+          if (outcome === 'connected') {
+            this.breaker.recordResult(guildId, true)
             this.setState(guildId, STATE_IDLE)
+            return
+          }
+
+          this.setState(guildId, STATE_IDLE)
+          if (outcome === 'retry') {
+            this.breaker.recordResult(guildId, false)
             this.scheduleRejoin(client, guildId, voiceId, textId)
           }
         })()
@@ -322,52 +358,50 @@ class VoiceManager {
     guildId: string,
     voiceId?: string,
     textId?: string
-  ) {
+  ): Promise<RejoinOutcome> {
     const pair = _functions.getChannelPair(guildId, voiceId, textId)
-    if (!pair) return
+    if (!pair) return 'noop'
 
     const guild = await _functions.fetchGuild(this.guildCache, client, guildId)
-    if (!guild) return
+    if (!guild) return 'retry'
 
     const botId = _functions.getBotId(client)
     if (botId) {
       const botVc = _functions.getBotVoiceChannelId(guild, botId)
-      if (botVc === pair[0]) return void this.setState(guildId, STATE_IDLE)
+      if (botVc === pair.voiceChannelId) return 'noop'
     }
 
-    const voiceChannel = await _functions.getVoiceChannel(guild, pair[0])
-    if (!voiceChannel) return
+    const voiceChannel = await _functions.getVoiceChannel(
+      guild,
+      pair.voiceChannelId
+    )
+    if (!voiceChannel) return 'retry'
 
     const existing = client.aqua?.players?.get?.(guildId)
+    const connectionOptions = {
+      guildId,
+      voiceChannel: pair.voiceChannelId,
+      deaf: true,
+      defaultVolume: 65,
+      ...(pair.textChannelId ? { textChannel: pair.textChannelId } : {})
+    }
 
     try {
-      await client.aqua.createConnection({
-        guildId,
-        voiceChannel: pair[0],
-        textChannel: pair[1],
-        deaf: true,
-        defaultVolume: 65
-      })
+      await client.aqua.createConnection(connectionOptions)
     } catch {
       if (existing?.destroy) {
         try {
           existing.destroy()
-          await client.aqua.createConnection({
-            guildId,
-            voiceChannel: pair[0],
-            textChannel: pair[1],
-            deaf: true,
-            defaultVolume: 65
-          })
+          await client.aqua.createConnection(connectionOptions)
         } catch {
-          return
+          return 'retry'
         }
       } else {
-        return
+        return 'retry'
       }
     }
 
-    this.setState(guildId, STATE_IDLE)
+    return 'connected'
   }
 
   scheduleDestroy(client: any, player: any) {

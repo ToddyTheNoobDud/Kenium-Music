@@ -60,10 +60,10 @@ const processGuild = async (client: any, settings: any) => {
   if (!guildId) return
 
   const voiceChannelId = settings.voiceChannelId
-  const textChannelId = settings.textChannelId
+  const textChannelId = settings.textChannelId || null
 
-  if (!voiceChannelId || !textChannelId) {
-    await disable247ForGuild(guildId, 'missing voice/text channel ids')
+  if (!voiceChannelId) {
+    await disable247ForGuild(guildId, 'missing voice channel id')
     return
   }
 
@@ -92,7 +92,7 @@ const processGuild = async (client: any, settings: any) => {
 
   const [voiceChannel, textChannel] = await Promise.all([
     guild.channels.fetch(voiceChannelId).catch(() => null),
-    guild.channels.fetch(textChannelId).catch(() => null)
+    textChannelId ? guild.channels.fetch(textChannelId).catch(() => null) : null
   ])
 
   if (!voiceChannel || (voiceChannel.type !== 2 && voiceChannel.type !== 13)) {
@@ -103,7 +103,11 @@ const processGuild = async (client: any, settings: any) => {
   }
 
   const validTextTypes = [0, 5, 10, 11, 12]
-  if (!textChannel || !validTextTypes.includes(textChannel.type)) {
+  const canUseText =
+    !!textChannel &&
+    !!textChannelId &&
+    validTextTypes.includes((textChannel as any).type)
+  if (textChannelId && !canUseText) {
     client.logger.warn(
       `[24/7] ${guild.name} (${guildId}): Text channel ${textChannelId} is invalid/missing. Proceeding with voice only.`
     )
@@ -121,7 +125,7 @@ const processGuild = async (client: any, settings: any) => {
       client.aqua.createConnection({
         guildId,
         voiceChannel: voiceChannelId,
-        textChannel: textChannelId,
+        ...(canUseText ? { textChannel: textChannelId } : {}),
         deaf: true,
         defaultVolume: 65
       }),
@@ -148,8 +152,7 @@ const processAutoJoin = async (client: any) => {
   const enabled = getSettings().find(
     {
       twentyFourSevenEnabled: true,
-      voiceChannelId: { $ne: null },
-      textChannelId: { $ne: null }
+      voiceChannelId: { $ne: null }
     },
     {
       fields: [

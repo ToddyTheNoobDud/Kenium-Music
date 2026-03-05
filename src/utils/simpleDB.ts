@@ -117,9 +117,7 @@ const VALID_NAME = /^[A-Za-z0-9_]+$/
 const VALID_PATH = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/
 
 function bytesToUuid(bytes: Uint8Array): string {
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(
-    ''
-  )
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
 }
 
@@ -266,7 +264,7 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
         `
         CREATE TABLE IF NOT EXISTS ${this.qtable} (
           _id TEXT PRIMARY KEY,
-          doc TEXT NOT NULL,
+          doc TEXT NOT NULL CHECK (json_valid(doc)),
           createdAt TEXT NOT NULL,
           updatedAt TEXT NOT NULL
         )`
@@ -289,7 +287,7 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
     if (this._insert) return this._insert
     this._insert = this.db.prepare(`
       INSERT INTO ${this.qtable} (_id, doc, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?)
+      VALUES (?, json(?), ?, ?)
       ON CONFLICT(_id) DO UPDATE SET
         updatedAt = excluded.updatedAt,
         doc = json_set(
@@ -318,7 +316,7 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
   private get updateStmt(): SQLiteStmt {
     if (this._updateById) return this._updateById
     this._updateById = this.db.prepare(
-      `UPDATE ${this.qtable} SET doc = ?, updatedAt = ? WHERE _id = ?`
+      `UPDATE ${this.qtable} SET doc = json(?), updatedAt = ? WHERE _id = ?`
     )
     return this._updateById
   }
@@ -543,12 +541,10 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
         continue
       }
 
-      if (value === true) {
-        parts.push(`(${extract} = 1 OR ${extract} = 'true')`)
-        continue
-      }
-      if (value === false) {
-        parts.push(`(${extract} = 0 OR ${extract} = 'false')`)
+      // Keep boolean predicates index-friendly (`expr = ?`) for expression indexes.
+      if (value === true || value === false) {
+        parts.push(`${extract} = ?`)
+        params.push(value ? 1 : 0)
         continue
       }
 

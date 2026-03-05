@@ -362,20 +362,28 @@ export const isTwentyFourSevenEnabled = (guildId: string): boolean => {
   }
 }
 
-export const getChannelIds = (guildId: string) => {
+export const get247ChannelIds = (guildId: string) => {
   try {
     const settings = getGuildSettings(guildId)
-    return toBool(settings.twentyFourSevenEnabled) &&
-      settings.voiceChannelId &&
-      settings.textChannelId
+    return toBool(settings.twentyFourSevenEnabled) && settings.voiceChannelId
       ? {
           voiceChannelId: settings.voiceChannelId,
-          textChannelId: settings.textChannelId
+          textChannelId: settings.textChannelId || null
         }
       : null
   } catch {
     return null
   }
+}
+
+export const getChannelIds = (guildId: string) => {
+  const channels = get247ChannelIds(guildId)
+  return channels?.textChannelId
+    ? {
+        voiceChannelId: channels.voiceChannelId,
+        textChannelId: channels.textChannelId
+      }
+    : null
 }
 
 export const setChannelIds = (

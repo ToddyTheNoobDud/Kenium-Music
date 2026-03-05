@@ -206,20 +206,18 @@ export class ImportCommand extends SubCommand {
 
           playlistsCollection.insert(insertedPlaylist)
 
-          const tracksToInsert: Track[] = validTracks.map(
-            (track: any) => ({
-              _id: generateSortableId(),
-              playlistId: insertedPlaylist._id,
-              title: track.title,
-              uri: track.uri,
-              author: track.author,
-              duration: track.duration,
-              addedAt: timestamp,
-              addedBy: userId,
-              source: track.source || determineSource(track.uri),
-              identifier: track.identifier || ''
-            })
-          )
+          const tracksToInsert: Track[] = validTracks.map((track: any) => ({
+            _id: generateSortableId(),
+            playlistId: insertedPlaylist._id,
+            title: track.title,
+            uri: track.uri,
+            author: track.author,
+            duration: track.duration,
+            addedAt: timestamp,
+            addedBy: userId,
+            source: track.source || determineSource(track.uri),
+            identifier: track.identifier || ''
+          }))
 
           tracksCollection.insert(tracksToInsert)
         })
