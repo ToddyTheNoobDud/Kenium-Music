@@ -7,61 +7,41 @@ import {
   Options
 } from 'seyfert'
 import { getGuildLang, setGuildLang } from '../utils/db_helper'
-import { getContextLanguage } from '../utils/i18n'
-
-const LANGUAGE_NAMES = {
-  en: 'English',
-  br: 'Português (Brasil)',
-  es: 'Espanhol (ES)',
-  hi: 'Hindi (IN)',
-  fr: 'French (FR)',
-  ar: 'Arabic (AR)',
-  bn: 'Bengali (BD)',
-  ru: 'Russian (RU)',
-  ja: 'Japanese (JP)',
-  tr: 'Turkish (TR)',
-  th: 'Thai (TH)'
-} as const
+import {
+  getContextLanguage,
+  getLanguageChoices,
+  getLanguageDisplayName
+} from '../utils/i18n'
 
 const options = {
   language: createStringOption({
-    description: 'Language to use in the bot',
+    description: 'Choose the language used for this server.',
     required: true,
-    choices: [
-      { name: 'English', value: 'en' },
-      { name: 'Português (Brasil)', value: 'br' },
-      { name: 'Espanhol (ES)', value: 'es' },
-      { name: 'Hindi (IN)', value: 'hi' },
-      { name: 'French (FR)', value: 'fr' },
-      { name: 'Arabic (AR)', value: 'ar' },
-      { name: 'Bengali (BD)', value: 'bn' },
-      { name: 'Russian (RU)', value: 'ru' },
-      { name: 'Japanese (JP)', value: 'ja' },
-      { name: 'Turkish (TR)', value: 'tr' },
-      { name: 'Thai (TH)', value: 'th' }
-    ]
+    choices: getLanguageChoices()
   })
 } as any
 
 const _functions = {
-  getLangDisplayName: (lang: string): string =>
-    LANGUAGE_NAMES[lang as keyof typeof LANGUAGE_NAMES] || lang,
-
   handleLanguageSet: async (
     ctx: CommandContext<typeof options>,
     lang: string
   ): Promise<void> => {
+    const currentLang = getContextLanguage(ctx)
+    const currentTranslations = ctx.t.get(currentLang)
+
     if (getGuildLang(ctx.guildId || '') === lang) {
-      const t = ctx.t.get(getContextLanguage(ctx))
       await ctx.editOrReply({
-        content: (t as any).success?.settingAlradySet || 'Language already set',
+        content:
+          (currentTranslations as any).success?.settingAlradySet ||
+          'The language is already set to that option.',
         flags: 64
       })
       return
     }
+
     const success = setGuildLang(ctx.guildId || '', lang)
     const t = ctx.t.get(lang)
-    const displayName = _functions.getLangDisplayName(lang)
+    const displayName = getLanguageDisplayName(lang)
     const successBool = success !== undefined && success !== null
     const content = successBool
       ? (t as any).success?.languageSet?.replace('{lang}', displayName) ||
@@ -83,9 +63,11 @@ export default class LanguageCommand extends Command {
   public override async run(
     ctx: CommandContext<typeof options>
   ): Promise<void> {
+    if (!ctx.deferred) await ctx.deferReply(true)
+
     if (!ctx.guildId) {
       await ctx.editOrReply({
-        content: 'This command only works in servers.',
+        content: 'This command can only be used in a server.',
         flags: 64
       })
       return

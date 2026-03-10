@@ -1,7 +1,6 @@
 import type { CommandContext } from 'seyfert'
 import { getGuildLang } from './db_helper'
 
-// Optimized: Using Set for O(1) validation
 const VALID_LANGS = new Set([
   'en',
   'br',
@@ -18,8 +17,8 @@ const VALID_LANGS = new Set([
 
 const AVAILABLE_LANGUAGES: Record<string, string> = Object.freeze({
   en: 'English',
-  br: 'Português (Brasil)',
-  es: 'Espanhol (ES)',
+  br: 'Portugu\u00EAs (Brasil)',
+  es: 'Espa\u00F1ol (ES)',
   hi: 'Hindi (IN)',
   fr: 'French (FR)',
   ar: 'Arabic (AR)',

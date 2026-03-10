@@ -3,22 +3,19 @@ import { ButtonStyle } from 'seyfert/lib/types'
 import { getTracksCollection } from '../utils/db'
 import { COLORS, ICONS } from './constants'
 
-// Constants
 const MAX_AUTOCOMPLETE_OPTIONS = 25
 const MAX_EMBED_FIELDS = 25
 const MAX_BUTTONS_PER_ROW = 5
 
-// Pre-compiled regex patterns for better performance
 const YT_REGEX =
   /(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/
 
-// Lookup tables for O(1) access
 const TITLE_ICONS = Object.freeze({
   primary: ICONS.music,
-  success: '✨',
-  error: '❌',
-  warning: '⚠️',
-  info: 'ℹ️'
+  success: '\u2728',
+  error: '\u274C',
+  warning: '\u26A0\uFE0F',
+  info: ICONS.info
 })
 
 export const _functions = {
@@ -42,7 +39,7 @@ export const _functions = {
     if (lower.includes('youtu')) return `${ICONS.youtube} YouTube`
     if (lower.includes('spotify')) return `${ICONS.spotify} Spotify`
     if (lower.includes('soundcloud')) return `${ICONS.soundcloud} SoundCloud`
-    return '🎵 Music'
+    return `${ICONS.music} Music`
   }
 }
 
@@ -57,12 +54,12 @@ export const createEmbed = (
     .setTitle(`${TITLE_ICONS[type]} ${title}`)
     .setTimestamp()
     .setFooter({
-      text: `${ICONS.tracks} Kenium Music • Playlist System`,
+      text: `${ICONS.music} Kenium Music`,
       iconUrl:
         'https://toddythenoobdud.github.io/0a0f3c0476c8b495838fa6a94c7e88c2.png'
     })
 
-  if (description) embed.setDescription(`\`\`\`fix\n${description}\n\`\`\``)
+  if (description) embed.setDescription(description)
 
   if (fields.length > 0) {
     const clamped = fields.slice(0, MAX_EMBED_FIELDS).map((f) => ({
@@ -95,18 +92,16 @@ export const createButtons = (configs: any[]) => {
   return row
 }
 
-// Optimized: Direct calculation without intermediate variable
 export const formatDuration = (ms: number | undefined) => {
   if (!ms) return '00:00'
   return _functions.formatSeconds(Math.floor(ms / 1000))
 }
 
 export const determineSource = (uri: string | undefined) => {
-  if (!uri) return '❓ Unknown'
+  if (!uri) return '\u2753 Unknown'
   return _functions.getPlatformFromUri(uri)
 }
 
-// Optimized: Reuse pre-compiled regex
 export const extractYouTubeId = (url: string | undefined) => {
   if (!url) return null
   const match = YT_REGEX.exec(url)
@@ -197,7 +192,6 @@ export const handleTrackIndexAutocomplete = async (
   return interaction.respond(options)
 }
 
-// Optimized: Fisher-Yates shuffle with single swap
 export const shuffleArray = (array: any[]) => {
   const shuffled = [...array]
   for (let i = shuffled.length - 1; i > 0; i--) {

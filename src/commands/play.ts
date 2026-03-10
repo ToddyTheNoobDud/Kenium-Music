@@ -8,6 +8,7 @@ import {
   Options
 } from 'seyfert'
 import { LRU } from 'tiny-lru'
+import { createPlayerConnection } from '../shared/player'
 import { getContextLanguage } from '../utils/i18n'
 
 const RECENT_CACHE_SIZE = 8
@@ -248,6 +249,7 @@ const options = {
 export default class Play extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const { query } = ctx.options as { query: string }
+    const guildId = String(ctx.guildId)
     const lang = getContextLanguage(ctx)
     const t = ctx.t.get(lang)
 
@@ -278,12 +280,10 @@ export default class Play extends Command {
         return
       }
 
-      player = ctx.client.aqua.createConnection({
-        guildId: ctx.guildId as string,
+      player = createPlayerConnection(ctx.client, {
+        guildId,
         voiceChannel: voice.channelId,
-        textChannel: ctx.channelId,
-        deaf: true,
-        defaultVolume: 65
+        textChannel: ctx.channelId
       })
 
       const { loadType, tracks, playlistInfo } = result
@@ -334,8 +334,16 @@ export default class Play extends Command {
 
       await ctx.editResponse({ embeds: [embed] })
 
-      if (!player.playing && !player.paused && player.queue.size > 0) {
-        player.play().catch((err: any) => {
+      const currentPlayer = ctx.client.aqua.players.get(guildId)
+      if (
+        currentPlayer &&
+        !currentPlayer.destroyed &&
+        currentPlayer.queue &&
+        !currentPlayer.playing &&
+        !currentPlayer.paused &&
+        currentPlayer.queue.size > 0
+      ) {
+        currentPlayer.play().catch((err: any) => {
           console.log(err)
         })
       }

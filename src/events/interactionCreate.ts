@@ -1,6 +1,13 @@
-import { Container, createEvent } from 'seyfert'
+import { createEvent } from 'seyfert'
 import { ICONS, LIMITS } from '../shared/constants'
-import { MUSIC_PLATFORMS, PLAYBACK_E } from '../shared/emojis'
+import {
+  formatTime,
+  getPlatform,
+  getQueueLength,
+  truncateText,
+  updateNowPlayingEmbed
+} from '../shared/nowPlaying'
+import { getOrCreatePlayer } from '../shared/player'
 import {
   createButtons,
   createEmbed,
@@ -13,16 +20,11 @@ import {
   getTracksCollection
 } from '../utils/db'
 
-const MAX_TITLE_LENGTH = 60
 const VOLUME_STEP = 10
 const MAX_VOLUME = 100
 const MIN_VOLUME = 0
-const FLAGS_UPDATE = 36864
 const PAGE_SIZE = LIMITS.PAGE_SIZE || 10
 const RESOLVE_CONCURRENCY = 5
-
-const TITLE_SANITIZE_RE = /[^\w\s\-_.]/g
-const WORD_START_RE = /\b\w/g
 
 let _playlistsCol: ReturnType<typeof getPlaylistsCollection> | null = null
 let _tracksCol: ReturnType<typeof getTracksCollection> | null = null
@@ -40,39 +42,10 @@ export const _functions = {
   clamp: (n: number, min: number, max: number) =>
     n < min ? min : n > max ? max : n,
 
-  getQueueLength: (queue: any) => queue?.size ?? queue?.length ?? 0,
-
-  formatTime: (ms: number | undefined) => {
-    const s = Math.floor((ms || 0) / 1000)
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`
-  },
-
-  sanitizeTitle: (text: string | undefined) =>
-    String(text || '')
-      .replace(TITLE_SANITIZE_RE, '')
-      .trim(),
-
-  truncateText: (text: string | undefined, maxLength = MAX_TITLE_LENGTH) => {
-    if (!text) return ''
-    if (text.length <= maxLength) return text
-    const processed = _functions.sanitizeTitle(text)
-    if (processed.length <= maxLength) return processed
-    return `${processed.slice(0, maxLength - 3).trimEnd()}...`
-  },
-
-  titleCaseWordBoundaries: (text: string | undefined) =>
-    String(text || '').replace(WORD_START_RE, (c) => c.toUpperCase()),
-
-  getPlatform: (uri: string | undefined) => {
-    if (!uri) return MUSIC_PLATFORMS.youtube
-    const s = uri.toLowerCase()
-    if (s.includes('soundcloud')) return MUSIC_PLATFORMS.soundcloud
-    if (s.includes('spotify')) return MUSIC_PLATFORMS.spotify
-    if (s.includes('deezer')) return MUSIC_PLATFORMS.deezer
-    if (s.includes('youtu')) return MUSIC_PLATFORMS.youtube
-    return MUSIC_PLATFORMS.youtube
-  },
+  getQueueLength,
+  formatTime,
+  truncateText,
+  getPlatform,
 
   getSourceIcon: (uri: string | undefined) => {
     if (!uri) return ICONS.music
@@ -188,21 +161,7 @@ export const _functions = {
     return null
   },
 
-  updateNowPlayingEmbed: async (player: any, client: any) => {
-    const msg = player?.nowPlayingMessage
-    if (!msg?.edit || !player?.current) {
-      if (player) player.nowPlayingMessage = null
-      return
-    }
-    try {
-      await msg.edit({
-        components: [createNowPlayingEmbed(player, player.current, client)],
-        flags: FLAGS_UPDATE
-      })
-    } catch {
-      player.nowPlayingMessage = null
-    }
-  },
+  updateNowPlayingEmbed,
 
   resolveTracksAndEnqueue: async (
     tracks: any[],
@@ -221,82 +180,6 @@ export const _functions = {
       }
     }
   }
-}
-
-export const createNowPlayingEmbed = (player: any, track: any, client: any) => {
-  const { position = 0, volume = 0, loop, paused } = player || {}
-  const { title = 'Unknown', uri = '', length = 0, requester } = track || {}
-
-  const platform = _functions.getPlatform(uri)
-  const volumeIcon = volume === 0 ? '🔇' : volume < 50 ? '🔈' : '🔊'
-  const loopIcon = loop === 'track' ? '🔂' : loop === 'queue' ? '🔁' : '▶️'
-  const displayTitle = _functions.titleCaseWordBoundaries(
-    _functions.truncateText(title)
-  )
-
-  return new Container({
-    components: [
-      {
-        type: 10,
-        content: `**${platform.emoji} Now Playing** | **Queue size**: ${_functions.getQueueLength(player?.queue)}`
-      },
-      { type: 14, divider: true, spacing: 1 },
-      {
-        type: 9,
-        components: [
-          {
-            type: 10,
-            content: `## **[\`${displayTitle}\`](${uri})**\n\`${_functions.formatTime(position)}\` / \`${_functions.formatTime(length)}\``
-          },
-          {
-            type: 10,
-            content: `${volumeIcon} \`${volume}%\` ${loopIcon} Requester: \`${requester?.username || 'Unknown'}\``
-          }
-        ],
-        accessory: {
-          type: 11,
-          media: {
-            url:
-              track?.info?.artworkUrl ||
-              client?.me?.avatarURL?.({ extension: 'webp' }) ||
-              ''
-          }
-        }
-      },
-      { type: 14, divider: true, spacing: 2 },
-      {
-        type: 1,
-        components: [
-          {
-            type: 2,
-            label: `${PLAYBACK_E.volume_down}`,
-            style: 2,
-            custom_id: 'volume_down'
-          },
-          {
-            type: 2,
-            label: `${PLAYBACK_E.previous}`,
-            style: 2,
-            custom_id: 'previous'
-          },
-          {
-            type: 2,
-            label: paused ? `${PLAYBACK_E.resume}` : `${PLAYBACK_E.pause}`,
-            style: paused ? 3 : 2,
-            custom_id: paused ? 'resume' : 'pause'
-          },
-          { type: 2, label: `${PLAYBACK_E.skip}`, style: 2, custom_id: 'skip' },
-          {
-            type: 2,
-            label: `${PLAYBACK_E.volume_up}`,
-            style: 2,
-            custom_id: 'volume_up'
-          }
-        ]
-      },
-      { type: 14, divider: true, spacing: 2 }
-    ]
-  })
 }
 
 const adjustVolume = async (player: any, delta: number) => {
@@ -490,13 +373,10 @@ const playlistActionHandlers: Record<string, any> = {
     if (!voiceState?.channelId)
       return { message: '❌ Join a voice channel first', shouldUpdate: false }
 
-    let player = client.aqua.players.get(interaction.guildId)
-    player ??= client.aqua.createConnection({
+    const player = getOrCreatePlayer(client, {
       guildId: interaction.guildId,
       voiceChannel: voiceState.channelId,
-      textChannel: interaction.channelId,
-      defaultVolume: 65,
-      deaf: true
+      textChannel: interaction.channelId
     })
 
     let loadedTracks = 0
@@ -562,13 +442,10 @@ const playlistActionHandlers: Record<string, any> = {
     if (!voiceState?.channelId)
       return { message: '❌ Join a voice channel first', shouldUpdate: false }
 
-    let player = client.aqua.players.get(interaction.guildId)
-    player ??= client.aqua.createConnection({
+    const player = getOrCreatePlayer(client, {
       guildId: interaction.guildId,
       voiceChannel: voiceState.channelId,
-      textChannel: interaction.channelId,
-      defaultVolume: 65,
-      deaf: true
+      textChannel: interaction.channelId
     })
 
     const allTracks = getAllPlaylistTracksBatched(playlist._id)
@@ -717,4 +594,4 @@ export default createEvent({
   }
 })
 
-export const { formatTime, truncateText, getPlatform } = _functions
+export { formatTime, truncateText, getPlatform }

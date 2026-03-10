@@ -6,6 +6,7 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import { createPlayerConnection } from '../shared/player'
 import { getContextLanguage } from '../utils/i18n'
 
 @Options({
@@ -34,12 +35,10 @@ export default class TTSCommand extends Command {
       const voice = await ctx.member?.voice()
       if (!voice?.channelId) return
 
-      await ctx.client.aqua.createConnection({
+      createPlayerConnection(ctx.client, {
         guildId: guildId as string,
         voiceChannel: voice.channelId,
-        textChannel: ctx.channelId,
-        deaf: true,
-        defaultVolume: 65
+        textChannel: ctx.channelId
       })
       return
     }

@@ -11,12 +11,17 @@ import {
   Options
 } from 'seyfert'
 import { ButtonStyle, ComponentType } from 'seyfert/lib/types'
+import {
+  buildLyricsQueryFromHints,
+  extractLyricsSearchHints,
+  pickLyricsArtwork
+} from '../shared/lyrics'
+import { musixmatch } from '../shared/musixmatch'
 import { getContextLanguage } from '../utils/i18n'
-import { Musixmatch } from '../utils/musiclyrics'
+import type { LyricsLine } from '../utils/musiclyrics'
 
-// Create singleton instance
-const MUSIXMATCH = new Musixmatch()
 const MAX_EMBED_LENGTH = 1800
+const MAX_SYNC_LINES_PER_PAGE = 18
 const EMBED_COLOR = 0x100e09
 const COLLECTOR_TIMEOUT = 300_000
 
@@ -33,49 +38,108 @@ function formatTimestamp(ms: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
 
-interface LyricsLine {
-  line: string
-  timestamp?: number
-  range?: { start: number; end?: number }
+function normalizeLoose(value: string | undefined) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
-function formatLyrics(lines: LyricsLine[] | null, plainText: string) {
-  if (!lines || lines.length === 0) return plainText || ''
-
+function formatSyncedLyrics(lines: LyricsLine[]) {
   return lines
     .map((line) => {
-      const timestamp =
-        line.timestamp !== undefined
-          ? `\`[${formatTimestamp(line.timestamp)}]\``
-          : line.range?.start !== undefined
-            ? `\`[${formatTimestamp(line.range.start)}]\``
-            : ''
+      const lyric = String(line.line || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (!lyric) return null
 
-      return `${timestamp} **${line.line.trim()}**`.trim()
+      const stamp = line.range?.start
+      const label =
+        stamp !== undefined ? formatTimestamp(stamp).padStart(5, ' ') : '  -- '
+
+      return `\`${label}\`  ${lyric}`
     })
+    .filter((line): line is string => Boolean(line))
+}
+
+function formatTextLyrics(plainText: string) {
+  const cleaned = plainText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  if (!cleaned) return ''
+
+  return cleaned
+    .split('\n')
+    .map((line) => (line ? `> ${line}` : ''))
     .join('\n')
 }
 
-function chunkContent(content: string, maxLength = MAX_EMBED_LENGTH) {
-  if (content.length <= maxLength) return [content]
+function chunkTextContent(content: string, maxLength = MAX_EMBED_LENGTH) {
+  if (!content.trim()) return ['']
 
   const chunks: string[] = []
-  let start = 0
+  let current = ''
 
-  while (start < content.length) {
-    let end = start + maxLength
-    if (end < content.length) {
-      // Find last newline before maxLength
-      const lastNewline = content.lastIndexOf('\n', end)
-      if (lastNewline > start && lastNewline - start > maxLength * 0.8) {
-        end = lastNewline
-      }
-    }
-    chunks.push(content.substring(start, end).trim())
-    start = end
+  const pushChunk = (value: string) => {
+    const trimmed = value.trim()
+    if (trimmed) chunks.push(trimmed)
   }
 
-  return chunks
+  for (const line of content.split('\n')) {
+    const next = current ? `${current}\n${line}` : line
+    if (next.length <= maxLength) {
+      current = next
+      continue
+    }
+
+    if (current) pushChunk(current)
+    current = ''
+
+    if (line.length <= maxLength) {
+      current = line
+      continue
+    }
+
+    for (let index = 0; index < line.length; index += maxLength) {
+      pushChunk(line.slice(index, index + maxLength))
+    }
+  }
+
+  if (current) pushChunk(current)
+  return chunks.length ? chunks : ['']
+}
+
+function chunkSyncedContent(lines: string[]) {
+  if (!lines.length) return ['']
+
+  const chunks: string[] = []
+  let currentLines: string[] = []
+
+  for (const line of lines) {
+    const nextLines = [...currentLines, line]
+    const nextText = nextLines.join('\n')
+
+    if (
+      currentLines.length < MAX_SYNC_LINES_PER_PAGE &&
+      nextText.length <= MAX_EMBED_LENGTH
+    ) {
+      currentLines = nextLines
+      continue
+    }
+
+    if (currentLines.length) chunks.push(currentLines.join('\n'))
+    currentLines = [line]
+  }
+
+  if (currentLines.length) chunks.push(currentLines.join('\n'))
+  return chunks.length ? chunks : ['']
 }
 
 function createNavigationRow(
@@ -87,7 +151,6 @@ function createNavigationRow(
   const row = new ActionRow().addComponents(
     new Button()
       .setCustomId('ignore_lyrics_close')
-      .setEmoji('🗑️')
       .setStyle(ButtonStyle.Danger)
       .setLabel(thele.common.close)
   )
@@ -96,7 +159,6 @@ function createNavigationRow(
     row.components.unshift(
       new Button()
         .setCustomId('ignore_lyrics_prev')
-        .setEmoji('◀️')
         .setStyle(ButtonStyle.Primary)
         .setLabel(thele.common.previous)
         .setDisabled(currentPage === 0),
@@ -107,7 +169,6 @@ function createNavigationRow(
         .setDisabled(true),
       new Button()
         .setCustomId('ignore_lyrics_next')
-        .setEmoji('▶️')
         .setStyle(ButtonStyle.Primary)
         .setLabel(thele.common.next)
         .setDisabled(currentPage === totalPages - 1)
@@ -126,114 +187,118 @@ async function displayLyricsUI(
     artist?: string
     albumArt?: string
     source?: string
-    track?: { author?: string }
   },
   // biome-ignore lint/suspicious/noExplicitAny: thele is a dynamic translation object
   thele: any
 ) {
-  const formattedLyrics = formatLyrics(data.lines, data.lyrics)
-  const chunks = chunkContent(formattedLyrics)
-  let currentPage = 0
+  const chunks = data.lines
+    ? chunkSyncedContent(formatSyncedLyrics(data.lines))
+    : chunkTextContent(formatTextLyrics(data.lyrics))
   const totalPages = chunks.length
+  let currentPage = 0
 
-  const createEmbed = () =>
-    new Embed()
+  const createEmbed = () => {
+    const header = [data.artist, data.source].filter(Boolean).join(' • ')
+    const embed = new Embed()
       .setColor(EMBED_COLOR)
-      .setTitle(data.title)
-      .setDescription(chunks[currentPage])
-      .setThumbnail(data.albumArt)
-      .setFooter({
-        text: [
-          data.source,
-          data.track?.author && `${thele.lyrics.artist}: ${data.track.author}`,
-          data.lines ? thele.lyrics.syncedLyrics : thele.lyrics.textLyrics,
-          `${thele.common.page} ${currentPage + 1}/${totalPages}`
+      .setTitle(data.title || thele.lyrics.title)
+      .setDescription(
+        [
+          header ? `*${header}*` : null,
+          chunks[currentPage] || thele.lyrics.noLyrics
         ]
           .filter(Boolean)
-          .join(' • ')
+          .join('\n\n')
+      )
+      .setFooter({
+        text: [
+          data.lines ? thele.lyrics.syncedLyrics : thele.lyrics.textLyrics,
+          `${thele.common.page} ${currentPage + 1}/${totalPages}`
+        ].join(' | ')
       })
+
+    if (data.albumArt) embed.setThumbnail(data.albumArt)
+
+    return embed
+  }
 
   const response = await ctx.editOrReply({
     embeds: [createEmbed()],
     components: [createNavigationRow(currentPage, totalPages, thele)]
   })
 
-  if (response) {
-    const collector = response.createComponentCollector({
-      componentType: ComponentType.Button,
-      filter: (i) => i.user.id === ctx.interaction.user.id,
-      idle: COLLECTOR_TIMEOUT
-    } as {
-      componentType: ComponentType
-      filter: (i: { user: { id: string } }) => boolean
-      idle: number
-    })
+  if (!response) return
 
-    collector.run('ignore_lyrics_prev', async (i) => {
-      if (currentPage > 0) {
-        currentPage--
-        await i.update({
-          embeds: [createEmbed()],
-          components: [createNavigationRow(currentPage, totalPages, thele)]
-        })
-      }
-    })
+  const collector = response.createComponentCollector({
+    componentType: ComponentType.Button,
+    filter: (interaction) => interaction.user.id === ctx.interaction.user.id,
+    idle: COLLECTOR_TIMEOUT
+  } as {
+    componentType: ComponentType
+    filter: (interaction: { user: { id: string } }) => boolean
+    idle: number
+  })
 
-    collector.run('ignore_lyrics_next', async (i) => {
-      if (currentPage < totalPages - 1) {
-        currentPage++
-        await i.update({
-          embeds: [createEmbed()],
-          components: [createNavigationRow(currentPage, totalPages, thele)]
-        })
-      }
-    })
+  collector.run('ignore_lyrics_prev', async (interaction) => {
+    if (currentPage <= 0) return
 
-    collector.run('ignore_lyrics_close', async (_i) => {
-      collector.stop()
-      await response.delete().catch(() => null)
+    currentPage--
+    await interaction.update({
+      embeds: [createEmbed()],
+      components: [createNavigationRow(currentPage, totalPages, thele)]
     })
+  })
 
-    collector.run('end', async () => {
-      await response.edit({ components: [] }).catch(() => null)
+  collector.run('ignore_lyrics_next', async (interaction) => {
+    if (currentPage >= totalPages - 1) return
+
+    currentPage++
+    await interaction.update({
+      embeds: [createEmbed()],
+      components: [createNavigationRow(currentPage, totalPages, thele)]
     })
-  }
+  })
+
+  collector.run('ignore_lyrics_close', async () => {
+    collector.stop()
+    await response.delete().catch(() => null)
+  })
+
+  collector.run('end', async () => {
+    await response.edit({ components: [] }).catch(() => null)
+  })
 }
 
 async function fetchMusixmatchLyrics(
-  query: string,
-  currentTrack: { title?: string; author?: string }
+  query: string | undefined,
+  currentTrack: unknown
 ) {
-  let searchQuery = query
-
-  if (!searchQuery && currentTrack) {
-    const title = currentTrack.title || ''
-    const author = currentTrack.author || ''
-
-    if (title && author) {
-      searchQuery = `${title} ${author}`
-    } else {
-      searchQuery = title || author
-    }
-  }
+  const hints = extractLyricsSearchHints(currentTrack as any)
+  const searchQuery = query?.trim() || buildLyricsQueryFromHints(hints)
 
   if (!searchQuery) return null
 
   try {
-    const result = await MUSIXMATCH.findLyrics(searchQuery)
+    const result = await musixmatch.findLyrics(searchQuery, hints)
     if (!result?.text && !result?.lines) return null
 
     return {
-      text: result.text,
-      lines: result.lines,
-      track: result.track,
-      source: result.source,
-      provider: result.source
+      ...result,
+      provider: result.source,
+      hints,
+      searchQuery
     }
   } catch (error) {
     console.error('Musixmatch error:', error)
     return null
   }
+}
+
+function shouldPreferMatchedTrackTitle(
+  search: string | undefined,
+  matchedTitle: string
+) {
+  return Boolean(search?.trim()) || normalizeLoose(matchedTitle).length > 0
 }
 
 @Cooldown({
@@ -251,63 +316,63 @@ async function fetchMusixmatchLyrics(
   name: 'lyrics',
   description: 'Get lyrics for the current song or search'
 })
-@Middlewares(['cooldown', 'checkPlayer', 'checkVoice', 'checkTrack'])
+@Middlewares(['cooldown'])
 export default class LyricsCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const lang = getContextLanguage(ctx)
     const thele = ctx.t.get(lang)
     if (!ctx.deferred) await ctx.deferReply()
-    const guildId = ctx.guildId
-    if (!guildId) return
 
-    const player = ctx.client.aqua.players.get(guildId)
+    const search = ((ctx.options as { search?: string }).search || '').trim()
+    const player = ctx.guildId ? ctx.client.aqua.players.get(ctx.guildId) : null
+    const currentTrack = player?.current as any
 
-    if (!player) {
+    if (!search && !currentTrack) {
       await ctx.editOrReply({
         embeds: [createErrorEmbed(thele.lyrics.noActivePlayer, thele)]
       })
-      return void 0
+      return
     }
 
     try {
-      const { search } = ctx.options as { search?: string }
-      let lyricsResult = null
-
-      // Primary lyrics source
-      try {
-        lyricsResult = await fetchMusixmatchLyrics(
-          search || '',
-          player.current as any
-        )
-      } catch (primaryError: unknown) {
-        console.log('Primary lyrics failed:', (primaryError as any)?.message)
-      }
+      const lyricsResult = await fetchMusixmatchLyrics(search, currentTrack)
 
       if (!lyricsResult) {
         await ctx.editOrReply({
           embeds: [createErrorEmbed(thele.lyrics.noLyricsFound, thele)]
         })
-        return void 0
+        return
       }
 
-      const { text, track, lines } = lyricsResult
-      const source = lyricsResult.provider || thele.common.unknown
-      const hasSyncedLyrics = Array.isArray(lines) && lines.length > 0
+      const displayTitle = shouldPreferMatchedTrackTitle(
+        search,
+        lyricsResult.track.title
+      )
+        ? lyricsResult.track.title || currentTrack?.title || thele.lyrics.title
+        : currentTrack?.title || lyricsResult.track.title || thele.lyrics.title
+
+      const albumArt =
+        pickLyricsArtwork(search, lyricsResult.hints, {
+          title: lyricsResult.track.title,
+          author: lyricsResult.track.author,
+          albumArt: lyricsResult.track.albumArt
+        }) || ctx.client.me.avatarURL()
 
       await displayLyricsUI(
         ctx,
         {
-          lyrics: text || '',
-          title: player.current?.title
-            ? `🎵 ${player.current.title}`
-            : thele.lyrics.title,
-          track,
-          lines: hasSyncedLyrics ? lines : null,
-          source,
-          albumArt:
-            player.current?.thumbnail ||
-            track?.albumArt ||
-            ctx.client.me.avatarURL()
+          lyrics: lyricsResult.text || '',
+          lines:
+            Array.isArray(lyricsResult.lines) && lyricsResult.lines.length > 0
+              ? lyricsResult.lines
+              : null,
+          title: displayTitle,
+          artist:
+            lyricsResult.track.author ||
+            lyricsResult.hints?.artist ||
+            thele.common.unknown,
+          source: lyricsResult.provider || thele.common.unknown,
+          albumArt
         },
         thele
       )

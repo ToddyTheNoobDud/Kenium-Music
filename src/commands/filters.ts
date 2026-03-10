@@ -7,11 +7,12 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import { EMBED_COLOR } from '../shared/constants'
 import { getContextLanguage } from '../utils/i18n'
 
 @Options({
   filters: createStringOption({
-    description: 'Filter to apply',
+    description: 'Choose an audio filter preset.',
     required: true,
     choices: [
       { name: '8D', value: '8d' },
@@ -35,21 +36,29 @@ import { getContextLanguage } from '../utils/i18n'
 
 @Declare({
   name: 'filters',
-  description: 'apply some filters'
+  description: 'Apply an audio filter to the current track.'
 })
 @Middlewares(['checkPlayer', 'checkVoice', 'checkTrack'])
-export default class filtersss extends Command {
+export default class FiltersCommand extends Command {
   public override async run(ctx: CommandContext) {
     try {
       const { client } = ctx
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
 
+      if (!ctx.deferred) await ctx.deferReply(true)
+
       const guildId = ctx.guildId
       if (!guildId) return
 
       const player = client.aqua.players.get(guildId)
-      if (!player) return
+      if (!player) {
+        await ctx.editOrReply({
+          content: t.player?.noPlayer || 'No music player found.',
+          flags: 64
+        })
+        return
+      }
 
       const { filters } = ctx.options as { filters: string }
 
@@ -111,22 +120,27 @@ export default class filtersss extends Command {
           player.filters.clearFilters()
           break
         default:
-          return ctx.write({
+          await ctx.editOrReply({
             content: t.player?.filterInvalid || 'Invalid filter selected.',
             flags: 64
           })
+          return
       }
 
+      const filterName = t.filters?.[filters] || filters
       const appliedText =
-        t.player?.filterApplied?.replace('{filter}', filters) ||
-        `**Applied ${filters}**`
+        filters === 'clear'
+          ? t.player?.filtersCleared || 'Cleared all filters.'
+          : t.player?.filterApplied?.replace('{filter}', filterName) ||
+            `Applied **${filterName}** filter.`
 
       await ctx.editOrReply({
-        embeds: [new Embed().setDescription(appliedText).setColor('#0x100e09')],
+        embeds: [new Embed().setDescription(appliedText).setColor(EMBED_COLOR)],
         flags: 64
       })
     } catch (error: unknown) {
       if ((error as any)?.code === 10065) return
+      console.error('filters command error:', error)
     }
   }
 }

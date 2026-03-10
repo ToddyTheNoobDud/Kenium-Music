@@ -6,6 +6,8 @@ import {
   Embed,
   Middlewares
 } from 'seyfert'
+import { EMBED_COLOR } from '../shared/constants'
+import { createPlayerConnection } from '../shared/player'
 import { getGuildSettings, updateGuildSettingsSync } from '../utils/db_helper'
 import { getContextLanguage } from '../utils/i18n'
 
@@ -13,7 +15,10 @@ const toBool = (v: unknown) =>
   v === true || v === 1 || v === '1' || v === 'true'
 const NICKNAME_SUFFIX = ' [24/7]'
 
-@Declare({ name: '247', description: 'Toggle 24/7 mode' })
+@Declare({
+  name: '247',
+  description: 'Keep the bot connected and prevent the player from timing out.'
+})
 @Cooldown({ type: CooldownType.User, interval: 60000, uses: { default: 2 } })
 @Middlewares(['cooldown', 'checkVoice'])
 export default class TwentyFourSevenCommand extends Command {
@@ -24,7 +29,6 @@ export default class TwentyFourSevenCommand extends Command {
 
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
-
       const settings = getGuildSettings(guildId)
       const newEnabled = !toBool(settings.twentyFourSevenEnabled)
 
@@ -35,7 +39,9 @@ export default class TwentyFourSevenCommand extends Command {
         voiceChannelId = voiceState?.channelId ?? null
         if (!voiceChannelId) {
           await ctx.write({
-            content: 'You must be in a voice channel.',
+            content:
+              t.player?.noVoiceChannel ||
+              'You must be in a voice channel to use this command.',
             flags: 64
           })
           return
@@ -44,28 +50,23 @@ export default class TwentyFourSevenCommand extends Command {
 
       if (!ctx.deferred) await ctx.deferReply(true)
 
-      // Only create/ensure player when enabling
       if (newEnabled && voiceChannelId) {
         const player = ctx.client.aqua.players.get(guildId)
         if (!player) {
-          await ctx.client.aqua.createConnection({
+          createPlayerConnection(ctx.client, {
             guildId,
             voiceChannel: voiceChannelId,
-            textChannel: ctx.channelId,
-            deaf: true,
-            defaultVolume: 65
+            textChannel: ctx.channelId
           })
         }
       }
 
-      // ONE write per toggle (sync upsert)
       updateGuildSettingsSync(guildId, {
         twentyFourSevenEnabled: newEnabled,
         voiceChannelId: newEnabled ? voiceChannelId : null,
         textChannelId: newEnabled ? ctx.channelId : null
       })
 
-      // nickname update best-effort
       void (async () => {
         try {
           const botMember = await ctx.me()
@@ -78,8 +79,9 @@ export default class TwentyFourSevenCommand extends Command {
               : baseNick + NICKNAME_SUFFIX
             : baseNick.replace(/ ?\[24\/7\]/, '')
 
-          if (botMember.nick !== targetNick)
+          if (botMember.nick !== targetNick) {
             await botMember.edit({ nick: targetNick })
+          }
         } catch {}
       })()
 
@@ -87,11 +89,21 @@ export default class TwentyFourSevenCommand extends Command {
         .setTitle(t.mode247?.title || '24/7 Mode')
         .setDescription(
           newEnabled
-            ? t.mode247?.enabled || '24/7 mode enabled'
-            : t.mode247?.disabled || '24/7 mode disabled'
+            ? t.mode247?.enabled ||
+                '24/7 mode is enabled. I will stay in your voice channel and keep the player alive when idle.'
+            : t.mode247?.disabled ||
+                '24/7 mode is disabled. I can disconnect again after the idle timeout.'
         )
-        .setColor(newEnabled ? 0x00ff00 : 0xff0000)
+        .setColor(EMBED_COLOR)
         .setTimestamp()
+
+      if (newEnabled && voiceChannelId) {
+        embed.addFields({
+          name: 'Connected Channel',
+          value: `<#${voiceChannelId}>`,
+          inline: true
+        })
+      }
 
       await ctx.editOrReply({ embeds: [embed], flags: 64 })
     } catch (err: unknown) {

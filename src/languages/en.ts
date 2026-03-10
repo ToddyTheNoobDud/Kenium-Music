@@ -78,7 +78,7 @@ export default {
     },
     filters: {
       name: 'filters',
-      description: 'Apply audio filters'
+      description: 'Apply an audio filter to the current track.'
     },
     jump: {
       name: 'jump',
@@ -110,7 +110,8 @@ export default {
     },
     '247': {
       name: '247',
-      description: 'Toggle 24/7 mode'
+      description:
+        'Keep the bot connected and prevent the player from timing out.'
     },
     changelog: {
       name: 'changelog',
@@ -118,7 +119,7 @@ export default {
     },
     help: {
       name: 'help',
-      description: 'Show available commands'
+      description: 'Browse the available commands.'
     },
     invite: {
       name: 'invite',
@@ -138,7 +139,7 @@ export default {
     },
     status: {
       name: 'status',
-      description: 'Show bot status'
+      description: 'View the current bot and player status.'
     },
     tts: {
       name: 'tts',
@@ -213,8 +214,10 @@ export default {
   // 24/7 mode
   mode247: {
     title: '24/7 Mode',
-    enabled: '24/7 mode has been enabled',
-    disabled: '24/7 mode has been disabled'
+    enabled:
+      '24/7 mode is enabled. I will stay in your voice channel and keep the player alive when idle.',
+    disabled:
+      '24/7 mode is disabled. I can disconnect again after the idle timeout.'
   },
   // Export/Import
   export: {
@@ -439,7 +442,8 @@ Don't want more? [\`Click here to invite me\`](https://discord.com/oauth2/author
       noPlaylists: 'No Playlists',
       noPlaylistsDesc: "You haven't created any playlists yet!",
       gettingStarted: 'Getting Started',
-      gettingStartedDesc: 'Use `/playlist create` to make your first playlist!',
+      gettingStartedDesc:
+        'Use `/playlists create` to make your first playlist!',
       createPlaylist: 'Create Playlist',
       yourPlaylists: 'Your Playlists',
       yourPlaylistsDesc: 'You have **{count}** playlist{plural}',

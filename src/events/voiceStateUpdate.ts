@@ -2,6 +2,7 @@ import process from 'node:process'
 import { createEvent, Embed } from 'seyfert'
 import { lru } from 'tiny-lru'
 import { cleanupKaraokeSession, hasKaraokeSession } from '../commands/karaoke'
+import { createPlayerConnection } from '../shared/player'
 import { get247ChannelIds, isTwentyFourSevenEnabled } from '../utils/db_helper'
 
 const NO_SONG_TIMEOUT = 600000
@@ -115,8 +116,8 @@ class CircuitBreaker {
     const entry = this.failures.get(guildId)
     if (!entry) return true
 
-    const resetTime =
-      this.baseResetTime << Math.min(entry.count - this.maxFailures, 5)
+    const backoffLevel = Math.max(0, entry.count - this.maxFailures)
+    const resetTime = this.baseResetTime * 2 ** Math.min(backoffLevel, 5)
     if (Date.now() - entry.lastAttempt > resetTime) {
       this.failures.delete(guildId)
       return true
@@ -381,18 +382,16 @@ class VoiceManager {
     const connectionOptions = {
       guildId,
       voiceChannel: pair.voiceChannelId,
-      deaf: true,
-      defaultVolume: 65,
       ...(pair.textChannelId ? { textChannel: pair.textChannelId } : {})
     }
 
     try {
-      await client.aqua.createConnection(connectionOptions)
+      createPlayerConnection(client, connectionOptions)
     } catch {
       if (existing?.destroy) {
         try {
           existing.destroy()
-          await client.aqua.createConnection(connectionOptions)
+          createPlayerConnection(client, connectionOptions)
         } catch {
           return 'retry'
         }

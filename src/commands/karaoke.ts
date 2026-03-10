@@ -12,10 +12,12 @@ import {
   TextDisplay
 } from 'seyfert'
 import { ButtonStyle, MessageFlags, Spacing } from 'seyfert/lib/types'
+import {
+  buildLyricsQueryFromHints,
+  extractLyricsSearchHints
+} from '../shared/lyrics'
+import { musixmatch } from '../shared/musixmatch'
 import { getContextLanguage } from '../utils/i18n'
-import { Musixmatch } from '../utils/musiclyrics'
-
-const MUSIXMATCH = new Musixmatch()
 
 const ACCENT_COLOR = '#100e09'
 const ERROR_COLOR = '#e74c3c'
@@ -286,18 +288,13 @@ const _fetchKaraokeLyrics = async (
   // biome-ignore lint/suspicious/noExplicitAny: currentTrack is a dynamic track object
   currentTrack: any
 ) => {
-  let searchQuery = query?.trim() ?? ''
-
-  if (!searchQuery && currentTrack) {
-    const title = (currentTrack.title ?? '').trim()
-    const author = (currentTrack.author ?? '').trim()
-    searchQuery = author ? `${title} ${author}`.trim() : title
-  }
+  const hints = extractLyricsSearchHints(currentTrack)
+  const searchQuery = query?.trim() || buildLyricsQueryFromHints(hints)
 
   if (!searchQuery) return null
 
   try {
-    const result = await MUSIXMATCH.findLyrics(searchQuery)
+    const result = await musixmatch.findLyrics(searchQuery, hints)
 
     const rawLines = (result?.lines ?? []) as LyricLine[]
     const lines = rawLines

@@ -9,6 +9,7 @@ import {
   SubCommand
 } from 'seyfert'
 import { ICONS } from '../../shared/constants'
+import { getOrCreatePlayer } from '../../shared/player'
 import type { Track } from '../../shared/types'
 import {
   createEmbed,
@@ -177,15 +178,11 @@ export class PlayCommand extends SubCommand {
     if (!ctx.deferred) await ctx.deferReply(true)
 
     try {
-      const player =
-        ctx.client.aqua.players.get(ctx.guildId || '') ??
-        ctx.client.aqua.createConnection({
-          guildId: ctx.guildId as string,
-          voiceChannel: voiceState.channelId,
-          textChannel: ctx.channelId,
-          defaultVolume: 65,
-          deaf: true
-        })
+      const player = getOrCreatePlayer(ctx.client, {
+        guildId: ctx.guildId as string,
+        voiceChannel: voiceState.channelId,
+        textChannel: ctx.channelId
+      })
 
       const total = dbTracks.length
       const tracks = shuffle ? shuffleArray(dbTracks.slice()) : dbTracks

@@ -8,6 +8,7 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import { getOrCreatePlayer } from '../shared/player'
 import { getContextLanguage } from '../utils/i18n'
 
 @Options({
@@ -41,15 +42,11 @@ export default class PlayFile extends Command {
       const voice = await ctx.member?.voice()
       if (!voice?.channelId) return
 
-      const player =
-        client.aqua.players.get(guildId) ??
-        client.aqua.createConnection({
-          guildId: guildId,
-          voiceChannel: voice.channelId,
-          textChannel: ctx.channelId,
-          deaf: true,
-          defaultVolume: 65
-        })
+      const player = getOrCreatePlayer(client, {
+        guildId,
+        voiceChannel: voice.channelId,
+        textChannel: ctx.channelId
+      })
 
       const { file } = ctx.options as {
         file: { url: string; filename: string }

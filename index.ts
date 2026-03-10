@@ -16,12 +16,9 @@ import {
   cleanupKaraokeSession,
   hasKaraokeSession
 } from './src/commands/karaoke'
-import {
-  _functions,
-  createNowPlayingEmbed
-} from './src/events/interactionCreate'
 import type English from './src/languages/en'
 import { middlewares } from './src/middlewares/middlewares'
+import { createNowPlayingEmbed, truncateText } from './src/shared/nowPlaying'
 import { closeDatabase, initDatabase } from './src/utils/db'
 import { flushDatabaseUpdates } from './src/utils/db_helper'
 
@@ -65,7 +62,7 @@ const aqua = new Aqua(
     shouldDeleteMessage: true,
     infiniteReconnects: true,
     autoResume: true,
-    autoRegionMigrate: true,
+    autoRegionMigrate: false,
     loadBalancer: 'random',
     useHttp2: false,
     leaveOnEnd: false,
@@ -135,11 +132,16 @@ export const updatePresence = (clientInstance: Client) => {
 
     const now = Date.now()
     if (now - state.lastCountUpdate > COUNT_CACHE_TTL) {
-      const guilds = clientInstance.cache.guilds?.values() || []
-      state.cachedGuildCount = Array.isArray(guilds) ? guilds.length : 0
+      const guilds = clientInstance.cache.guilds as
+        | { size?: number; values?: () => Iterable<any> }
+        | undefined
+      state.cachedGuildCount = 0
       state.cachedUserCount = 0
-      for (const guild of guilds)
+      if (typeof guilds?.size === 'number') state.cachedGuildCount = guilds.size
+      for (const guild of guilds?.values?.() || []) {
+        if (typeof guilds?.size !== 'number') state.cachedGuildCount += 1
         state.cachedUserCount += guild.memberCount || 0
+      }
       state.lastCountUpdate = now
     }
 
@@ -243,7 +245,7 @@ aqua.on(
       state.lastVoiceStatusUpdate = now
       const title = activeTrack.info?.title || activeTrack.title
       if (title) {
-        const status = `⭐ ${_functions.truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.9.2`
+        const status = `⭐ ${truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.9.2`
         client.channels
           .setVoiceStatus(player.voiceChannel, status)
           .catch(() => {})
@@ -266,11 +268,11 @@ aqua.on(
     const fallbackTrack = (player.current as Track | null | undefined) || track
     const rawTitle =
       fallbackTrack?.info?.title || fallbackTrack?.title || 'Unknown track'
-    const title = _functions.truncateText(rawTitle, 25)
+    const title = truncateText(rawTitle, 25)
 
     await channel.client.messages
       .write(channel.id, {
-        content: `❌ **${title}**: ${_functions.truncateText(errorMsg, 50)}`
+        content: `❌ **${title}**: ${truncateText(errorMsg, 50)}`
       })
       .catch(() => {})
   }
@@ -349,7 +351,6 @@ initDatabase()
       .uploadCommands({ cachePath: './commands.json' })
       .catch(() => {})
     client.cooldown = new CooldownManager(client as never)
-    updatePresence(client)
   })
   .catch((error) => {
     console.error('Startup failed:', error)

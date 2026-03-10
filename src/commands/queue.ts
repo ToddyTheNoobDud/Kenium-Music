@@ -60,28 +60,32 @@ function createProgressBar(current: number, total: number, size = 18): string {
   return `${'─'.repeat(knobPos)}●${'─'.repeat(size - 1 - knobPos)}`
 }
 
-function getQueueArray(q: any): any[] {
-  if (Array.isArray(q)) return q
-  if (typeof q?.toArray === 'function') return q.toArray()
-  if (typeof q?.values === 'function') return Array.from(q.values())
-  if (typeof q?.[Symbol.iterator] === 'function')
-    return Array.from(q as Iterable<any>)
-  return []
-}
-
 function getQueueLength(q: any): number {
   if (typeof q?.size === 'number') return q.size
   if (typeof q?.length === 'number') return q.length
   if (typeof q?.toArray === 'function') return q.toArray().length
-  if (typeof q?.values === 'function') return Array.from(q.values()).length
-  if (typeof q?.[Symbol.iterator] === 'function')
-    return Array.from(q as Iterable<any>).length
+  if (typeof q?.[Symbol.iterator] === 'function') {
+    let count = 0
+    for (const _item of q as Iterable<any>) count++
+    return count
+  }
   return 0
 }
 
 function sliceQueue(q: any, start: number, end: number): any[] {
-  const arr = getQueueArray(q)
-  return arr.slice(start, end)
+  if (!q || start >= end) return []
+  if (typeof q?.slice === 'function') return q.slice(start, end)
+  if (Array.isArray(q)) return q.slice(start, end)
+  if (typeof q?.toArray === 'function') return q.toArray().slice(start, end)
+
+  const items: any[] = []
+  let index = 0
+  for (const item of q as Iterable<any>) {
+    if (index >= end) break
+    if (index >= start) items.push(item)
+    index++
+  }
+  return items
 }
 
 const createButtonRows = (

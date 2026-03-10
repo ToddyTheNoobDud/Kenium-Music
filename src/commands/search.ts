@@ -8,6 +8,7 @@ import {
   Options
 } from 'seyfert'
 import { MUSIC_PLATFORMS } from '../shared/emojis'
+import { getOrCreatePlayer } from '../shared/player'
 import { getContextLanguage } from '../utils/i18n'
 
 const CONFIG = Object.freeze({
@@ -151,12 +152,10 @@ export default class SearchCommand extends Command {
       }
 
       try {
-        player = await ctx.client.aqua.createConnection({
+        player = getOrCreatePlayer(ctx.client, {
           guildId: guildId as string,
           voiceChannel,
-          textChannel: ctx.channelId,
-          deaf: true,
-          defaultVolume: 65
+          textChannel: ctx.channelId
         })
       } catch (error) {
         console.error('Failed to create player:', error)

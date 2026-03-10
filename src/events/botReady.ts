@@ -1,5 +1,6 @@
 import { createEvent } from 'seyfert'
 import { updatePresence } from '../../index'
+import { createPlayerConnection } from '../shared/player'
 import { getSettingsCollection } from '../utils/db'
 import {
   disable247Sync,
@@ -31,9 +32,7 @@ const extractDiscordApiCode = (err: any): number | null => {
     if (Number.isFinite(value)) return value
   }
 
-  const text = String(
-    err?.metadata?.detail || err?.message || err?.code || ''
-  )
+  const text = String(err?.metadata?.detail || err?.message || err?.code || '')
   const directMatch = text.match(/\b(10003|10004|50001|50013)\b/)
   if (directMatch?.[1]) return Number(directMatch[1])
 
@@ -84,7 +83,10 @@ const disable247ForGuild = async (guildId: string, reason: string) => {
   }
 }
 
-const clearInvalidTextChannel = async (guildId: string, textChannelId: string) => {
+const clearInvalidTextChannel = async (
+  guildId: string,
+  textChannelId: string
+) => {
   try {
     updateGuildSettingsSync(guildId, { textChannelId: null })
     clientInstance?.logger?.info(
@@ -167,12 +169,10 @@ const processGuild = async (client: any, settings: any) => {
 
   try {
     await Promise.all([
-      client.aqua.createConnection({
+      createPlayerConnection(client, {
         guildId,
         voiceChannel: voiceChannelId,
-        ...(canUseText ? { textChannel: textChannelId } : {}),
-        deaf: true,
-        defaultVolume: 65
+        ...(canUseText ? { textChannel: textChannelId } : {})
       }),
       updateNickname(guild)
     ])
