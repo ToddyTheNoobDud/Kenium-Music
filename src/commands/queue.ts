@@ -264,13 +264,14 @@ async function handleQueueNavigation(
 ): Promise<void> {
   try {
     await interaction.deferUpdate()
+    const normalizedAction = action.replace(/^ignore_/, '')
     const messageId = interaction?.message?.id
     const state = messageId ? queueViewState.get(messageId) : undefined
     if (!state) return
 
     let newPage = state.page
 
-    switch (action) {
+    switch (normalizedAction) {
       case 'queue_first':
         newPage = 1
         break
@@ -365,22 +366,25 @@ async function handleShowQueue(
 
   const collector = message.createComponentCollector?.({
     idle: 180000,
-    filter: (i: any) => i.user.id === ctx.interaction.user.id,
+    filter: (i: any) =>
+      i.user.id === ctx.interaction.user.id &&
+      (typeof i.isButton !== 'function' || i.isButton()),
     onStop: () => {
+      queueViewState.delete(message.id)
       message.edit({ components: [] }).catch(() => null)
     }
   })
 
   if (collector) {
     for (const id of [
-      'queue_first',
-      'queue_prev',
-      'queue_next',
-      'queue_last',
-      'queue_refresh',
-      'queue_playpause',
-      'queue_loop',
-      'queue_clear'
+      'ignore_queue_first',
+      'ignore_queue_prev',
+      'ignore_queue_next',
+      'ignore_queue_last',
+      'ignore_queue_refresh',
+      'ignore_queue_playpause',
+      'ignore_queue_loop',
+      'ignore_queue_clear'
     ]) {
       collector.run(id, (i: any) => handleQueueNavigation(i, player, id, thele))
     }

@@ -225,18 +225,27 @@ async function displayLyricsUI(
   const response = await ctx.editOrReply({
     embeds: [createEmbed()],
     components: [createNavigationRow(currentPage, totalPages, thele)]
-  })
+  }, true)
 
   if (!response) return
 
   const collector = response.createComponentCollector({
     componentType: ComponentType.Button,
-    filter: (interaction) => interaction.user.id === ctx.interaction.user.id,
-    idle: COLLECTOR_TIMEOUT
+    filter: (interaction) =>
+      interaction.user.id === ctx.interaction.user.id &&
+      (typeof interaction.isButton !== 'function' || interaction.isButton()),
+    idle: COLLECTOR_TIMEOUT,
+    onStop: async () => {
+      await response.edit({ components: [] }).catch(() => null)
+    }
   } as {
     componentType: ComponentType
-    filter: (interaction: { user: { id: string } }) => boolean
+    filter: (interaction: {
+      user: { id: string }
+      isButton?: () => boolean
+    }) => boolean
     idle: number
+    onStop: () => Promise<void>
   })
 
   collector.run('ignore_lyrics_prev', async (interaction) => {
@@ -262,10 +271,6 @@ async function displayLyricsUI(
   collector.run('ignore_lyrics_close', async () => {
     collector.stop()
     await response.delete().catch(() => null)
-  })
-
-  collector.run('end', async () => {
-    await response.edit({ components: [] }).catch(() => null)
   })
 }
 
