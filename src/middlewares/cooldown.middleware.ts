@@ -5,11 +5,13 @@ export const cooldownMiddleware = createMiddleware<void>(
   async ({ context, next }) => {
     const inCooldown = context.client.cooldown.context(context)
 
-    typeof inCooldown === 'number'
-      ? context.write({
-          content: `You're in cooldown, try again ${Formatter.timestamp(new Date(Date.now() + inCooldown), TimestampStyle.RelativeTime)}`,
-          flags: 64
-        })
-      : next()
+    if (typeof inCooldown === 'number') {
+      return context.write({
+        content: `You're in cooldown, try again ${Formatter.timestamp(new Date(Date.now() + inCooldown), TimestampStyle.RelativeTime)}`,
+        flags: 64
+      })
+    }
+
+    return next()
   }
 )

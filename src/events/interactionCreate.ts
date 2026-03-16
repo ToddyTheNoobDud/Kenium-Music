@@ -7,6 +7,7 @@ import {
   truncateText,
   updateNowPlayingEmbed
 } from '../shared/nowPlaying'
+import { ensureMemberCanControlPlayer } from '../shared/playback'
 import { getOrCreatePlayer } from '../shared/player'
 import {
   createButtons,
@@ -238,14 +239,18 @@ const buildPlaylistPage = (
   userId: string,
   page: number | undefined
 ) => {
-  const total = tracksCol().count({ playlistId: playlist._id })
+  const total =
+    typeof playlist?.trackCount === 'number'
+      ? playlist.trackCount
+      : tracksCol().count({ playlistId: playlist._id })
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.min(Math.max(1, page || 1), totalPages)
   const startIdx = (currentPage - 1) * PAGE_SIZE
 
   const tracks = getPlaylistTracks(playlist._id, {
     limit: PAGE_SIZE,
-    skip: startIdx
+    skip: startIdx,
+    fields: ['title', 'author', 'duration', 'uri']
   })
 
   const embed = createEmbed('primary', `${ICONS.playlist} ${playlistName}`, '')
@@ -336,7 +341,8 @@ const getAllPlaylistTracksBatched = (playlistId: string): any[] => {
   while (true) {
     const batch = getPlaylistTracks(playlistId, {
       limit: PLAYLIST_BATCH_SIZE,
-      skip: offset
+      skip: offset,
+      fields: ['uri']
     })
     if (!batch.length) break
     all.push(...batch)
@@ -353,10 +359,15 @@ const playlistActionHandlers: Record<string, any> = {
     userId: string,
     playlistName: string
   ) => {
-    const playlist = playlistsCol().findOne({
-      userId,
-      name: playlistName
-    })
+    const playlist = playlistsCol().findOne(
+      {
+        userId,
+        name: playlistName
+      },
+      {
+        fields: ['_id']
+      }
+    )
     if (!playlist)
       return { message: '❌ Playlist not found', shouldUpdate: false }
 
@@ -384,7 +395,8 @@ const playlistActionHandlers: Record<string, any> = {
     while (loadedTracks < trackCount) {
       const batch = getPlaylistTracks(playlist._id, {
         limit: PLAYLIST_BATCH_SIZE,
-        skip: offset
+        skip: offset,
+        fields: ['uri']
       })
       if (!batch.length) break
 
@@ -422,10 +434,15 @@ const playlistActionHandlers: Record<string, any> = {
     userId: string,
     playlistName: string
   ) => {
-    const playlist = playlistsCol().findOne({
-      userId,
-      name: playlistName
-    })
+    const playlist = playlistsCol().findOne(
+      {
+        userId,
+        name: playlistName
+      },
+      {
+        fields: ['_id']
+      }
+    )
     if (!playlist)
       return { message: '❌ Playlist not found', shouldUpdate: false }
 
@@ -474,10 +491,21 @@ const playlistActionHandlers: Record<string, any> = {
     playlistName: string,
     page: number | undefined
   ) => {
-    const playlist = playlistsCol().findOne({
-      userId,
-      name: playlistName
-    })
+    const playlist = playlistsCol().findOne(
+      {
+        userId,
+        name: playlistName
+      },
+      {
+        fields: [
+          '_id',
+          'description',
+          'totalDuration',
+          'playCount',
+          'trackCount'
+        ]
+      }
+    )
     if (!playlist)
       return { message: '❌ Playlist not found', shouldUpdate: false }
     const { embed, components } = buildPlaylistPage(
@@ -497,10 +525,21 @@ const playlistActionHandlers: Record<string, any> = {
     playlistName: string,
     page: number | undefined
   ) => {
-    const playlist = playlistsCol().findOne({
-      userId,
-      name: playlistName
-    })
+    const playlist = playlistsCol().findOne(
+      {
+        userId,
+        name: playlistName
+      },
+      {
+        fields: [
+          '_id',
+          'description',
+          'totalDuration',
+          'playCount',
+          'trackCount'
+        ]
+      }
+    )
     if (!playlist)
       return { message: '❌ Playlist not found', shouldUpdate: false }
     const { embed, components } = buildPlaylistPage(
@@ -560,17 +599,15 @@ export default createEvent({
         '❌ There is no music playing right now.'
       )
 
-    const memberVoice = await interaction.member?.voice().catch(() => null)
-    if (!memberVoice)
-      return _functions.safeReply(
-        interaction,
-        '❌ You must be in a voice channel to use this button.'
-      )
-    if (interaction.user.id !== player.current.requester?.id)
-      return _functions.safeReply(
-        interaction,
-        '❌ You are not allowed to use this button.'
-      )
+    const controlCheck = await ensureMemberCanControlPlayer(
+      interaction,
+      player,
+      {
+        requesterOnly: true
+      }
+    )
+    if (!controlCheck.ok)
+      return _functions.safeReply(interaction, controlCheck.reason)
 
     const handler = (actionHandlers as any)[interaction.customId]
     if (!handler)
@@ -594,4 +631,4 @@ export default createEvent({
   }
 })
 
-export { formatTime, truncateText, getPlatform }
+export { formatTime, getPlatform, truncateText }

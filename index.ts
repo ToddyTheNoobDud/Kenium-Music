@@ -75,7 +75,7 @@ Object.assign(client, { aqua })
 
 const state = {
   presenceInterval: null as NodeJS.Timeout | null,
-  lastVoiceStatusUpdate: 0,
+  voiceStatusUpdates: new Map<string, number>(),
   lastErrorLog: 0,
   cachedGuildCount: 0,
   cachedUserCount: 0,
@@ -86,6 +86,7 @@ const cleanupPlayer = (player: Player) => {
   const voiceChannel = player.voiceChannel || player._lastVoiceChannel
   if (voiceChannel)
     client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
+  state.voiceStatusUpdates.delete(player.guildId)
   if (hasKaraokeSession(player.guildId)) cleanupKaraokeSession(player.guildId)
 }
 
@@ -241,10 +242,12 @@ aqua.on(
     }
 
     const now = Date.now()
-    if (now - state.lastVoiceStatusUpdate > VOICE_STATUS_THROTTLE) {
-      state.lastVoiceStatusUpdate = now
+    const lastVoiceStatusUpdate =
+      state.voiceStatusUpdates.get(player.guildId) ?? 0
+    if (now - lastVoiceStatusUpdate > VOICE_STATUS_THROTTLE) {
+      state.voiceStatusUpdates.set(player.guildId, now)
       const title = activeTrack.info?.title || activeTrack.title
-      if (title) {
+      if (title && player.voiceChannel) {
         const status = `⭐ ${truncateText(title, VOICE_STATUS_LENGTH)} - Kenium 4.9.2`
         client.channels
           .setVoiceStatus(player.voiceChannel, status)

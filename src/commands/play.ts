@@ -8,8 +8,9 @@ import {
   Options
 } from 'seyfert'
 import { LRU } from 'tiny-lru'
-import { createPlayerConnection } from '../shared/player'
+import { ensurePlayerForVoice, maybeStartPlayback } from '../shared/playback'
 import { getContextLanguage } from '../utils/i18n'
+import { safeDefer } from '../utils/interactions'
 
 const RECENT_CACHE_SIZE = 8
 const USER_CACHE_LIMIT = 150
@@ -249,16 +250,15 @@ const options = {
 export default class Play extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const { query } = ctx.options as { query: string }
-    const guildId = String(ctx.guildId)
     const lang = getContextLanguage(ctx)
     const t = ctx.t.get(lang)
 
     let player: any
     try {
-      if (!ctx.deferred) await ctx.deferReply(true)
+      if (!(await safeDefer(ctx, true))) return
 
-      const voice = await (ctx.member as any).voice()
-      if (!voice?.channelId) {
+      player = await ensurePlayerForVoice(ctx, ctx.channelId)
+      if (!player) {
         await ctx.editResponse({
           content:
             t.player?.noVoiceChannel ||
@@ -279,12 +279,6 @@ export default class Play extends Command {
         })
         return
       }
-
-      player = createPlayerConnection(ctx.client, {
-        guildId,
-        voiceChannel: voice.channelId,
-        textChannel: ctx.channelId
-      })
 
       const { loadType, tracks, playlistInfo } = result
       const embed = new Embed().setColor(EMBED_COLOR).setTimestamp()
@@ -333,20 +327,7 @@ export default class Play extends Command {
       }
 
       await ctx.editResponse({ embeds: [embed] })
-
-      const currentPlayer = ctx.client.aqua.players.get(guildId)
-      if (
-        currentPlayer &&
-        !currentPlayer.destroyed &&
-        currentPlayer.queue &&
-        !currentPlayer.playing &&
-        !currentPlayer.paused &&
-        currentPlayer.queue.size > 0
-      ) {
-        currentPlayer.play().catch((err: any) => {
-          console.log(err)
-        })
-      }
+      await maybeStartPlayback(player)
     } catch (err: any) {
       console.error(err)
       if (err?.code === 10065) return

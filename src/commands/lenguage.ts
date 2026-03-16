@@ -12,6 +12,7 @@ import {
   getLanguageChoices,
   getLanguageDisplayName
 } from '../utils/i18n'
+import { safeDefer } from '../utils/interactions'
 
 const options = {
   language: createStringOption({
@@ -63,7 +64,7 @@ export default class LanguageCommand extends Command {
   public override async run(
     ctx: CommandContext<typeof options>
   ): Promise<void> {
-    if (!ctx.deferred) await ctx.deferReply(true)
+    if (!(await safeDefer(ctx, true))) return
 
     if (!ctx.guildId) {
       await ctx.editOrReply({

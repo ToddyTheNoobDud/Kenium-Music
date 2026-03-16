@@ -8,8 +8,13 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
-import { getOrCreatePlayer } from '../shared/player'
+import {
+  ensurePlayerForVoice,
+  maybeStartPlayback,
+  resolveAndQueue
+} from '../shared/playback'
 import { getContextLanguage } from '../utils/i18n'
+import { safeDefer } from '../utils/interactions'
 
 @Options({
   file: createAttachmentOption({
@@ -35,29 +40,36 @@ export default class PlayFile extends Command {
     const thele = ctx.t.get(lang)
 
     try {
-      const { client } = ctx
-      const guildId = ctx.guildId
-      if (!guildId) return
+      if (!(await safeDefer(ctx, true))) return
 
-      const voice = await ctx.member?.voice()
-      if (!voice?.channelId) return
-
-      const player = getOrCreatePlayer(client, {
-        guildId,
-        voiceChannel: voice.channelId,
-        textChannel: ctx.channelId
-      })
+      const player = await ensurePlayerForVoice(ctx, ctx.channelId)
+      if (!player) {
+        await ctx.editOrReply({
+          embeds: [
+            new Embed()
+              .setDescription(
+                thele.player?.noVoiceChannel ||
+                  'You must be in a voice channel to use this command.'
+              )
+              .setColor(0xff5252)
+          ],
+          flags: 64
+        })
+        return
+      }
 
       const { file } = ctx.options as {
         file: { url: string; filename: string }
       }
 
       try {
-        const result = await client.aqua.resolve({
+        const { added } = await resolveAndQueue({
+          client: ctx.client,
+          player,
           query: file.url,
           requester: ctx.interaction.user
         })
-        const track = result?.tracks?.[0]
+        const track = added[0]
         if (!track) {
           await ctx.editOrReply({
             embeds: [
@@ -70,11 +82,7 @@ export default class PlayFile extends Command {
           return
         }
 
-        player.queue.add(track)
-
-        if (!player.playing && !player.paused && player.queue.size > 0) {
-          player.play().catch(() => {})
-        }
+        await maybeStartPlayback(player)
         await ctx.editOrReply({
           embeds: [
             new Embed()
@@ -85,6 +93,14 @@ export default class PlayFile extends Command {
         })
       } catch (error) {
         console.log(error)
+        await ctx.editOrReply({
+          embeds: [
+            new Embed()
+              .setDescription(thele.errors.commandError)
+              .setColor(0xff5252)
+          ],
+          flags: 64
+        })
       }
     } catch (error: any) {
       if (error?.code === 10065) return

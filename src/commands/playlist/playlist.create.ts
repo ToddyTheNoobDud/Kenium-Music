@@ -45,10 +45,13 @@ export class CreateCommand extends SubCommand {
       })
     }
 
-    const existing = playlistsCollection.findOne({
-      userId,
-      name
-    })
+    const existing = playlistsCollection.findOne(
+      {
+        userId,
+        name
+      },
+      { fields: ['_id'] }
+    )
 
     if (existing) {
       return ctx.write({

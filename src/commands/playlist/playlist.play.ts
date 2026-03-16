@@ -19,6 +19,7 @@ import {
 } from '../../shared/utils'
 import { getPlaylistsCollection, getTracksCollection } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
+import { safeDefer } from '../../utils/interactions'
 
 const playlistsCollection = getPlaylistsCollection()
 const tracksCollection = getTracksCollection()
@@ -138,10 +139,15 @@ export class PlayCommand extends SubCommand {
 
     const tp = getContextTranslations(ctx).playlist?.play
 
-    const playlistDb = playlistsCollection.findOne({
-      userId: ctx.author.id,
-      name: playlistName
-    })
+    const playlistDb = playlistsCollection.findOne(
+      {
+        userId: ctx.author.id,
+        name: playlistName
+      },
+      {
+        fields: ['_id', 'playCount', 'totalDuration']
+      }
+    )
 
     if (!playlistDb) {
       return _functions.writeError(
@@ -156,7 +162,10 @@ export class PlayCommand extends SubCommand {
 
     const dbTracks = tracksCollection.find(
       { playlistId: playlistDb._id },
-      { sort: { addedAt: 1 } }
+      {
+        sort: { addedAt: 1, _id: 1 },
+        fields: ['uri', 'source', 'identifier']
+      }
     )
     if (!Array.isArray(dbTracks) || dbTracks.length === 0) {
       return _functions.writeError(
@@ -166,16 +175,16 @@ export class PlayCommand extends SubCommand {
       )
     }
 
+    if (!(await safeDefer(ctx, true))) return
+
     const voiceState = await ctx.member?.voice()
     if (!voiceState?.channelId) {
-      return _functions.writeError(
+      return _functions.editError(
         ctx,
         tp?.noVoiceChannel || 'No Voice Channel',
         tp?.noVoiceChannelDesc || 'Join a voice channel to play a playlist'
       )
     }
-
-    if (!ctx.deferred) await ctx.deferReply(true)
 
     try {
       const player = getOrCreatePlayer(ctx.client, {

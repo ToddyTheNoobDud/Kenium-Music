@@ -18,6 +18,7 @@ import {
 } from '../shared/lyrics'
 import { musixmatch } from '../shared/musixmatch'
 import { getContextLanguage } from '../utils/i18n'
+import { safeDefer } from '../utils/interactions'
 import type { LyricsLine } from '../utils/musiclyrics'
 
 const MAX_EMBED_LENGTH = 1800
@@ -222,10 +223,13 @@ async function displayLyricsUI(
     return embed
   }
 
-  const response = await ctx.editOrReply({
-    embeds: [createEmbed()],
-    components: [createNavigationRow(currentPage, totalPages, thele)]
-  }, true)
+  const response = await ctx.editOrReply(
+    {
+      embeds: [createEmbed()],
+      components: [createNavigationRow(currentPage, totalPages, thele)]
+    },
+    true
+  )
 
   if (!response) return
 
@@ -326,7 +330,7 @@ export default class LyricsCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const lang = getContextLanguage(ctx)
     const thele = ctx.t.get(lang)
-    if (!ctx.deferred) await ctx.deferReply()
+    if (!(await safeDefer(ctx))) return
 
     const search = ((ctx.options as { search?: string }).search || '').trim()
     const player = ctx.guildId ? ctx.client.aqua.players.get(ctx.guildId) : null

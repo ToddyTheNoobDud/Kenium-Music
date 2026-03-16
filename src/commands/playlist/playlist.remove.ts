@@ -55,10 +55,15 @@ export class RemoveCommand extends SubCommand {
     const userId = ctx.author.id
     const t = getContextTranslations(ctx)
 
-    const playlist = playlistsCollection.findOne({
-      userId,
-      name: playlistName
-    })
+    const playlist = playlistsCollection.findOne(
+      {
+        userId,
+        name: playlistName
+      },
+      {
+        fields: ['_id', 'trackCount', 'totalDuration']
+      }
+    )
 
     if (!playlist) {
       return ctx.write({
@@ -100,7 +105,8 @@ export class RemoveCommand extends SubCommand {
     // Fetch just the track at that index (Deterministic due to addedAt sort in getPlaylistTracks)
     const tracks = getPlaylistTracks(playlist._id, {
       limit: 1,
-      skip: index - 1
+      skip: index - 1,
+      fields: ['title', 'author', 'source', 'uri', 'duration']
     })
     const removedTrack = tracks[0]
 

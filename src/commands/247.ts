@@ -10,6 +10,7 @@ import { EMBED_COLOR } from '../shared/constants'
 import { createPlayerConnection } from '../shared/player'
 import { getGuildSettings, updateGuildSettingsSync } from '../utils/db_helper'
 import { getContextLanguage } from '../utils/i18n'
+import { safeDefer } from '../utils/interactions'
 
 const toBool = (v: unknown) =>
   v === true || v === 1 || v === '1' || v === 'true'
@@ -33,12 +34,13 @@ export default class TwentyFourSevenCommand extends Command {
       const newEnabled = !toBool(settings.twentyFourSevenEnabled)
 
       let voiceChannelId: string | null = null
+      if (!(await safeDefer(ctx, true))) return
 
       if (newEnabled) {
         const voiceState = await ctx.member?.voice()
         voiceChannelId = voiceState?.channelId ?? null
         if (!voiceChannelId) {
-          await ctx.write({
+          await ctx.editOrReply({
             content:
               t.player?.noVoiceChannel ||
               'You must be in a voice channel to use this command.',
@@ -47,8 +49,6 @@ export default class TwentyFourSevenCommand extends Command {
           return
         }
       }
-
-      if (!ctx.deferred) await ctx.deferReply(true)
 
       if (newEnabled && voiceChannelId) {
         const player = ctx.client.aqua.players.get(guildId)

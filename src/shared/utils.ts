@@ -1,6 +1,6 @@
 import { ActionRow, Button, Embed } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
-import { getTracksCollection } from '../utils/db'
+import { getPlaylistTracks } from '../utils/db'
 import { COLORS, ICONS } from './constants'
 
 const MAX_AUTOCOMPLETE_OPTIONS = 25
@@ -112,7 +112,15 @@ export const handlePlaylistAutocomplete = async (
   interaction: any,
   playlistsCollection: any
 ) => {
-  const items = playlistsCollection.find({ userId: interaction.user?.id }) || []
+  const items =
+    playlistsCollection.find(
+      { userId: interaction.user?.id },
+      {
+        sort: { lastModified: -1 },
+        limit: MAX_AUTOCOMPLETE_OPTIONS,
+        fields: ['name']
+      }
+    ) || []
   const options =
     items.length > 0
       ? items.slice(0, MAX_AUTOCOMPLETE_OPTIONS).map((p: any) => ({
@@ -175,10 +183,10 @@ export const handleTrackIndexAutocomplete = async (
     return interaction.respond([{ name: 'Playlist not found', value: '0' }])
   }
 
-  const tracks = getTracksCollection().find(
-    { playlistId: playlist._id },
-    { limit: MAX_AUTOCOMPLETE_OPTIONS }
-  )
+  const tracks = getPlaylistTracks(playlist._id, {
+    limit: MAX_AUTOCOMPLETE_OPTIONS,
+    fields: ['title']
+  })
 
   if (tracks.length === 0) {
     return interaction.respond([{ name: 'No Tracks', value: '0' }])

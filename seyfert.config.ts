@@ -2,7 +2,7 @@ import { config } from 'seyfert'
 import 'dotenv/config'
 
 export default config.bot({
-  token: process.env['token'] ?? '',
+  token: process.env.token ?? '',
   locations: {
     base: './src',
     commands: 'commands',

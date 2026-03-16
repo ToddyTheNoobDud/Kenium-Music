@@ -9,6 +9,7 @@ import {
 } from 'seyfert'
 import { EMBED_COLOR } from '../shared/constants'
 import { getContextLanguage } from '../utils/i18n'
+import { safeDefer } from '../utils/interactions'
 
 @Options({
   filters: createStringOption({
@@ -46,7 +47,7 @@ export default class FiltersCommand extends Command {
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
 
-      if (!ctx.deferred) await ctx.deferReply(true)
+      if (!(await safeDefer(ctx, true))) return
 
       const guildId = ctx.guildId
       if (!guildId) return

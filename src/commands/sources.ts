@@ -1,6 +1,7 @@
 import { Command, type CommandContext, Container, Declare } from 'seyfert'
 import { lru } from 'tiny-lru'
 import { getContextLanguage } from '../utils/i18n'
+import { safeDefer } from '../utils/interactions'
 
 const SOURCE_CACHE = lru<{
   fingerprint: string
@@ -188,7 +189,7 @@ function createSourcesContainer(
 export default class SourcesCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     try {
-      if (!ctx.deferred) await ctx.deferReply()
+      if (!(await safeDefer(ctx))) return
 
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)

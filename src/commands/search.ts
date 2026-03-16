@@ -8,7 +8,7 @@ import {
   Options
 } from 'seyfert'
 import { MUSIC_PLATFORMS } from '../shared/emojis'
-import { getOrCreatePlayer } from '../shared/player'
+import { ensurePlayerForVoice, maybeStartPlayback } from '../shared/playback'
 import { getContextLanguage } from '../utils/i18n'
 
 const CONFIG = Object.freeze({
@@ -139,35 +139,21 @@ export default class SearchCommand extends Command {
     ctx: CommandContext,
     thele: any
   ): Promise<any> {
-    const guildId = ctx.interaction.guildId
-    if (!guildId) return null
-
-    let player = ctx.client.aqua.players.get(guildId as string)
-
-    if (!player) {
-      const voiceChannel = (await ctx.interaction.member?.voice())?.channelId
-      if (!voiceChannel) {
+    try {
+      const player = await ensurePlayerForVoice(ctx, ctx.channelId)
+      if (!player) {
         await ctx.write({ content: thele.search.noVoiceChannel, flags: 64 })
         return null
       }
-
-      try {
-        player = getOrCreatePlayer(ctx.client, {
-          guildId: guildId as string,
-          voiceChannel,
-          textChannel: ctx.channelId
-        })
-      } catch (error) {
-        console.error('Failed to create player:', error)
-        await ctx.write({
-          content: thele.search.failedToJoinVoice,
-          flags: 64
-        })
-        return null
-      }
+      return player
+    } catch (error) {
+      console.error('Failed to create player:', error)
+      await ctx.write({
+        content: thele.search.failedToJoinVoice,
+        flags: 64
+      })
+      return null
     }
-
-    return player
   }
 
   private async searchTracks(
@@ -330,9 +316,7 @@ export default class SearchCommand extends Command {
         true
       )
 
-      if (!player.playing && !player.paused && player.queue.size > 0) {
-        player.play().catch(() => {})
-      }
+      await maybeStartPlayback(player)
     }
   }
 
@@ -341,16 +325,13 @@ export default class SearchCommand extends Command {
     ctx: CommandContext,
     query: string,
     tracks: any[],
-    currentPlatform: any,
+    _currentPlatform: any,
     _message: any,
     thele: any
   ): Promise<void> {
     const platformKey = i.customId.split('_')[2] as keyof typeof MUSIC_PLATFORMS
     const newPlatform = MUSIC_PLATFORMS[platformKey]
-    if (
-      !newPlatform ||
-      newPlatform.name.toUpperCase() === currentPlatform.name.toUpperCase()
-    ) {
+    if (!newPlatform) {
       return
     }
 

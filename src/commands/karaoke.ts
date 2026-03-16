@@ -18,6 +18,7 @@ import {
 } from '../shared/lyrics'
 import { musixmatch } from '../shared/musixmatch'
 import { getContextLanguage } from '../utils/i18n'
+import { safeDefer } from '../utils/interactions'
 
 const ACCENT_COLOR = '#100e09'
 const ERROR_COLOR = '#e74c3c'
@@ -536,7 +537,7 @@ export default class KaraokeCommand extends Command {
   }
 
   public override async run(ctx: CommandContext): Promise<void> {
-    if (!ctx.deferred) await ctx.deferReply()
+    if (!(await safeDefer(ctx))) return
 
     const lang = getContextLanguage(ctx)
     const t = ctx.t.get(lang)

@@ -9,6 +9,7 @@ import {
 } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
 import { getContextLanguage } from '../utils/i18n'
+import { safeDefer } from '../utils/interactions'
 
 const CONFIG = {
   GITHUB: {
@@ -19,46 +20,71 @@ const CONFIG = {
     ISSUES_URL: 'https://github.com/ToddyTheNoobDud/Kenium-Music/issues/new'
   },
   BOT: {
-    VERSION: '4.9.2',
+    VERSION: '4.10.0',
     DEVELOPER: 'mushroom0162',
-    CHANGELOG: `
-### Added
-- Some missing translations / outdated translations
-
-### Changed
-- Updated dependencies
-- Reworked all the playlists commands, now all of them are indexed by default, this should make everything faster
-- Reworked the entire database system, with indexing support & pure sqlite json, this improves the performance by a lot
-- Improved the cache hits on the database too, this should make everything faster for users who use the bot frequently
-- Made the /play command use less allocations by using more string methods
-- Reworked the karaoke command, now it uses timestamp based math, and reworked its UI
-- Optimized the interaction commands for playlists, it should give responses faster too.
-- Optimized the 24/7 command to reduce the db queries
-- Optimized bot startup to reduce the db queries, and improve the overall startup speed.
-
-### Removed
-- Nothing
-
-### Fixed
-- Some memory leaks
-
-### For github users:
-- The database will auto-migrate to the new system, if you have any issues, please open an issue on github.
-`
+    RELEASE_NOTES: {
+      version: '4.10.0',
+      date: '2026-03-16',
+      summary:
+        'Database internals were reworked for faster hot paths, and playback flows were cleaned up for better control and reliability.',
+      highlights: [
+        'Normalized hot SQLite columns for playlists, tracks, and guild settings',
+        'Shared playback flow for /play, /play-file, /tts, and /search',
+        'Safer player controls and per-guild voice status throttling'
+      ],
+      added: [
+        'Schema versioning with `PRAGMA user_version`',
+        'Versioned in-app database migrations',
+        'Real field projection support in the database layer',
+        'Fast hot-column-only update paths',
+        'Shared playback helpers for player creation, queue resolution, queue start, and control checks',
+        'New /sources command to see the avalible sources.',
+        'Micro-optimizations for SQLITE that are built-in'
+      ],
+      changed: [
+        'Reworked the database around normalized hot columns plus JSON for colder fields',
+        'Moved hot queries to projected SQLite columns instead of always parsing full JSON payloads',
+        'Moved hot filtering and sorting away from `json_extract(...)` where indexed columns exist',
+        'Moved schema and index setup into versioned migrations instead of ad-hoc runtime setup',
+        'Updated guild settings reads and playlist commands to use lighter projected queries',
+        'Reduced /play allocations with simpler string operations',
+        'Reworked karaoke around timestamp-based math and a cleaner UI flow',
+        'Optimized playlist interactions, 24/7 flow, and startup to reduce DB work',
+        'Updated dependencies',
+        'Changed voice status throttling to work per guild instead of globally',
+        'Reworked the changelog command with a new UI and better organization hoppefully.',
+        'Reworked the lyrics command with a new UI, this improved the readability for me.',
+        'Reworked the musixmatch integration, improved the fetching accuary, speed, and caching',
+        'Reworked most of the code into shared functions, this greatly reduces the duplication and more maintable for myself lol.',
+        'Improved some commands descriptions to be more clear what they are doing.',
+        'Basic improvement in the /help command cuz why not'
+      ],
+      fixed: [
+        'Missing or outdated translations',
+        'Playlist track autocomplete ordering so it matches actual track removal ordering',
+        'Hot query and index mismatches for playlist lookup, playlist listing, track pagination, and 24/7 recovery',
+        'Unnecessary full-document rewrite work on common hot updates where possible',
+        '/tts first-use flow so it now creates or reuses the player, resolves the request, queues it, and starts playback in one invocation',
+        'Playback buttons so users must be in the same voice channel as the active player',
+        'Stale platform-switch logic in /search',
+        'Cross-guild interference from global voice-status throttling',
+        'Cooldown middleware control flow',
+        'Queue and Lyrics commands not responding',
+        'Some memory leaks'
+      ],
+      removed: [
+        'Legacy JSON shard migration script',
+        'Old migrate-db script entry',
+        'Old ad-hoc expression-index setup from the hot runtime path'
+      ]
+    } as ReleaseNotes
   },
   COLORS: {
     PRIMARY: 0,
     ERROR: 0xff5252
   },
   DISPLAY: {
-    COMMIT_MESSAGE_MAX_LENGTH: 77, // Optimized for ...
-    EMOJIS: {
-      RELEASE: '🚀',
-      GITHUB: '🔆',
-      REPO: '📁',
-      COMMITS: '📜',
-      ISSUE: '🐛'
-    }
+    COMMIT_MESSAGE_MAX_LENGTH: 77 // Optimized for ...
   }
 } as const
 
@@ -76,6 +102,21 @@ interface GithubCommit {
       date: string
     }
   }
+}
+
+interface ReleaseNotes {
+  version: string
+  date: string
+  summary: string
+  highlights: string[]
+  added: string[]
+  changed: string[]
+  fixed: string[]
+  removed: string[]
+}
+
+function asText(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value : fallback
 }
 
 async function fetchCommits(): Promise<Record<string, unknown>[]> {
@@ -125,20 +166,41 @@ function formatCommitMessage(message: string): string {
     : truncated
 }
 
+function createBulletList(items: string[]): string {
+  return items.map((item) => `- ${item}`).join('\n')
+}
+
+function createReleaseBlock(
+  title: string,
+  items: string[]
+): { type: 10; content: string } {
+  return {
+    type: 10,
+    content: `### ${title}\n${createBulletList(items)}`
+  }
+}
+
 function createChangelogPage(
   ctx: CommandContext,
   // biome-ignore lint/suspicious/noExplicitAny: library requirement
   thele: any,
   currentPage: 'changelog' | 'commits' = 'changelog'
 ): Container {
-  const description = CONFIG.BOT.CHANGELOG
+  const notes = CONFIG.BOT.RELEASE_NOTES
   const navigationButtons = createNavigationButtons(currentPage, thele)
+  const githubLabel = asText(thele?.invite?.github, 'GitHub')
+  const supportLabel = asText(thele?.invite?.supportServer, 'Support')
+  const heroContent = [
+    `## [${notes.version}] - ${notes.date}`,
+    notes.summary
+  ].join('\n')
+  const highlightsContent = `**Highlights**\n${createBulletList(notes.highlights)}`
 
   return new Container({
     components: [
       {
         type: 10,
-        content: `### ${CONFIG.DISPLAY.EMOJIS.RELEASE} Kenium Music v${CONFIG.BOT.VERSION} - Changelog`
+        content: `### Kenium Music v${CONFIG.BOT.VERSION} - Changelog`
       },
       { type: 14, divider: true, spacing: 2 },
       {
@@ -146,7 +208,11 @@ function createChangelogPage(
         components: [
           {
             type: 10,
-            content: description
+            content: heroContent
+          },
+          {
+            type: 10,
+            content: highlightsContent
           }
         ],
         accessory: {
@@ -154,19 +220,27 @@ function createChangelogPage(
           media: { url: ctx.client.me.avatarURL({ extension: 'webp' }) || '' }
         }
       },
+      { type: 14, divider: true, spacing: 1 },
+      createReleaseBlock('Added', notes.added),
+      { type: 14, divider: true, spacing: 1 },
+      createReleaseBlock('Changed', notes.changed),
+      { type: 14, divider: true, spacing: 1 },
+      createReleaseBlock('Fixed', notes.fixed),
+      { type: 14, divider: true, spacing: 1 },
+      createReleaseBlock('Removed', notes.removed),
       { type: 14, divider: true, spacing: 2 },
       {
         type: 1,
         components: [
           {
             type: 2,
-            label: `${thele.invite.github as string}${CONFIG.DISPLAY.EMOJIS.REPO}`,
+            label: githubLabel,
             style: 5,
             url: CONFIG.GITHUB.REPO_URL
           },
           {
             type: 2,
-            label: `${thele.invite.supportServer as string}${CONFIG.DISPLAY.EMOJIS.ISSUE}`,
+            label: supportLabel,
             style: 5,
             url: CONFIG.GITHUB.ISSUES_URL
           }
@@ -185,6 +259,9 @@ function createCommitsPage(
   thele: any,
   currentPage: 'changelog' | 'commits' = 'commits'
 ): Container {
+  const githubLabel = asText(thele?.invite?.github, 'GitHub')
+  const nextLabel = asText(thele?.common?.next, 'More')
+  const supportLabel = asText(thele?.invite?.supportServer, 'Support')
   // Build commits string in single pass
   const commitsText = commits
     .map((commit) => {
@@ -197,14 +274,14 @@ function createCommitsPage(
     })
     .join('\n')
 
-  const description = `## ${CONFIG.DISPLAY.EMOJIS.GITHUB} Recent Commits\n${commitsText}`
+  const description = `## Recent Commits\n${commitsText}`
   const navigationButtons = createNavigationButtons(currentPage, thele)
 
   return new Container({
     components: [
       {
         type: 10,
-        content: `### ${CONFIG.DISPLAY.EMOJIS.RELEASE} Kenium Music v${CONFIG.BOT.VERSION} - Commits`
+        content: `### Kenium Music v${CONFIG.BOT.VERSION} - Commits`
       },
       { type: 14, divider: true, spacing: 2 },
       {
@@ -226,19 +303,19 @@ function createCommitsPage(
         components: [
           {
             type: 2,
-            label: `${thele.invite.github as string}${CONFIG.DISPLAY.EMOJIS.REPO}`,
+            label: githubLabel,
             style: 5,
             url: CONFIG.GITHUB.REPO_URL
           },
           {
             type: 2,
-            label: `${thele.common.next as string}${CONFIG.DISPLAY.EMOJIS.COMMITS}`,
+            label: nextLabel,
             style: 5,
             url: CONFIG.GITHUB.COMMITS_URL
           },
           {
             type: 2,
-            label: `${thele.invite.supportServer as string}${CONFIG.DISPLAY.EMOJIS.ISSUE}`,
+            label: supportLabel,
             style: 5,
             url: CONFIG.GITHUB.ISSUES_URL
           }
@@ -255,8 +332,8 @@ function createNavigationButtons(
   // biome-ignore lint/suspicious/noExplicitAny: library requirement
   thele: any
 ) {
-  const changelog = thele.changelog as string
-  const commits = thele.commits as string
+  const changelog = asText(thele?.changelog, 'Changelog')
+  const commits = asText(thele?.commits, 'Commits')
 
   return {
     type: 1,
@@ -265,7 +342,6 @@ function createNavigationButtons(
         type: 2,
         custom_id: 'ignore_changelog_page',
         label: changelog,
-        emoji: { name: '📝' },
         style:
           currentPage === 'changelog'
             ? ButtonStyle.Primary
@@ -276,7 +352,6 @@ function createNavigationButtons(
         type: 2,
         custom_id: 'ignore_commits_page',
         label: commits,
-        emoji: { name: '📜' },
         style:
           currentPage === 'commits'
             ? ButtonStyle.Primary
@@ -308,7 +383,7 @@ export default class Changelog extends Command {
     const thele = ctx.t.get(lang) as any
 
     try {
-      if (!ctx.deferred) await ctx.deferReply(true)
+      if (!(await safeDefer(ctx, true))) return
 
       const commits = await fetchCommits()
 
@@ -335,24 +410,24 @@ export default class Changelog extends Command {
 
       const errorEmbed = new Embed()
         .setColor(CONFIG.COLORS.ERROR)
-        .setTitle(thele.errors.general)
+        .setTitle(asText(thele?.errors?.general, 'Error'))
         .setDescription(
-          `${thele.errors.commandError}\n\`\`\`\n${(error as Error).message || thele.common.unknown}\n\`\`\``
+          `${asText(thele?.errors?.commandError, 'An error occurred.')}\n\`\`\`\n${(error as Error).message || asText(thele?.common?.unknown, 'Unknown')}\n\`\`\``
         )
         .addFields([
           {
-            name: thele.github.title,
-            value: `[${thele.github.label}](${CONFIG.GITHUB.REPO_URL})`,
+            name: asText(thele?.github?.title, 'GitHub'),
+            value: `[${asText(thele?.github?.label, 'Repository')}](${CONFIG.GITHUB.REPO_URL})`,
             inline: true
           },
           {
-            name: thele.supportServer.title,
-            value: `[${thele.supportServer.label}](${CONFIG.GITHUB.ISSUES_URL})`,
+            name: asText(thele?.supportServer?.title, 'Support'),
+            value: `[${asText(thele?.supportServer?.label, 'Open Issue')}](${CONFIG.GITHUB.ISSUES_URL})`,
             inline: true
           }
         ])
         .setFooter({
-          text: `Made with ❤️ by ${CONFIG.BOT.DEVELOPER}`,
+          text: `Made by ${CONFIG.BOT.DEVELOPER}`,
           iconUrl: ctx.client.me.avatarURL() || ''
         })
 

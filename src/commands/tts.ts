@@ -3,11 +3,17 @@ import {
   type CommandContext,
   createStringOption,
   Declare,
+  Embed,
   Middlewares,
   Options
 } from 'seyfert'
-import { createPlayerConnection } from '../shared/player'
+import {
+  ensurePlayerForVoice,
+  maybeStartPlayback,
+  resolveAndQueue
+} from '../shared/playback'
 import { getContextLanguage } from '../utils/i18n'
+import { safeDefer } from '../utils/interactions'
 
 @Options({
   tts: createStringOption({
@@ -25,41 +31,46 @@ import { getContextLanguage } from '../utils/i18n'
 export default class TTSCommand extends Command {
   public override async run(ctx: CommandContext) {
     const { tts } = ctx.options as { tts: string }
-
-    const guildId = ctx.guildId
-    if (!guildId) return
-
-    const player = ctx.client.aqua.players.get(guildId)
     const t = ctx.t.get(getContextLanguage(ctx))
-    if (!player) {
-      const voice = await ctx.member?.voice()
-      if (!voice?.channelId) return
 
-      createPlayerConnection(ctx.client, {
-        guildId: guildId as string,
-        voiceChannel: voice.channelId,
-        textChannel: ctx.channelId
+    if (!(await safeDefer(ctx, true))) return
+
+    const player = await ensurePlayerForVoice(ctx, ctx.channelId)
+    if (!player) {
+      await ctx.editOrReply({
+        embeds: [
+          new Embed()
+            .setDescription(
+              t.player?.noVoiceChannel ||
+                'You must be in a voice channel to use this command.'
+            )
+            .setColor(0xff5252)
+        ],
+        flags: 64
       })
       return
     }
 
-    if (player) {
-      const resolved = await ctx.client.aqua.resolve({
-        query: tts,
-        source: 'speak',
-        requester: ctx.interaction.user
-      })
-      const track = resolved?.tracks?.[0]
-      if (track) {
-        player.queue.add(track)
-        if (!player.playing && !player.paused && player.queue.size > 0) {
-          player.play().catch(() => {})
-        }
-      }
-      ctx.write({
-        content: t.player?.trackAdded,
+    const { added } = await resolveAndQueue({
+      client: ctx.client,
+      player,
+      query: tts,
+      source: 'speak',
+      requester: ctx.interaction.user
+    })
+
+    if (!added.length) {
+      await ctx.editOrReply({
+        content: t.player?.noTrackFound || 'No track found.',
         flags: 64
       })
+      return
     }
+
+    await maybeStartPlayback(player)
+    await ctx.editOrReply({
+      content: t.player?.trackAdded || 'Added to the queue.',
+      flags: 64
+    })
   }
 }

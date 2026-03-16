@@ -159,10 +159,21 @@ export class ViewCommand extends SubCommand {
       return ctx.write({ embeds: [embed], components, flags: 64 })
     }
 
-    const playlist = playlistsCollection.findOne({
-      userId,
-      name: playlistName
-    })
+    const playlist = playlistsCollection.findOne(
+      {
+        userId,
+        name: playlistName
+      },
+      {
+        fields: [
+          '_id',
+          'description',
+          'trackCount',
+          'totalDuration',
+          'playCount'
+        ]
+      }
+    )
     if (!playlist) {
       return ctx.write({
         embeds: [
@@ -206,7 +217,8 @@ export class ViewCommand extends SubCommand {
     // Only load the tracks for the current page to save memory
     const tracks = getPlaylistTracks(playlist._id, {
       limit: pageSize,
-      skip: startIdx
+      skip: startIdx,
+      fields: ['title', 'author', 'duration', 'uri']
     })
 
     const embed = createEmbed(

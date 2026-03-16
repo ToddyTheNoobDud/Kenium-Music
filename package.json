@@ -1,7 +1,7 @@
 {
   "type": "module",
   "dependencies": {
-    "@biomejs/biome": "^2.4.6",
+    "@biomejs/biome": "^2.4.7",
     "@slipher/cooldown": "^0.0.7",
     "aqualink": "^3.0.0",
     "dotenv": "^17.3.1",
@@ -11,8 +11,7 @@
   },
   "scripts": {
     "startBun": "bun ./index.ts",
-    "startNode": "tsx ./index.ts",
-    "migrate-db": "bun ./scripts/migrate-json-to-sqlite.ts"
+    "startNode": "tsx ./index.ts"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

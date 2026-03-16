@@ -24,6 +24,7 @@ import {
   getTracksCollection
 } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
+import { safeDefer } from '../../utils/interactions'
 import { generateSortableId } from '../../utils/simpleDB'
 
 const playlistsCollection = getPlaylistsCollection()
@@ -117,10 +118,15 @@ export class AddCommand extends SubCommand {
     const userId = ctx.author.id
     const t = getContextTranslations(ctx)
 
-    const playlistDb = playlistsCollection.findOne({
-      userId,
-      name: playlistName
-    })
+    const playlistDb = playlistsCollection.findOne(
+      {
+        userId,
+        name: playlistName
+      },
+      {
+        fields: ['_id', 'trackCount', 'totalDuration']
+      }
+    )
 
     if (!playlistDb) {
       return ctx.write({
@@ -160,7 +166,7 @@ export class AddCommand extends SubCommand {
       })
     }
 
-    if (!ctx.deferred) await ctx.deferReply(true)
+    if (!(await safeDefer(ctx, true))) return
 
     const timestamp = new Date().toISOString()
     const existingCanonical = new Set<string>()

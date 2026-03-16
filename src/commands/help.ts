@@ -2,6 +2,7 @@ import { Command, type CommandContext, Container, Declare } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
 import { EMBED_COLOR } from '../shared/constants'
 import { getContextLanguage } from '../utils/i18n'
+import { safeDefer } from '../utils/interactions'
 
 const COMMANDS_PER_PAGE = 9
 const EPHEMERAL_FLAG = 64 | 32768
@@ -12,7 +13,7 @@ const EPHEMERAL_FLAG = 64 | 32768
 })
 export default class HelpCommand extends Command {
   public override async run(ctx: CommandContext) {
-    if (!ctx.deferred) await ctx.deferReply(true)
+    if (!(await safeDefer(ctx, true))) return
 
     const lang = getContextLanguage(ctx)
     const t = ctx.t.get(lang)

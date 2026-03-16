@@ -35,10 +35,13 @@ export class DeleteCommand extends SubCommand {
     const userId = ctx.author.id
     const t = getContextTranslations(ctx)
 
-    const playlist = playlistsCollection.findOne({
-      userId,
-      name: playlistName
-    })
+    const playlist = playlistsCollection.findOne(
+      {
+        userId,
+        name: playlistName
+      },
+      { fields: ['_id'] }
+    )
 
     if (!playlist) {
       return ctx.write({

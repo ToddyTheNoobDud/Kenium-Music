@@ -1,5 +1,5 @@
 import { lru } from 'tiny-lru'
-import { getDatabase } from './db'
+import { getSettingsCollection as getSettingsDbCollection } from './db'
 
 const toBool = (v: any): v is true | 1 | '1' | 'true' =>
   v === true || v === 1 || v === '1' || v === 'true'
@@ -35,8 +35,6 @@ export class ValidationError extends Error {
   }
 }
 
-const COLLECTION_NAME = 'guildSettings'
-
 const CACHE_MAX = 5000
 const CACHE_TTL_MS = 600000
 
@@ -57,6 +55,17 @@ const SUPPORTED_LANGS = new Set([
   'tr',
   'th'
 ])
+
+const SETTINGS_FIELDS = [
+  'guildId',
+  'twentyFourSevenEnabled',
+  'voiceChannelId',
+  'textChannelId',
+  'lang',
+  'last247DisableReason',
+  'createdAt',
+  'updatedAt'
+] as const
 
 export const _functions = {
   isValidGuildId: (guildId: string) => GUILD_ID_RE.test(guildId),
@@ -96,17 +105,7 @@ class DatabaseManager {
 
   getSettingsCollection() {
     if (!this.settingsCollection) {
-      const db = getDatabase()
-      const col = db.collection(COLLECTION_NAME)
-
-      try {
-        col.createIndex?.('twentyFourSevenEnabled')
-      } catch {}
-      try {
-        col.createIndex?.('guildId')
-      } catch {}
-
-      this.settingsCollection = col
+      this.settingsCollection = getSettingsDbCollection()
     }
     return this.settingsCollection
   }
@@ -166,9 +165,15 @@ class DatabaseManager {
 
         let existingMap = new Map<string, GuildSettings>()
         if (idsToFetch.length) {
-          const existingDocs = collection.find({
-            _id: { $in: idsToFetch }
-          }) as GuildSettings[]
+          const existingDocs = collection.find(
+            {
+              _id: { $in: idsToFetch }
+            },
+            { fields: [...SETTINGS_FIELDS] }
+          ) as GuildSettings[]
+          for (const doc of existingDocs) {
+            doc.guildId = doc.guildId || String(doc._id)
+          }
           existingMap = new Map(existingDocs.map((d) => [String(d._id), d]))
         }
 
@@ -283,9 +288,10 @@ export const getGuildSettings = (guildId: string) => {
 
   try {
     const collection = dbManager.getSettingsCollection()
-    const found = collection.findById(guildId)
+    const found = collection.findById(guildId, { fields: [...SETTINGS_FIELDS] })
 
     const settings = found || _functions.createDefaultSettings(guildId)
+    settings.guildId = settings.guildId || guildId
     settings.twentyFourSevenEnabled = toBool(settings.twentyFourSevenEnabled)
 
     dbManager.cache.set(guildId, settings)
@@ -329,7 +335,7 @@ export const updateGuildSettingsSync = (
     const collection = dbManager.getSettingsCollection()
     const base =
       dbManager.cache.get(guildId) ??
-      collection.findById(guildId) ??
+      collection.findById(guildId, { fields: [...SETTINGS_FIELDS] }) ??
       _functions.createDefaultSettings(guildId)
 
     const nowIso = new Date().toISOString()

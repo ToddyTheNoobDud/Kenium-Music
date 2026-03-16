@@ -7,9 +7,36 @@ let dbInstance: SimpleDB | null = null
 let _initialized = false
 let initPromise: Promise<void> | null = null
 
-let _settingsIndexed = false
-let _playlistsIndexed = false
-let _tracksIndexed = false
+const PLAYLIST_COLUMNS = {
+  userId: 'TEXT',
+  name: 'TEXT',
+  description: 'TEXT',
+  lastModified: 'TEXT',
+  playCount: 'INTEGER',
+  totalDuration: 'INTEGER',
+  trackCount: 'INTEGER',
+  lastPlayedAt: 'TEXT'
+} as const
+
+const TRACK_COLUMNS = {
+  playlistId: 'TEXT',
+  title: 'TEXT',
+  uri: 'TEXT',
+  author: 'TEXT',
+  duration: 'INTEGER',
+  addedAt: 'TEXT',
+  addedBy: 'TEXT',
+  source: 'TEXT',
+  identifier: 'TEXT'
+} as const
+
+const SETTINGS_COLUMNS = {
+  twentyFourSevenEnabled: 'INTEGER',
+  voiceChannelId: 'TEXT',
+  textChannelId: 'TEXT',
+  lang: 'TEXT',
+  last247DisableReason: 'TEXT'
+} as const
 
 export function getDatabase(): SimpleDB {
   if (!dbInstance) dbInstance = new SimpleDB()
@@ -36,75 +63,23 @@ export function closeDatabase(): void {
   dbInstance.close()
   dbInstance = null
 
-  _settingsIndexed = false
-  _playlistsIndexed = false
-  _tracksIndexed = false
-
   _initialized = false
   initPromise = null
 }
 
 export function getPlaylistsCollection() {
   const db = getDatabase()
-  const collection = db.collection<Playlist>('playlists_v2')
-
-  if (!_playlistsIndexed) {
-    try {
-      const rawDb = collection.getDatabase()
-      const tableName = collection.getStats().tableName
-
-      rawDb
-        .prepare(`
-          CREATE INDEX IF NOT EXISTS idx_playlists_user_name
-          ON "${tableName}"(json_extract(doc, '$.userId'), json_extract(doc, '$.name'))
-        `)
-        .run()
-
-      collection.createIndex('lastModified')
-      collection.createIndex('userId')
-      collection.createIndex('name')
-
-      _playlistsIndexed = true
-    } catch (err) {
-      console.error('Failed to create playlists indexes:', err)
-      _playlistsIndexed = false
-    }
-  }
-
-  return collection
+  return db.collection<Playlist>('playlists_v2', { columns: PLAYLIST_COLUMNS })
 }
 
 export function getTracksCollection() {
   const db = getDatabase()
-  const collection = db.collection<Track>('tracks_v2')
-
-  if (!_tracksIndexed) {
-    try {
-      const rawDb = collection.getDatabase()
-      const tableName = collection.getStats().tableName
-
-      rawDb
-        .prepare(`
-          CREATE INDEX IF NOT EXISTS idx_tracks_playlist_order
-          ON "${tableName}"(json_extract(doc, '$.playlistId'), json_extract(doc, '$.addedAt'))
-        `)
-        .run()
-
-      collection.createIndex('addedAt')
-
-      _tracksIndexed = true
-    } catch (err) {
-      console.error('Failed to create tracks indexes:', err)
-      _tracksIndexed = false
-    }
-  }
-
-  return collection
+  return db.collection<Track>('tracks_v2', { columns: TRACK_COLUMNS })
 }
 
 export function getPlaylistTracks(
   playlistId: string,
-  options: { limit?: number; skip?: number } = {}
+  options: { limit?: number; skip?: number; fields?: string[] } = {}
 ) {
   // Deterministic ordering:
   return getTracksCollection().find(
@@ -124,30 +99,5 @@ export async function getPlaylistWithTracks(userId: string, name: string) {
 
 export function getSettingsCollection() {
   const db = getDatabase()
-  const collection = db.collection('guildSettings')
-
-  if (!_settingsIndexed) {
-    try {
-      const rawDb = collection.getDatabase()
-      const tableName = collection.getStats().tableName
-
-      rawDb
-        .prepare(
-          `CREATE INDEX IF NOT EXISTS idx_settings_247_enabled
-           ON "${tableName}"(json_extract(doc, '$.voiceChannelId'), json_extract(doc, '$.textChannelId'))
-           WHERE json_extract(doc, '$.twentyFourSevenEnabled') = 1`
-        )
-        .run()
-
-      collection.createIndex('twentyFourSevenEnabled')
-      collection.createIndex('guildId')
-
-      _settingsIndexed = true
-    } catch (err) {
-      console.error('Failed to create guildSettings indexes:', err)
-      _settingsIndexed = false
-    }
-  }
-
-  return collection
+  return db.collection('guildSettings', { columns: SETTINGS_COLUMNS })
 }
