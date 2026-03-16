@@ -107,7 +107,7 @@ const shutdown = async () => {
 // Pre-defined activities to avoid object recreation every interval
 const PRESENCE_ACTIVITIES = Object.freeze([
   {
-    name: '⚡ Kenium 4.9.2 ⚡',
+    name: '⚡ Kenium 4.10.0 ⚡',
     type: 1,
     url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
   },

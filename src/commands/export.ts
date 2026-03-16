@@ -83,7 +83,7 @@ export default class exportcmds extends Command {
 
       const randomId = Math.random().toString(36).substring(2, 10).toUpperCase()
 
-      const warningHeader = `# DO NOT MODIFY THIS FILE / CAN GET CORRUPTED - Kenium 4.9.2 - BY mushroom0162\n# Export ID: ${randomId}\n# Generated: ${new Date().toISOString()}\n\n`
+      const warningHeader = `# DO NOT MODIFY THIS FILE / CAN GET CORRUPTED - Kenium 4.10.0 - BY mushroom0162\n# Export ID: ${randomId}\n# Generated: ${new Date().toISOString()}\n\n`
       const queueString = warningHeader + queueLines.join('\n')
 
       const platformsString = Array.from(platforms).sort().join('_')
