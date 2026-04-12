@@ -1,10 +1,16 @@
 import { lru } from 'tiny-lru'
 import { getSettingsCollection as getSettingsDbCollection } from './db'
 
-const toBool = (v: any): v is true | 1 | '1' | 'true' =>
+type SettingsCollection = ReturnType<typeof getSettingsDbCollection>
+
+type TimerLike = NodeJS.Timeout & {
+  unref?: () => void
+}
+
+const toBool = (v: unknown): v is true | 1 | '1' | 'true' =>
   v === true || v === 1 || v === '1' || v === 'true'
 
-export interface GuildSettings {
+export interface GuildSettings extends Record<string, unknown> {
   _id: string
   guildId: string
   twentyFourSevenEnabled: boolean
@@ -17,10 +23,12 @@ export interface GuildSettings {
 }
 
 export class DatabaseError extends Error {
+  override cause?: unknown
+
   constructor(message: string, cause?: unknown) {
     super(message)
     this.name = 'DatabaseError'
-    ;(this as any).cause = cause
+    this.cause = cause
   }
 }
 
@@ -38,7 +46,7 @@ export class ValidationError extends Error {
 const CACHE_MAX = 5000
 const CACHE_TTL_MS = 600000
 
-const BATCH_INTERVAL_MS = 100
+const BATCH_INTERVAL_MS = 500
 const MAX_BATCH_SIZE = 50
 
 const GUILD_ID_RE = /^\d{17,20}$/
@@ -81,10 +89,16 @@ export const _functions = {
   })
 }
 
+const asGuildSettings = (value: unknown): GuildSettings =>
+  value as GuildSettings
+
+const asGuildSettingsArray = (value: unknown): GuildSettings[] =>
+  value as GuildSettings[]
+
 class DatabaseManager {
   static instance: DatabaseManager | null = null
 
-  settingsCollection: any = null
+  settingsCollection: SettingsCollection | null = null
 
   cache = lru<GuildSettings>(CACHE_MAX, CACHE_TTL_MS, true)
 
@@ -118,7 +132,7 @@ class DatabaseManager {
       this.processBatchUpdates()
     }, BATCH_INTERVAL_MS)
 
-    ;(timer as any)?.unref?.()
+    ;(timer as TimerLike)?.unref?.()
     this.updateTimer = timer
   }
 
@@ -170,7 +184,7 @@ class DatabaseManager {
               _id: { $in: idsToFetch }
             },
             { fields: [...SETTINGS_FIELDS] }
-          ) as GuildSettings[]
+          ) as unknown as GuildSettings[]
           for (const doc of existingDocs) {
             doc.guildId = doc.guildId || String(doc._id)
           }
@@ -201,7 +215,7 @@ class DatabaseManager {
           docsToUpsert.push(next)
         }
 
-        const saved = collection.insert(docsToUpsert) as GuildSettings[]
+        const saved = asGuildSettingsArray(collection.insert(docsToUpsert))
 
         for (const doc of saved) {
           const key = String(doc._id ?? doc.guildId)
@@ -290,7 +304,9 @@ export const getGuildSettings = (guildId: string) => {
     const collection = dbManager.getSettingsCollection()
     const found = collection.findById(guildId, { fields: [...SETTINGS_FIELDS] })
 
-    const settings = found || _functions.createDefaultSettings(guildId)
+    const settings = found
+      ? asGuildSettings(found)
+      : _functions.createDefaultSettings(guildId)
     settings.guildId = settings.guildId || guildId
     settings.twentyFourSevenEnabled = toBool(settings.twentyFourSevenEnabled)
 
@@ -352,7 +368,7 @@ export const updateGuildSettingsSync = (
 
     next.twentyFourSevenEnabled = toBool(next.twentyFourSevenEnabled)
 
-    const saved = collection.insert(next) as GuildSettings
+    const saved = asGuildSettings(collection.insert(next))
     dbManager.cache.set(guildId, saved)
     return saved
   } catch (error) {

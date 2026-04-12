@@ -6,6 +6,7 @@ import {
   Middlewares
 } from 'seyfert'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
 
 @Declare({
   name: 'resume',
@@ -27,7 +28,7 @@ export default class resumecmds extends Command {
           embeds: [
             new Embed()
               .setDescription(t.player?.alreadyResumed)
-              .setColor('#0x100e09')
+              .setColor(0x100e09)
           ],
           flags: 64
         })
@@ -38,12 +39,12 @@ export default class resumecmds extends Command {
 
       await ctx.editOrReply({
         embeds: [
-          new Embed().setDescription(t.player?.resumed).setColor('#0x100e09')
+          new Embed().setDescription(t.player?.resumed).setColor(0x100e09)
         ],
         flags: 64
       })
-    } catch (error: any) {
-      if (error?.code === 10065) return
+    } catch (error: unknown) {
+      if (getErrorCode(error) === 10065) return
     }
   }
 }

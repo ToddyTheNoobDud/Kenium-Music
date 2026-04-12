@@ -1,4 +1,8 @@
 import { createMiddleware, Embed } from 'seyfert'
+import {
+  getMemberVoiceState,
+  isInteractionExpired
+} from '../utils/interactions'
 
 export const checkPlayer = createMiddleware<void>(
   async ({ context, pass, next }) => {
@@ -9,16 +13,20 @@ export const checkPlayer = createMiddleware<void>(
     const player = client.aqua.players.get(context.guildId)
 
     if (!player) {
-      await context.editOrReply({
-        flags: 64,
-        embeds: [
-          new Embed()
-            .setColor('#0x100e09')
-            .setDescription(
-              `**[❌ | No active \`player\` found.](https://discord.com/oauth2/authorize?client_id=1202232935311495209)**`
-            )
-        ]
-      })
+      try {
+        await context.editOrReply({
+          flags: 64,
+          embeds: [
+            new Embed()
+              .setColor(0x100e09)
+              .setDescription(
+                `**[❌ | No active \`player\` found.](https://discord.com/oauth2/authorize?client_id=1202232935311495209)**`
+              )
+          ]
+        })
+      } catch (err) {
+        if (!isInteractionExpired(err)) throw err
+      }
       return pass()
     }
 
@@ -30,9 +38,8 @@ export const checkVoice = createMiddleware<void>(
   async ({ context, pass, next }) => {
     if (!context.inGuild()) return next()
 
-    const memberVoice = await context.member?.voice().catch(() => null)
+    const memberVoice = await getMemberVoiceState(context)
 
-    // @ts-expect-error
     const botId = context.client.botId
     const botvoice = context.client.cache.voiceStates?.get(
       botId,
@@ -42,16 +49,20 @@ export const checkVoice = createMiddleware<void>(
       !memberVoice ||
       (botvoice && botvoice.channelId !== memberVoice.channelId)
     ) {
-      await context.editOrReply({
-        flags: 64,
-        embeds: [
-          new Embed()
-            .setColor('#0x100e09')
-            .setDescription(
-              `**[❌ | You must be in a voice channel.](https://discord.com/oauth2/authorize?client_id=1202232935311495209)**`
-            )
-        ]
-      })
+      try {
+        await context.editOrReply({
+          flags: 64,
+          embeds: [
+            new Embed()
+              .setColor(0x100e09)
+              .setDescription(
+                `**[❌ | You must be in a voice channel.](https://discord.com/oauth2/authorize?client_id=1202232935311495209)**`
+              )
+          ]
+        })
+      } catch (err) {
+        if (!isInteractionExpired(err)) throw err
+      }
       return pass()
     }
 
@@ -68,16 +79,20 @@ export const checkTrack = createMiddleware<void>(
     const player = client.aqua.players.get(context.guildId)
 
     if (!player?.current) {
-      await context.editOrReply({
-        flags: 64,
-        embeds: [
-          new Embed()
-            .setColor('#0x100e09')
-            .setDescription(
-              `**[❌ | No active \`track\` found.](https://discord.com/oauth2/authorize?client_id=1202232935311495209)**`
-            )
-        ]
-      })
+      try {
+        await context.editOrReply({
+          flags: 64,
+          embeds: [
+            new Embed()
+              .setColor(0x100e09)
+              .setDescription(
+                `**[❌ | No active \`track\` found.](https://discord.com/oauth2/authorize?client_id=1202232935311495209)**`
+              )
+          ]
+        })
+      } catch (err) {
+        if (!isInteractionExpired(err)) throw err
+      }
       return pass()
     }
 

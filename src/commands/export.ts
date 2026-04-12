@@ -7,7 +7,23 @@ import {
   Embed,
   Middlewares
 } from 'seyfert'
+import type { QueueLike, TrackLike } from '../shared/helperTypes'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
+
+const getQueueTracks = (
+  queue: QueueLike<TrackLike> | undefined
+): TrackLike[] => {
+  if (!queue) return []
+  if (Array.isArray(queue)) return queue.filter(Boolean)
+  if (typeof queue.toArray === 'function')
+    return queue.toArray().filter(Boolean)
+  if (typeof queue.slice === 'function') {
+    const size = queue.size ?? queue.length ?? 0
+    return queue.slice(0, size).filter(Boolean)
+  }
+  return Array.from(queue).filter(Boolean)
+}
 
 @Cooldown({
   type: CooldownType.User,
@@ -33,8 +49,9 @@ export default class exportcmds extends Command {
 
       const player = client.aqua.players.get(guildId)
       if (!player) return
+      const queueTracks = getQueueTracks(player.queue)
 
-      if (player.queue.length === 0) {
+      if (queueTracks.length === 0) {
         await ctx.editOrReply({
           embeds: [
             new Embed()
@@ -56,14 +73,14 @@ export default class exportcmds extends Command {
       const platforms = new Set<string>()
       const queueLines: string[] = []
 
-      for (let i = 0; i < player.queue.length; i++) {
-        const song = player.queue[i]
+      for (let i = 0; i < queueTracks.length; i++) {
+        const song = queueTracks[i]
         if (!song) continue
-        const uri = song.info.uri
+        const uri = String(song.info?.uri || song.uri || '')
+        const title = String(song.info?.title || song.title || 'Unknown')
+        const author = String(song.info?.author || song.author || 'Unknown')
 
-        queueLines.push(
-          `${uri} | ${song.info.title} | ${song.info.author} | ${i + 1}`
-        )
+        queueLines.push(`${uri} | ${title} | ${author} | ${i + 1}`)
 
         if (platformRegex.youtube.test(uri)) {
           platforms.add('youtube')
@@ -99,13 +116,13 @@ export default class exportcmds extends Command {
             .setDescription(
               t?.export?.success || 'Exported the queue with URLs for import'
             )
-            .setColor('#0x100e09')
+            .setColor(0x100e09)
         ],
         files: [attachment],
         flags: 64
       })
-    } catch (error: any) {
-      if (error?.code === 10065) return
+    } catch (error: unknown) {
+      if (getErrorCode(error) === 10065) return
     }
   }
 }

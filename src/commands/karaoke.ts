@@ -1,13 +1,13 @@
 import { Cooldown, CooldownType } from '@slipher/cooldown'
 import type { Player } from 'aqualink'
 import {
+  ActionRow,
   Button,
   Command,
   type CommandContext,
   Container,
   Declare,
   Middlewares,
-  Section,
   Separator,
   TextDisplay
 } from 'seyfert'
@@ -29,13 +29,13 @@ const AUTO_DELETE_MS = 10000
 
 const MAX_DRIFT_MS = 10000
 
-const MIN_EDIT_DELAY_MS = 350
-const MAX_EDIT_DELAY_MS = 2000
+const MIN_EDIT_DELAY_MS = 2000
+const MAX_EDIT_DELAY_MS = 5000
 const SCHEDULER_JITTER_MS = 25
 
 const VIEW_PAST_LINES = 1
-const VIEW_NEXT_LINES = 4
-const PROGRESS_BAR_LENGTH = 14
+const VIEW_NEXT_LINES = 1
+const PROGRESS_BAR_LENGTH = 16
 
 type LyricLine = {
   line: string
@@ -58,6 +58,7 @@ interface KaraokeSession {
   fallbackStartPosition: number
   fallbackStartTime: number
   title: string
+  trackKey: string
   stoppedByUser: boolean
 }
 
@@ -82,23 +83,26 @@ const _createErrorContainer = (
   return new Container()
     .setColor(ERROR_COLOR)
     .addComponents(
-      new TextDisplay().setContent(`❌ **${t.karaoke.error}**`),
+      new TextDisplay().setContent(`## [X] ${t.karaoke.error}`),
       _divider(),
       new TextDisplay().setContent(message)
     )
 }
 
-const _createEndedContainer = (reason: 'stopped' | 'finished' | 'error') => {
+const _createEndedContainer = (
+  reason: 'stopped' | 'finished' | 'error' | 'changed'
+) => {
   const messages = {
-    stopped: '⏹ Karaoke session was stopped by a user.',
-    finished: '🎵 Song ended — thanks for singing!',
-    error: '⚠️ The karaoke display has been closed.'
+    stopped: 'Session stopped by a user.',
+    finished: 'Track finished. Stage lights down.',
+    error: 'The karaoke display has been closed.',
+    changed: 'Track changed. Karaoke closed to avoid stale lyrics.'
   }
 
   return new Container()
     .setColor(ERROR_COLOR)
     .addComponents(
-      new TextDisplay().setContent('🎙️ **Karaoke Stage**'),
+      new TextDisplay().setContent('## KARAOKE STAGE'),
       _divider(),
       new TextDisplay().setContent(messages[reason])
     )
@@ -115,6 +119,33 @@ const _lineStartMs = (line: LyricLine): number =>
   line.range?.start ?? line.timestamp ?? 0
 
 const _cleanLyricText = (text: string) => text.replace(/\s+/g, ' ').trim()
+
+const _getTrackKey = (
+  track:
+    | {
+        uri?: string
+        identifier?: string
+        title?: string
+        author?: string
+        info?: {
+          uri?: string
+          identifier?: string
+          title?: string
+          author?: string
+        }
+      }
+    | null
+    | undefined
+) => {
+  if (!track) return ''
+
+  const uri = track.info?.uri ?? track.uri
+  const identifier = track.info?.identifier ?? track.identifier
+  const title = track.info?.title ?? track.title
+  const author = track.info?.author ?? track.author
+
+  return [uri, identifier, title, author].filter(Boolean).join('|')
+}
 
 const _findCurrentLineIndex = (lines: LyricLine[], currentTimeMs: number) => {
   let left = 0
@@ -143,13 +174,19 @@ const _createProgressBar = (
   endMs: number
 ) => {
   const durationMs = endMs - startMs
-  if (durationMs <= 0) return `▰${'═'.repeat(PROGRESS_BAR_LENGTH)}`
+  if (durationMs <= 0) return `[${'>'.padEnd(PROGRESS_BAR_LENGTH, '=')}]`
 
   const elapsedMs = currentMs - startMs
   const progress = Math.max(0, Math.min(1, elapsedMs / durationMs))
-  const filled = Math.round(progress * PROGRESS_BAR_LENGTH)
+  const cursor = Math.min(
+    PROGRESS_BAR_LENGTH - 1,
+    Math.max(0, Math.round(progress * (PROGRESS_BAR_LENGTH - 1)))
+  )
+  const chars = Array.from({ length: PROGRESS_BAR_LENGTH }, (_, index) =>
+    index === cursor ? '>' : '='
+  )
 
-  return `${'▰'.repeat(Math.max(1, filled))}${'═'.repeat(PROGRESS_BAR_LENGTH - filled)}`
+  return `[${chars.join('')}]`
 }
 
 const _formatViewportLine = (
@@ -157,16 +194,35 @@ const _formatViewportLine = (
   kind: 'past' | 'current' | 'next',
   nextIndex?: number
 ) => {
-  const text = _cleanLyricText(line.line) || '…'
+  const text = _cleanLyricText(line.line) || '...'
 
   switch (kind) {
     case 'past':
-      return `-# ♫ *${text}*`
+      return `-# LAST: ${text}`
     case 'current':
-      return `🎤 **${text}**`
+      return `## ${text}`
     case 'next':
-      return nextIndex === 0 ? `➜ ${text}` : `-# ♪ ${text}`
+      return nextIndex === 0 ? `-# NEXT: ${text}` : `-# THEN: ${text}`
   }
+}
+
+const _createStatusLine = (
+  currentTimeMs: number,
+  startMs: number,
+  endMs: number,
+  isPaused: boolean
+) => {
+  const state = isPaused ? 'HOLD' : 'LIVE'
+  const remainingMs = Math.max(0, endMs - currentTimeMs)
+  const nextIn =
+    isPaused || remainingMs <= 0
+      ? '--'
+      : `${Math.max(0.1, remainingMs / 1000).toFixed(1)}s`
+
+  return [
+    `### ${state} ${_formatTimestamp(currentTimeMs)}  •  NEXT ${nextIn}`,
+    `-# ${_createProgressBar(currentTimeMs, startMs, endMs)}`
+  ].join('\n')
 }
 
 const _createKaraokeStageContainer = (
@@ -177,14 +233,14 @@ const _createKaraokeStageContainer = (
 ) => {
   const stopButton = new Button()
     .setCustomId('ignore_karaoke-stop')
-    .setLabel('⏹ Stop')
+    .setLabel('Stop')
     .setStyle(ButtonStyle.Secondary)
 
   if (!lines.length) {
     return new Container()
       .setColor(ACCENT_COLOR)
       .addComponents(
-        new TextDisplay().setContent('🎙️ **Karaoke Stage**'),
+        new TextDisplay().setContent('## KARAOKE STAGE'),
         _divider(),
         new TextDisplay().setContent(
           'No time-synced lyrics available for this track.'
@@ -193,94 +249,81 @@ const _createKaraokeStageContainer = (
   }
 
   const currentIdx = _findCurrentLineIndex(lines, currentTimeMs)
-  const status = isPaused ? '⏸ Paused' : '▶ Playing'
+  const status = isPaused ? 'PAUSED' : 'LIVE'
 
   if (currentIdx < 0) {
     const firstLine = lines[0]
     const preview = lines.slice(0, Math.min(VIEW_NEXT_LINES + 1, lines.length))
     const previewText = preview
-      .map((l, i) => _formatViewportLine(l, 'next', i))
+      .map((line, index) => _formatViewportLine(line, 'next', index))
       .join('\n')
 
     const timeUntil = firstLine ? _lineStartMs(firstLine) - currentTimeMs : 0
     const countdown =
       timeUntil > 0
-        ? `⏳ Lyrics begin in **${Math.ceil(timeUntil / 1000)}s**…`
-        : ''
-
-    const bodyParts = [countdown, '', previewText].filter(Boolean).join('\n')
+        ? `-# Lyrics begin in ${Math.ceil(timeUntil / 1000)}s`
+        : '-# The next line is about to lock in'
 
     return new Container()
       .setColor(ACCENT_COLOR)
       .addComponents(
-        new TextDisplay().setContent(`🎙️ **${title}** · ${status}`),
+        new TextDisplay().setContent(`-# ${title}  |  ${status}`),
         _divider(),
-        new TextDisplay().setContent(bodyParts),
+        new TextDisplay().setContent([countdown, '', previewText].join('\n')),
         _divider(),
-        new Section()
-          .addComponents(
-            new TextDisplay().setContent('-# Get ready to sing! 🎶')
-          )
-          .setAccessory(stopButton)
+        new ActionRow().addComponents(stopButton)
       )
   }
 
-  const safeIdx = currentIdx
-  const current = lines[safeIdx]
+  const current = lines[currentIdx]
   if (!current) {
     return new Container()
       .setColor(ACCENT_COLOR)
-      .addComponents(new TextDisplay().setContent('…'))
+      .addComponents(new TextDisplay().setContent('...'))
   }
 
-  const next = lines[safeIdx + 1]
+  const next = lines[currentIdx + 1]
   const segStart = _lineStartMs(current)
   const segEnd = next ? _lineStartMs(next) : segStart + 4000
 
-  const bar = _createProgressBar(currentTimeMs, segStart, segEnd)
-
-  const pastStart = Math.max(0, safeIdx - VIEW_PAST_LINES)
-  const past = lines.slice(pastStart, safeIdx)
-  const upcoming = lines.slice(safeIdx + 1, safeIdx + 1 + VIEW_NEXT_LINES)
+  const pastStart = Math.max(0, currentIdx - VIEW_PAST_LINES)
+  const past = lines.slice(pastStart, currentIdx)
+  const upcoming = lines.slice(currentIdx + 1, currentIdx + 1 + VIEW_NEXT_LINES)
 
   const viewportParts: string[] = []
 
   if (past.length) {
     viewportParts.push(
-      past.map((l) => _formatViewportLine(l, 'past')).join('\n')
+      past.map((line) => _formatViewportLine(line, 'past')).join('\n')
     )
     viewportParts.push('')
   }
 
   viewportParts.push(_formatViewportLine(current, 'current'))
-  viewportParts.push(`-# ${bar}  ${_formatTimestamp(currentTimeMs)}`)
+  viewportParts.push(
+    _createStatusLine(currentTimeMs, segStart, segEnd, isPaused)
+  )
 
   if (upcoming.length) {
     viewportParts.push('')
     viewportParts.push(
-      upcoming.map((l, i) => _formatViewportLine(l, 'next', i)).join('\n')
+      upcoming
+        .map((line, index) => _formatViewportLine(line, 'next', index))
+        .join('\n')
     )
-  } else if (safeIdx === lines.length - 1) {
+  } else if (currentIdx === lines.length - 1) {
     viewportParts.push('')
-    viewportParts.push('-# 🎵 Last line — song ending soon…')
+    viewportParts.push('-# FINAL LINE: track ending soon')
   }
-
-  const viewport = viewportParts.join('\n')
 
   return new Container()
     .setColor(ACCENT_COLOR)
     .addComponents(
-      new TextDisplay().setContent(`🎙️ **${title}** · ${status}`),
+      new TextDisplay().setContent(`-# ${title}  |  ${status}`),
       _divider(),
-      new TextDisplay().setContent(viewport),
+      new TextDisplay().setContent(viewportParts.join('\n')),
       _divider(),
-      new Section()
-        .addComponents(
-          new TextDisplay().setContent(
-            '-# Follow the 🎤 line · Lyrics sync with playback'
-          )
-        )
-        .setAccessory(stopButton)
+      new ActionRow().addComponents(stopButton)
     )
 }
 
@@ -313,6 +356,7 @@ const _fetchKaraokeLyrics = async (
 
 const KaraokeSessionRegistry = {
   cache: new Map<string, KaraokeSession>(),
+  MAX_SESSIONS: 100,
 
   get(guildId: string) {
     return KaraokeSessionRegistry.cache.get(guildId)
@@ -326,12 +370,21 @@ const KaraokeSessionRegistry = {
 
   async add(guildId: string, session: KaraokeSession) {
     await KaraokeSessionRegistry.cleanup(guildId, 'error')
+
+    // Evict oldest entry if at capacity
+    if (
+      KaraokeSessionRegistry.cache.size >= KaraokeSessionRegistry.MAX_SESSIONS
+    ) {
+      const firstKey = KaraokeSessionRegistry.cache.keys().next().value
+      if (firstKey) await KaraokeSessionRegistry.cleanup(firstKey, 'error')
+    }
+
     KaraokeSessionRegistry.cache.set(guildId, session)
   },
 
   async cleanup(
     guildId: string,
-    reason: 'stopped' | 'finished' | 'error' = 'error'
+    reason: 'stopped' | 'finished' | 'error' | 'changed' = 'error'
   ) {
     const session = KaraokeSessionRegistry.cache.get(guildId)
     if (!session) return
@@ -365,6 +418,17 @@ const KaraokeSessionRegistry = {
     KaraokeSessionRegistry.cache.clear()
   }
 }
+
+// Periodic cleanup of orphaned karaoke sessions (disconnected players, destroyed players)
+const KARAOKE_ORPHAN_CLEANUP_INTERVAL = 60_000
+const karaokeOrphanTimer = setInterval(() => {
+  for (const [guildId, session] of KaraokeSessionRegistry.cache) {
+    if (!session.player?.connected || session.player?.destroyed) {
+      KaraokeSessionRegistry.cleanup(guildId, 'error').catch(() => {})
+    }
+  }
+}, KARAOKE_ORPHAN_CLEANUP_INTERVAL)
+if (karaokeOrphanTimer.unref) karaokeOrphanTimer.unref()
 
 @Cooldown({
   type: CooldownType.User,
@@ -481,6 +545,12 @@ export default class KaraokeCommand extends Command {
 
     const currentTimeMs = this._getCurrentTimeMs(session)
     const isPaused = this._isPlayerPaused(session.player)
+    const currentTrackKey = _getTrackKey(session.player.current)
+
+    if (!currentTrackKey || currentTrackKey !== session.trackKey) {
+      await KaraokeSessionRegistry.cleanup(guildId, 'changed')
+      return
+    }
 
     const lastLine = session.lines[session.lines.length - 1]
     const lastTimestampMs = lastLine ? _lineStartMs(lastLine) : 0
@@ -593,12 +663,17 @@ export default class KaraokeCommand extends Command {
     )
     if (!message) return
 
-    const collector = message.createComponentCollector({
+    const collector = message.createComponentCollector?.({
       filter: (i: { isButton: () => boolean; customId: string }) =>
         i.isButton() && i.customId === 'ignore_karaoke-stop',
       onStop(_reason: string | undefined, _refresh: () => void) {},
       idle: SESSION_TIMEOUT_MS
     })
+
+    if (!collector) {
+      _autoDelete(message)
+      return
+    }
 
     collector.run(
       'ignore_karaoke-stop',
@@ -617,7 +692,7 @@ export default class KaraokeCommand extends Command {
 
         if (playerVoice && memberVoice && memberVoice !== playerVoice) {
           await i.write({
-            content: '❌ You must be in the voice channel to stop karaoke.',
+            content: 'You must be in the voice channel to stop karaoke.',
             flags: 64
           })
           return
@@ -630,7 +705,7 @@ export default class KaraokeCommand extends Command {
         await KaraokeSessionRegistry.cleanup(guildId, 'stopped')
 
         await i.write({
-          content: `⏹ Karaoke session stopped by <@${i.user.id}>.`,
+          content: `Karaoke session stopped by <@${i.user.id}>.`,
           flags: 64
         })
       }
@@ -654,6 +729,7 @@ export default class KaraokeCommand extends Command {
       fallbackStartPosition: initialPosition,
       fallbackStartTime: Date.now(),
       title,
+      trackKey: _getTrackKey(player.current),
       stoppedByUser: false
     })
 
@@ -670,6 +746,33 @@ export const cleanupKaraokeSession = async (
 
 export const hasKaraokeSession = (guildId: string) => {
   return KaraokeSessionRegistry.has(guildId)
+}
+
+export const syncKaraokeSessionTrack = async (
+  guildId: string,
+  track:
+    | {
+        uri?: string
+        identifier?: string
+        title?: string
+        author?: string
+        info?: {
+          uri?: string
+          identifier?: string
+          title?: string
+          author?: string
+        }
+      }
+    | null
+    | undefined
+) => {
+  const session = KaraokeSessionRegistry.get(guildId)
+  if (!session) return
+
+  const trackKey = _getTrackKey(track)
+  if (!trackKey || trackKey !== session.trackKey) {
+    await KaraokeSessionRegistry.cleanup(guildId, 'changed')
+  }
 }
 
 export const cleanupAllKaraokeSessions = async () => {

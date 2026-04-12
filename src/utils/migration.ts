@@ -16,11 +16,15 @@ interface ColumnSpec {
 }
 
 interface RawSQLiteDB {
-  prepare(sql: string): any
+  prepare(sql: string): {
+    get: (...params: unknown[]) => Record<string, unknown> | undefined
+    all: (...params: unknown[]) => unknown[]
+    run: (...params: unknown[]) => unknown
+  }
   backup?(path: string): Promise<void>
 }
 
-interface RawStmt<T = any> {
+interface RawStmt<T = unknown> {
   all?: (...params: unknown[]) => T[]
   iterate?: (...params: unknown[]) => Iterable<T>
 }
@@ -87,7 +91,10 @@ function columnExists(
 
 function getUserVersion(rawDb: RawSQLiteDB): number {
   try {
-    return Number(rawDb.prepare('PRAGMA user_version').get()?.user_version || 0)
+    const row = rawDb.prepare('PRAGMA user_version').get() as
+      | { user_version?: unknown }
+      | undefined
+    return Number(row?.user_version || 0)
   } catch {
     return 0
   }
@@ -345,7 +352,7 @@ async function migrateLegacyPlaylistTable(rawDb: RawSQLiteDB) {
 
 export async function migrateDatabase() {
   const db = getDatabase()
-  const rawDb = (db as any).db as RawSQLiteDB
+  const rawDb = (db as unknown as { db: RawSQLiteDB }).db
 
   ensureBaseCollections()
 

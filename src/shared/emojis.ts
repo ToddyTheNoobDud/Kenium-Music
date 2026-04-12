@@ -2,7 +2,21 @@
 const BASE_COLOR = 0x100e09
 const BASE_STYLE = 1
 
-const createPlatform = (name: any, source: any, emoji: any, icon: any) =>
+type MusicPlatform = Readonly<{
+  name: string
+  source: string
+  color: number
+  emoji: string
+  icon: string
+  style: number
+}>
+
+const createPlatform = (
+  name: string,
+  source: string,
+  emoji: string,
+  icon: string
+): MusicPlatform =>
   Object.freeze({
     name,
     source,

@@ -107,6 +107,10 @@ const safeNumber = (value: unknown) => {
   return undefined
 }
 
+const env = process.env as NodeJS.ProcessEnv & {
+  MUSIXMATCH_TOKEN?: string
+}
+
 const uniqueBy = <T>(items: T[], mapper: (item: T) => string) => {
   const seen = new Set<string>()
   const output: T[] = []
@@ -134,9 +138,60 @@ interface SearchTrack {
   has_lyrics?: number | string
 }
 
+interface MacroSubtitleEntry {
+  subtitle?: {
+    subtitle_body?: string
+  }
+}
+
+interface MacroCallEntry {
+  message?: {
+    body?: {
+      lyrics?: {
+        lyrics_body?: string
+      }
+      track?: SearchTrack
+      subtitle_list?: MacroSubtitleEntry[]
+    }
+  }
+}
+
+interface ApiEnvelope<TBody = unknown> {
+  message?: {
+    header?: {
+      status_code?: number
+      hint?: string
+    }
+    body?: TBody
+  }
+}
+
+interface TokenResponseBody {
+  user_token?: string
+}
+
+interface SearchResponseBody {
+  track_list?: Array<{
+    track?: SearchTrack
+  }>
+}
+
+interface SubtitleResponseBody {
+  subtitle?: {
+    subtitle_body?: string
+  }
+}
+
+interface LyricsResponseBody {
+  lyrics?: {
+    lyrics_body?: string
+  }
+}
+
 const extractMacroCalls = (body: unknown) => {
-  const macroBody = (body as { macro_calls?: Record<string, any> } | undefined)
-    ?.macro_calls
+  const macroBody = (
+    body as { macro_calls?: Record<string, MacroCallEntry | undefined> }
+  )?.macro_calls
 
   return {
     lyrics: macroBody?.['track.lyrics.get']?.message?.body?.lyrics
@@ -254,7 +309,7 @@ export class Musixmatch {
   }
 
   async readManualToken(): Promise<string | null> {
-    const envToken = process.env['MUSIXMATCH_TOKEN']?.trim()
+    const envToken = env.MUSIXMATCH_TOKEN?.trim()
     if (envToken) return envToken
 
     try {
@@ -292,7 +347,10 @@ export class Musixmatch {
     } catch {}
   }
 
-  async apiGet(url: string, externalSignal?: AbortSignal): Promise<any> {
+  async apiGet<TBody = unknown>(
+    url: string,
+    externalSignal?: AbortSignal
+  ): Promise<TBody> {
     externalSignal?.throwIfAborted?.()
 
     const controller = new AbortController()
@@ -313,14 +371,14 @@ export class Musixmatch {
 
       if (!response.ok) throw new HttpError(response.status)
 
-      const data = (await response.json()) as any
-      const header = data?.message?.header
+      const data = (await response.json()) as ApiEnvelope<TBody>
+      const header = data.message?.header
 
       if (header?.status_code !== 200) {
         throw new MxmApiError(header?.status_code ?? 0, header?.hint)
       }
 
-      return data.message.body
+      return data.message?.body as TBody
     } finally {
       clearTimeout(timeoutId)
       externalSignal?.removeEventListener('abort', onExternalAbort)
@@ -332,8 +390,10 @@ export class Musixmatch {
     if (manualToken) return manualToken
 
     const url = this.buildUrl(ENDPOINTS.TOKEN, { app_id: APP_ID })
-    const body = await this.apiGet(url)
-    return body.user_token
+    const body = await this.apiGet<TokenResponseBody>(url)
+    const token = safeText(body.user_token)
+    if (!token) throw new MxmApiError(0, 'Missing user token')
+    return token
   }
 
   async resetToken(hard = false): Promise<void> {
@@ -404,7 +464,7 @@ export class Musixmatch {
     endpoint: string,
     params: Record<string, string | undefined>,
     signal?: AbortSignal
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       const token = await this.getToken()
       const url = this.buildUrl(endpoint, {
@@ -777,23 +837,30 @@ export class Musixmatch {
 
       const lines = subtitleItems
         .map((item) => {
+          const entry = item as {
+            time?: { total?: number; start?: number }
+            total?: unknown
+            start?: unknown
+            milliseconds?: unknown
+            text?: unknown
+            text_display?: unknown
+            text_highlighted?: unknown
+            lyrics?: unknown
+            line?: unknown
+          }
           const seconds =
-            safeNumber(
-              (item['time'] as { total?: number } | undefined)?.total
-            ) ??
-            safeNumber(
-              (item['time'] as { start?: number } | undefined)?.start
-            ) ??
-            safeNumber(item['total']) ??
-            safeNumber(item['start']) ??
-            safeNumber(item['milliseconds'])
+            safeNumber(entry.time?.total) ??
+            safeNumber(entry.time?.start) ??
+            safeNumber(entry.total) ??
+            safeNumber(entry.start) ??
+            safeNumber(entry.milliseconds)
 
           const line = this.norm(
-            safeText(item['text']) ||
-              safeText(item['text_display']) ||
-              safeText(item['text_highlighted']) ||
-              safeText(item['lyrics']) ||
-              safeText(item['line'])
+            safeText(entry.text) ||
+              safeText(entry.text_display) ||
+              safeText(entry.text_highlighted) ||
+              safeText(entry.lyrics) ||
+              safeText(entry.line)
           )
 
           if (!line) return null
@@ -1025,7 +1092,7 @@ export class Musixmatch {
     target: SearchTarget,
     signal?: AbortSignal
   ): Promise<CandidateTrack[]> {
-    const body = await this.callMxm(
+    const body = (await this.callMxm(
       ENDPOINTS.SEARCH,
       {
         page_size: String(MAX_SEARCH_RESULTS),
@@ -1038,9 +1105,9 @@ export class Musixmatch {
           : target.rawQuery || target.title
       },
       signal
-    )
+    )) as SearchResponseBody
 
-    const trackList = body?.track_list
+    const trackList = body.track_list
     if (!Array.isArray(trackList) || !trackList.length) return []
 
     const ranked = trackList
@@ -1094,8 +1161,11 @@ export class Musixmatch {
       )
     ])
 
-    const subtitles = (subtitleBody as any)?.subtitle?.subtitle_body ?? null
-    const lyrics = (lyricsBody as any)?.lyrics?.lyrics_body ?? null
+    const subtitles =
+      (subtitleBody as SubtitleResponseBody | null)?.subtitle?.subtitle_body ??
+      null
+    const lyrics =
+      (lyricsBody as LyricsResponseBody | null)?.lyrics?.lyrics_body ?? null
 
     return subtitles || lyrics ? { subtitles, lyrics } : null
   }

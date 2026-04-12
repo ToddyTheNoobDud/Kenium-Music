@@ -7,6 +7,7 @@ import {
 } from 'seyfert'
 import { _functions } from '../events/interactionCreate'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
 
 interface GrabPlayer {
   position?: number
@@ -141,9 +142,9 @@ export default class Grab extends Command {
           flags: 64
         })
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Grab Command Error:', error)
-      if (error?.code === 10065) return
+      if (getErrorCode(error) === 10065) return
 
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)

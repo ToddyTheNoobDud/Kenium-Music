@@ -5,6 +5,7 @@ import {
   Options,
   SubCommand
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { createEmbed, handlePlaylistAutocomplete } from '../../shared/utils'
 import {
   getDatabase,
@@ -14,12 +15,15 @@ import {
 import { getContextTranslations } from '../../utils/i18n'
 
 const playlistsCollection = getPlaylistsCollection()
-@Declare({
-  name: 'delete',
-  description: '🗑️ Delete a playlist'
-})
-// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
-@Options({
+
+type PlaylistDeleteTextLike = {
+  notFound?: string
+  notFoundDesc?: string
+  deleted?: string
+  deletedDesc?: string
+}
+
+const options = {
   name: createStringOption({
     description: 'Playlist name',
     required: true,
@@ -28,12 +32,21 @@ const playlistsCollection = getPlaylistsCollection()
       return handlePlaylistAutocomplete(interaction, playlistsCollection)
     }
   })
-} as any)
+}
+@Declare({
+  name: 'delete',
+  description: '🗑️ Delete a playlist'
+})
+@Options(options as unknown as OptionsRecord)
 export class DeleteCommand extends SubCommand {
   async run(ctx: CommandContext) {
     const { name: playlistName } = ctx.options as { name: string }
     const userId = ctx.author.id
-    const t = getContextTranslations(ctx)
+    const t = (
+      getContextTranslations(ctx) as {
+        playlist?: { delete?: PlaylistDeleteTextLike }
+      }
+    ).playlist?.delete
 
     const playlist = playlistsCollection.findOne(
       {
@@ -48,11 +61,11 @@ export class DeleteCommand extends SubCommand {
         embeds: [
           createEmbed(
             'error',
-            t.playlist?.delete?.notFound || 'Playlist Not Found',
-            (
-              t.playlist?.delete?.notFoundDesc ||
-              'No playlist named "{name}" exists!'
-            ).replace('{name}', playlistName)
+            t?.notFound || 'Playlist Not Found',
+            (t?.notFoundDesc || 'No playlist named "{name}" exists!').replace(
+              '{name}',
+              playlistName
+            )
           )
         ],
         flags: 64
@@ -69,11 +82,11 @@ export class DeleteCommand extends SubCommand {
 
     const embed = createEmbed(
       'success',
-      t.playlist?.delete?.deleted || 'Playlist Deleted',
-      (
-        t.playlist?.delete?.deletedDesc ||
-        'Successfully deleted playlist "{name}"'
-      ).replace('{name}', playlistName)
+      t?.deleted || 'Playlist Deleted',
+      (t?.deletedDesc || 'Successfully deleted playlist "{name}"').replace(
+        '{name}',
+        playlistName
+      )
     )
     return ctx.write({ embeds: [embed], flags: 64 })
   }

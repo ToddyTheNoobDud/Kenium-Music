@@ -14,12 +14,79 @@ const BATCH_DELAY = 500
 const STARTUP_DELAY = 6000
 const AQUA_RETRY_DELAY = 30000
 
+type LoggerLike = {
+  info: (...args: unknown[]) => void
+  warn: (...args: unknown[]) => void
+  error: (...args: unknown[]) => void
+}
+
+type ManagedPlayerLike = {
+  destroy?: () => unknown
+}
+
+type GuildMemberLike = {
+  nickname?: string | null
+  user?: { username?: string | null }
+  edit?: (options: { nick: string }) => Promise<unknown>
+}
+
+type ChannelLike = {
+  type?: number
+}
+
+type GuildLike = {
+  name?: string
+  members?: {
+    me?: GuildMemberLike
+  }
+  channels: {
+    fetch: (channelId: string) => Promise<ChannelLike | null>
+  }
+}
+
+type SettingsLike = {
+  _id?: string
+  guildId?: string
+  voiceChannelId?: string | null
+  textChannelId?: string | null
+  twentyFourSevenEnabled?: boolean
+}
+
+type DiscordApiErrorLike = {
+  body?: { code?: unknown }
+  response?: { code?: unknown }
+  metadata?: {
+    response?: { code?: unknown }
+    code?: unknown
+    detail?: unknown
+  }
+  message?: unknown
+  code?: unknown
+}
+
+type BotReadyClient = Parameters<typeof updatePresence>[0] &
+  Parameters<typeof createPlayerConnection>[0] & {
+    botId?: string
+    aqua: Parameters<typeof createPlayerConnection>[0]['aqua'] & {
+      initiated?: boolean
+      leastUsedNodes?: unknown[]
+      players?: {
+        get: (guildId: string) => ManagedPlayerLike | undefined
+      }
+      init: (botId: string) => Promise<unknown>
+    }
+    logger: LoggerLike
+    guilds: {
+      fetch: (guildId: string) => Promise<unknown>
+    }
+  }
+
 let settingsCollection: ReturnType<typeof getSettingsCollection> | null = null
-let clientInstance: any = null
+let clientInstance: BotReadyClient | null = null
 let autoJoinStarted = false
 let aquaRetryTimer: NodeJS.Timeout | null = null
 
-const extractDiscordApiCode = (err: any): number | null => {
+const extractDiscordApiCode = (err: DiscordApiErrorLike): number | null => {
   const candidates = [
     err?.body?.code,
     err?.response?.code,
@@ -47,14 +114,16 @@ const getSettings = () => {
   return settingsCollection
 }
 
-const hasReadyAqua = (client: any) =>
+const hasReadyAqua = (client: BotReadyClient) =>
   !!(
-    client?.aqua?.initiated &&
-    Array.isArray(client?.aqua?.leastUsedNodes) &&
+    client.aqua?.initiated &&
+    Array.isArray(client.aqua?.leastUsedNodes) &&
     client.aqua.leastUsedNodes.length > 0
   )
 
-const updateNickname = async (guild: any) => {
+const updateNickname = async (guild: {
+  members?: { me?: GuildMemberLike }
+}) => {
   const botMember = guild.members?.me
   if (!botMember) return
 
@@ -62,7 +131,7 @@ const updateNickname = async (guild: any) => {
   if (currentNick.includes(NICKNAME_SUFFIX)) return
 
   try {
-    await botMember.edit({ nick: currentNick + NICKNAME_SUFFIX })
+    await botMember.edit?.({ nick: currentNick + NICKNAME_SUFFIX })
   } catch {}
 }
 
@@ -73,7 +142,7 @@ const disable247ForGuild = async (guildId: string, reason: string) => {
     }
 
     const player = clientInstance?.aqua?.players?.get(guildId)
-    if (player?.destroy) player.destroy()
+    player?.destroy?.()
 
     clientInstance?.logger?.info(
       `[24/7] Disabled for guild ${guildId}: ${reason}`
@@ -100,8 +169,8 @@ const clearInvalidTextChannel = async (
   }
 }
 
-const processGuild = async (client: any, settings: any) => {
-  const guildId = String(settings?._id || settings?.guildId || '')
+const processGuild = async (client: BotReadyClient, settings: SettingsLike) => {
+  const guildId = String(settings._id || settings.guildId || '')
   if (!guildId) return
 
   const voiceChannelId = settings.voiceChannelId
@@ -112,34 +181,35 @@ const processGuild = async (client: any, settings: any) => {
     return
   }
 
-  const guild = await client.guilds.fetch(guildId).catch(async (err: any) => {
-    const apiCode = extractDiscordApiCode(err)
+  const guild = await client.guilds.fetch(guildId).catch((err: unknown) => {
+    const apiCode = extractDiscordApiCode(err as DiscordApiErrorLike)
     if (apiCode === 10004 || apiCode === 50001 || apiCode === 50013) {
       client.logger.warn(
         `[24/7] Guild ${guildId} is inaccessible (${apiCode}). Removing invalid 24/7 settings.`
       )
-      await disable247ForGuild(guildId, `Guild fetch failed ${apiCode}`)
+      void disable247ForGuild(guildId, `Guild fetch failed ${apiCode}`)
       return null
     }
 
     client.logger.warn(
-      `[24/7] Failed to fetch guild ${guildId}: ${err?.message || err}`
+      `[24/7] Failed to fetch guild ${guildId}: ${err instanceof Error ? err.message : String(err)}`
     )
     return null
   })
 
-  if (!guild) {
-    return
-  }
+  if (!guild) return
+  const guildLike = guild as GuildLike
 
   const [voiceChannel, textChannel] = await Promise.all([
-    guild.channels.fetch(voiceChannelId).catch(() => null),
-    textChannelId ? guild.channels.fetch(textChannelId).catch(() => null) : null
+    guildLike.channels.fetch(voiceChannelId).catch(() => null),
+    textChannelId
+      ? guildLike.channels.fetch(textChannelId).catch(() => null)
+      : null
   ])
 
   if (!voiceChannel || (voiceChannel.type !== 2 && voiceChannel.type !== 13)) {
     client.logger.warn(
-      `[24/7] ${guild.name} (${guildId}): Voice channel ${voiceChannelId} is invalid or missing.`
+      `[24/7] ${guildLike.name} (${guildId}): Voice channel ${voiceChannelId} is invalid or missing.`
     )
     await disable247ForGuild(
       guildId,
@@ -152,10 +222,10 @@ const processGuild = async (client: any, settings: any) => {
   const canUseText =
     !!textChannel &&
     !!textChannelId &&
-    validTextTypes.includes((textChannel as any).type)
+    validTextTypes.includes(textChannel.type ?? -1)
   if (textChannelId && !canUseText) {
     client.logger.warn(
-      `[24/7] ${guild.name} (${guildId}): Text channel ${textChannelId} is invalid/missing. Proceeding with voice only.`
+      `[24/7] ${guildLike.name} (${guildId}): Text channel ${textChannelId} is invalid/missing. Proceeding with voice only.`
     )
     await clearInvalidTextChannel(guildId, textChannelId)
   }
@@ -169,21 +239,23 @@ const processGuild = async (client: any, settings: any) => {
 
   try {
     await Promise.all([
-      createPlayerConnection(client, {
-        guildId,
-        voiceChannel: voiceChannelId,
-        ...(canUseText ? { textChannel: textChannelId } : {})
-      }),
-      updateNickname(guild)
+      Promise.resolve(
+        createPlayerConnection(client, {
+          guildId,
+          voiceChannel: voiceChannelId,
+          ...(canUseText ? { textChannel: textChannelId } : {})
+        })
+      ),
+      updateNickname(guildLike)
     ])
-  } catch (err: any) {
+  } catch (err) {
     client.logger.warn(
-      `[24/7] Failed to create player for ${guildId}: ${err?.message || err}`
+      `[24/7] Failed to create player for ${guildId}: ${err instanceof Error ? err.message : String(err)}`
     )
   }
 }
 
-const processAutoJoin = async (client: any) => {
+const processAutoJoin = async (client: BotReadyClient) => {
   if (autoJoinStarted) return
   if (!hasReadyAqua(client)) {
     client.logger.warn(
@@ -208,7 +280,7 @@ const processAutoJoin = async (client: any) => {
         'twentyFourSevenEnabled'
       ]
     }
-  )
+  ) as SettingsLike[]
 
   if (!enabled?.length) {
     client.logger.info('[24/7] No guilds found to rejoin.')
@@ -224,17 +296,19 @@ const processAutoJoin = async (client: any) => {
     client.logger.info(
       `[24/7] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}...`
     )
-    await Promise.allSettled(batch.map((s: any) => processGuild(client, s)))
+    await Promise.allSettled(
+      batch.map((settings) => processGuild(client, settings))
+    )
 
     if (i + BATCH_SIZE < enabled.length) {
-      await new Promise((r) => setTimeout(r, BATCH_DELAY))
+      await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY))
     }
   }
 
   client.logger.info('[24/7] Startup auto-join process finished.')
 }
 
-const scheduleAquaRetry = (client: any) => {
+const scheduleAquaRetry = (client: BotReadyClient) => {
   if (aquaRetryTimer) clearTimeout(aquaRetryTimer)
   aquaRetryTimer = setTimeout(() => {
     aquaRetryTimer = null
@@ -243,8 +317,8 @@ const scheduleAquaRetry = (client: any) => {
   aquaRetryTimer.unref?.()
 }
 
-const tryInitAqua = async (client: any) => {
-  if (!client?.botId) return false
+const tryInitAqua = async (client: BotReadyClient) => {
+  if (!client.botId) return false
   if (hasReadyAqua(client)) return true
   try {
     await client.aqua.init(client.botId)
@@ -253,9 +327,9 @@ const tryInitAqua = async (client: any) => {
       setTimeout(() => void processAutoJoin(client), STARTUP_DELAY)
     }
     return true
-  } catch (err: any) {
+  } catch (err) {
     client.logger.warn(
-      `[Aqua] Init failed: ${err?.message || err}. Retrying in ${AQUA_RETRY_DELAY / 1000}s.`
+      `[Aqua] Init failed: ${err instanceof Error ? err.message : String(err)}. Retrying in ${AQUA_RETRY_DELAY / 1000}s.`
     )
     scheduleAquaRetry(client)
     return false
@@ -265,22 +339,23 @@ const tryInitAqua = async (client: any) => {
 export default createEvent({
   data: { once: true, name: 'botReady' },
   run: async (user, client) => {
-    clientInstance = client
-    if (!client.botId) client.botId = user.id
+    const readyClient = client as unknown as BotReadyClient
+    clientInstance = readyClient
+    if (!readyClient.botId) readyClient.botId = user.id
 
-    await tryInitAqua(client)
-    updatePresence(client as any)
-    client.logger.info(`${user.username} is ready`)
+    await tryInitAqua(readyClient)
+    updatePresence(readyClient)
+    readyClient.logger.info(`${user.username} is ready`)
 
     const purged = purgeInvalidSettings()
     if (purged > 0) {
-      client.logger.info(
+      readyClient.logger.info(
         `[24/7] Purged ${purged} malformed guild settings from database.`
       )
     }
 
-    if (hasReadyAqua(client)) {
-      setTimeout(() => void processAutoJoin(client), STARTUP_DELAY)
+    if (hasReadyAqua(readyClient)) {
+      setTimeout(() => void processAutoJoin(readyClient), STARTUP_DELAY)
     }
   }
 })

@@ -8,7 +8,14 @@ import {
   Options,
   SubCommand
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { ICONS } from '../../shared/constants'
+import type {
+  PlayerLike,
+  ResolveResultLike,
+  TrackLike,
+  UserLike
+} from '../../shared/helperTypes'
 import { getOrCreatePlayer } from '../../shared/player'
 import type { Track } from '../../shared/types'
 import {
@@ -25,12 +32,60 @@ const playlistsCollection = getPlaylistsCollection()
 const tracksCollection = getTracksCollection()
 const MAX_RESOLVE_CONCURRENCY = 6
 
+type PlaylistTrackDoc = Pick<Track, 'uri' | 'source' | 'identifier'>
+
+type ResolvedQueueTrack = TrackLike
+
+type PlaylistResolverLike = {
+  resolve: (opts: {
+    query: string
+    requester: UserLike
+    source?: string
+  }) => Promise<ResolveResultLike<ResolvedQueueTrack> & { loadType?: string }>
+}
+
+type PlaylistPlayTextLike = {
+  notFound?: string
+  notFoundDesc?: string
+  empty?: string
+  emptyDesc?: string
+  noVoiceChannel?: string
+  noVoiceChannelDesc?: string
+  loadFailed?: string
+  loadFailedDesc?: string
+  shuffling?: string
+  playing?: string
+  playlist?: string
+  loaded?: string
+  duration?: string
+  channel?: string
+  mode?: string
+  shuffled?: string
+  sequential?: string
+  inQueue?: string
+  playFailed?: string
+  playFailedDesc?: string
+}
+
+const options = {
+  playlist: createStringOption({
+    description: 'Playlist name to play',
+    required: true,
+    autocomplete: async (interaction) =>
+      handlePlaylistAutocomplete(interaction, playlistsCollection)
+  }),
+  shuffle: createBooleanOption({
+    description: 'Whether to shuffle tracks before playing',
+    required: false
+  })
+}
+
 const _functions = {
   async resolveTrack(
-    aqua: { resolve: (opts: any) => Promise<any> },
-    track: { uri?: string; source?: string; identifier?: string },
-    requester: { id: string; username: string }
-  ): Promise<Track | null> {
+    aqua: PlaylistResolverLike,
+    track: PlaylistTrackDoc,
+    requester: UserLike
+  ): Promise<ResolvedQueueTrack | null> {
     const uri = track?.uri
     if (!uri) return null
 
@@ -41,7 +96,9 @@ const _functions = {
       const res = await aqua.resolve({
         query,
         requester,
-        source: sourceStr.includes('youtube') && !isUrl ? 'ytsearch' : undefined
+        ...(sourceStr.includes('youtube') && !isUrl
+          ? { source: 'ytsearch' }
+          : {})
       })
 
       const loadType = String(res?.loadType || '').toUpperCase()
@@ -49,22 +106,23 @@ const _functions = {
         return null
 
       const tracks = res.tracks
-      return Array.isArray(tracks) && tracks.length ? tracks[0] : null
+      const firstTrack = Array.isArray(tracks) ? tracks[0] : null
+      return firstTrack ?? null
     } catch {
       return null
     }
   },
 
-  async resolveTracksConcurrently<T>(
-    items: T[],
+  async resolveTracksConcurrently<TItem, TResult>(
+    items: TItem[],
     limit: number,
-    fn: (item: T, index: number) => Promise<T | null>
-  ): Promise<T[]> {
+    fn: (item: TItem, index: number) => Promise<TResult | null>
+  ): Promise<TResult[]> {
     const len = items.length
     if (!len) return []
 
     const cap = Math.min(limit > 0 ? limit : 1, len)
-    const results: (T | null)[] = new Array(len)
+    const results: Array<TResult | null> = new Array(len)
     let nextIndex = 0
 
     const getNextIndex = (): number => {
@@ -92,7 +150,7 @@ const _functions = {
 
     await Promise.all(workers)
 
-    return results.filter((result): result is T => result !== null)
+    return results.filter((result): result is TResult => result !== null)
   },
 
   getChannelName(vc: { channel: { name: string }; channelId: string }) {
@@ -115,19 +173,7 @@ const _functions = {
   name: 'play',
   description: '🎵 Play a playlist'
 })
-// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
-@Options({
-  playlist: createStringOption({
-    description: 'Playlist name to play',
-    required: true,
-    autocomplete: async (interaction) =>
-      handlePlaylistAutocomplete(interaction, playlistsCollection)
-  }),
-  shuffle: createBooleanOption({
-    description: 'Whether to shuffle tracks before playing',
-    required: false
-  })
-} as any)
+@Options(options as unknown as OptionsRecord)
 @Cooldown({ type: CooldownType.User, interval: 20000, uses: { default: 2 } })
 @Middlewares(['checkVoice'])
 export class PlayCommand extends SubCommand {
@@ -137,7 +183,10 @@ export class PlayCommand extends SubCommand {
       shuffle?: boolean
     }
 
-    const tp = getContextTranslations(ctx).playlist?.play
+    const translations = getContextTranslations(ctx) as {
+      playlist?: { play?: PlaylistPlayTextLike }
+    }
+    const tp = translations.playlist?.play
 
     const playlistDb = playlistsCollection.findOne(
       {
@@ -166,7 +215,7 @@ export class PlayCommand extends SubCommand {
         sort: { addedAt: 1, _id: 1 },
         fields: ['uri', 'source', 'identifier']
       }
-    )
+    ) as PlaylistTrackDoc[]
     if (!Array.isArray(dbTracks) || dbTracks.length === 0) {
       return _functions.writeError(
         ctx,
@@ -191,7 +240,15 @@ export class PlayCommand extends SubCommand {
         guildId: ctx.guildId as string,
         voiceChannel: voiceState.channelId,
         textChannel: ctx.channelId
-      })
+      }) as PlayerLike | undefined
+      if (!player) {
+        return _functions.editError(
+          ctx,
+          tp?.playFailed || 'Play Failed',
+          tp?.playFailedDesc ||
+            'Could not play playlist. Please try again later.'
+        )
+      }
 
       const total = dbTracks.length
       const tracks = shuffle ? shuffleArray(dbTracks.slice()) : dbTracks
@@ -212,7 +269,10 @@ export class PlayCommand extends SubCommand {
         )
       }
 
-      for (const tr of loadedTracks) player.queue.add(tr)
+      const queue = player.queue
+      for (const tr of loadedTracks) {
+        if (typeof queue?.add === 'function') queue.add(tr)
+      }
 
       try {
         playlistsCollection.update(
@@ -226,7 +286,7 @@ export class PlayCommand extends SubCommand {
         console.error('Database error updating playlist stats:', dbError)
       }
 
-      if (!player.playing && !player.paused) player.play().catch(() => {})
+      if (!player.playing && !player.paused) player.play?.().catch(() => {})
 
       const failedCount = total - loadedTracks.length
 
@@ -272,7 +332,7 @@ export class PlayCommand extends SubCommand {
               },
               {
                 name: `${ICONS.tracks} ${tp?.inQueue || 'In Queue'}`,
-                value: `${player.queue.size} track(s)`,
+                value: `${player.queue?.size ?? loadedTracks.length} track(s)`,
                 inline: true
               }
             ]

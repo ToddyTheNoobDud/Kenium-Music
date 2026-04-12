@@ -1,5 +1,4 @@
 // @ts-ignore bun runtime module
-// maybe in a future ill switch to JSONb, who knows, but the current doc usage with JSON is fast enough
 import { Database } from 'bun:sqlite'
 import { mkdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -45,7 +44,7 @@ function ensureBenchCopies() {
 
   const convert = new Database(jsonbPath)
   for (const table of tables) {
-    convert.exec(`UPDATE "${table}" SET doc = jsonb(doc)`)
+    convert.exec(`UPDATE "${table}" SET doc = jsonb(doc)`) 
   }
   convert.exec('VACUUM')
   convert.close()

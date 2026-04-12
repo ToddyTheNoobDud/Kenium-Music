@@ -5,8 +5,10 @@ import {
   Declare,
   Options,
   StringSelectMenu,
+  StringSelectOption,
   SubCommand
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { ButtonStyle } from 'seyfert/lib/types'
 import { ICONS, LIMITS } from '../../shared/constants'
 import {
@@ -25,28 +27,36 @@ import {
 const playlistsCollection = getPlaylistsCollection()
 const tracksCollection = getTracksCollection()
 
+const options = {
+  playlist: createStringOption({
+    description: 'Playlist name',
+    required: true,
+    autocomplete: async (interaction) =>
+      handlePlaylistAutocomplete(interaction, playlistsCollection)
+  })
+}
+
 function createSelectMenu(
   customId: string,
   placeholder: string,
-  opts: {
+  opts: Array<{
     label: string
     value: string
     description?: string
     emoji?: string
-  }[]
+  }>
 ) {
   const menu = new StringSelectMenu()
     .setCustomId(customId)
     .setPlaceholder(placeholder)
 
   for (const opt of opts) {
-    menu.addOption({
-      // @ts-expect-error
-      label: opt.label,
-      value: opt.value,
-      description: opt.description,
-      emoji: opt.emoji
-    })
+    const option = new StringSelectOption()
+      .setLabel(opt.label)
+      .setValue(opt.value)
+    if (opt.description) option.setDescription(opt.description)
+    if (opt.emoji) option.setEmoji(opt.emoji)
+    menu.addOption(option)
   }
 
   return new ActionRow().addComponents(menu)
@@ -63,17 +73,9 @@ function getSourceIcon(uri: string): string {
 
 @Declare({
   name: 'view',
-  description: '🎧 View your playlists or a specific playlist'
+  description: 'View your playlists or a specific playlist'
 })
-// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
-@Options({
-  playlist: createStringOption({
-    description: 'Playlist name',
-    required: true,
-    autocomplete: async (interaction) =>
-      handlePlaylistAutocomplete(interaction, playlistsCollection)
-  })
-} as any)
+@Options(options as unknown as OptionsRecord)
 export class ViewCommand extends SubCommand {
   async run(ctx: CommandContext) {
     const { playlist: playlistName } = ctx.options as { playlist?: string }
@@ -102,7 +104,7 @@ export class ViewCommand extends SubCommand {
         const embed = createEmbed(
           'info',
           'No Playlists',
-          'You haven’t created any playlists yet!',
+          'You have not created any playlists yet!',
           [
             {
               name: `${ICONS.info} Getting Started`,
@@ -126,23 +128,23 @@ export class ViewCommand extends SubCommand {
         'Your Playlists',
         `You have **${playlists.length}** playlist${playlists.length !== 1 ? 's' : ''}`
       )
-      playlists.slice(0, 10).forEach((p) => {
-        const duration = formatDuration(p.totalDuration || 0)
+      playlists.slice(0, 10).forEach((playlist) => {
+        const duration = formatDuration(playlist.totalDuration || 0)
         const lastMod = new Date(
-          p.lastModified || p.createdAt
+          playlist.lastModified || playlist.createdAt
         ).toLocaleDateString()
-        const trackCount = p.trackCount || 0
+        const trackCount = playlist.trackCount || 0
         embed.addFields({
-          name: `${ICONS.playlist} ${p.name}`,
-          value: `${ICONS.tracks} ${trackCount} tracks • ${ICONS.duration} ${duration}\n${ICONS.info} Modified: ${lastMod}`,
+          name: `${ICONS.playlist} ${playlist.name}`,
+          value: `${ICONS.tracks} ${trackCount} tracks - ${ICONS.duration} ${duration}\n${ICONS.info} Modified: ${lastMod}`,
           inline: true
         })
       })
 
-      const selectOptions = playlists.slice(0, 25).map((p) => ({
-        label: p.name,
-        value: p.name,
-        description: `${p.trackCount || 0} tracks • ${formatDuration(p.totalDuration || 0)}`,
+      const selectOptions = playlists.slice(0, 25).map((playlist) => ({
+        label: playlist.name,
+        value: playlist.name,
+        description: `${playlist.trackCount || 0} tracks - ${formatDuration(playlist.totalDuration || 0)}`,
         emoji: ICONS.playlist
       }))
       const components =
@@ -208,13 +210,11 @@ export class ViewCommand extends SubCommand {
       return ctx.write({ embeds: [embed], flags: 64 })
     }
 
-    // Implement server-side pagination for better performance
     const page = 1
     const pageSize = LIMITS.PAGE_SIZE || 10
     const totalPages = Math.max(1, Math.ceil(totalTracks / pageSize))
     const startIdx = (page - 1) * pageSize
 
-    // Only load the tracks for the current page to save memory
     const tracks = getPlaylistTracks(playlist._id, {
       limit: pageSize,
       skip: startIdx,
@@ -250,27 +250,28 @@ export class ViewCommand extends SubCommand {
     )
 
     const trackList = tracks
-      .map((t, i) => {
-        const pos = String(startIdx + i + 1).padStart(2, '0')
-        const duration = formatDuration(t.duration || 0)
-        const source = getSourceIcon(t.uri)
-        return `\`${pos}.\` **${t.title}**\n     ${ICONS.artist} ${t.author || 'Unknown'} • ${ICONS.duration} ${duration} ${source}`
+      .map((track, index) => {
+        const pos = String(startIdx + index + 1).padStart(2, '0')
+        const duration = formatDuration(track.duration || 0)
+        const source = getSourceIcon(track.uri)
+        return `\`${pos}.\` **${track.title}**\n     ${ICONS.artist} ${track.author || 'Unknown'} - ${ICONS.duration} ${duration} ${source}`
       })
       .join('\n\n')
 
-    if (trackList)
+    if (trackList) {
       embed.addFields({
         name: `${ICONS.music} Tracks (Page ${page}/${totalPages})`,
         value: trackList,
         inline: false
       })
+    }
 
-    const track = tracks[0]
-    const firstVideoId = extractYouTubeId(track?.uri || '')
-    if (firstVideoId)
+    const firstVideoId = extractYouTubeId(tracks[0]?.uri || '')
+    if (firstVideoId) {
       embed.setThumbnail(
         `https://img.youtube.com/vi/${firstVideoId}/maxresdefault.jpg`
       )
+    }
 
     const actions = createButtons([
       {
@@ -294,13 +295,11 @@ export class ViewCommand extends SubCommand {
           {
             id: `playlist_prev_${page}_${playlistName}_${userId}`,
             label: 'Previous',
-            emoji: '◀️',
             disabled: page === 1
           },
           {
             id: `playlist_next_${page}_${playlistName}_${userId}`,
             label: 'Next',
-            emoji: '▶️',
             disabled: page === totalPages
           }
         ])

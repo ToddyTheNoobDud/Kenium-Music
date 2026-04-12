@@ -8,6 +8,7 @@ import {
   Options,
   SubCommand
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import type { Playlist, Track } from '../../shared/types'
 import {
   getDatabase,
@@ -18,46 +19,87 @@ import { getContextTranslations } from '../../utils/i18n'
 import { generateSortableId } from '../../utils/simpleDB'
 
 const ICONS = {
-  music: '🎵',
-  tracks: '💿',
-  import: '📥',
-  playlist: '🎧',
-  duration: '⏱️'
-}
+  music: 'Music',
+  tracks: 'Tracks',
+  import: 'Import',
+  playlist: 'Playlist',
+  duration: 'Duration'
+} as const
 
 const COLORS = {
   primary: 0x100e09,
   success: 0x100e09,
   error: 0x100e09
-}
+} as const
 
 const playlistsCollection = getPlaylistsCollection()
 const tracksCollection = getTracksCollection()
 
+type EmbedVariant = 'default' | 'success' | 'error'
+
+type PlaylistImportTextLike = {
+  invalidFile?: string
+  invalidFileDesc?: string
+  nameConflict?: string
+  nameConflictDesc?: string
+  importFailed?: string
+  importFailedDesc?: string
+  imported?: string
+  name?: string
+  tracks?: string
+  duration?: string
+}
+
+type ImportedTrackLike = {
+  title?: string
+  uri?: string
+  author?: string
+  duration?: number
+  source?: string
+  identifier?: string
+}
+
+type ImportedPlaylistPayload = {
+  name?: string
+  description?: string
+  tracks?: ImportedTrackLike[]
+}
+
+const options = {
+  file: createAttachmentOption({
+    description: 'Playlist file to import',
+    required: true
+  }),
+  name: createStringOption({
+    description: 'Custom playlist name (optional)',
+    required: false
+  })
+}
+
 function createEmbed(
-  type: string,
+  type: EmbedVariant,
   title: string,
   description: string | null = null,
   fields: Array<{ name: string; value: string; inline?: boolean }> = []
 ) {
-  const colors = {
+  const colors: Record<EmbedVariant, number> = {
     default: COLORS.primary,
     success: COLORS.success,
     error: COLORS.error
   }
 
-  const icons = {
+  const icons: Record<EmbedVariant, string> = {
     default: ICONS.music,
-    success: '✨',
-    error: '❌'
+    success: 'Success',
+    error: 'Error'
   }
 
   const embed = new Embed()
-    .setColor((colors as any)[type] || colors.default)
-    .setTitle(`${(icons as any)[type] || icons.default} ${title}`)
+    .setColor(colors[type])
+    .setTitle(`${icons[type]} ${title}`)
     .setTimestamp()
     .setFooter({
-      text: `${ICONS.tracks} Kenium Music • Playlist System`,
+      text: `${ICONS.tracks} Kenium Music - Playlist System`,
       iconUrl:
         'https://toddythenoobdud.github.io/0a0f3c0476c8b495838fa6a94c7e88c2.png'
     })
@@ -87,51 +129,60 @@ function formatDuration(ms: number): string {
 }
 
 function determineSource(uri: string): string {
-  if (!uri) return '❓ Unknown'
-  if (uri.includes('youtube.com') || uri.includes('youtu.be'))
-    return '🎥 YouTube'
-  if (uri.includes('spotify.com')) return '🟢 Spotify'
-  if (uri.includes('soundcloud.com')) return '🟠 SoundCloud'
-  return '🎵 Music'
+  if (!uri) return 'Unknown'
+  if (uri.includes('youtube.com') || uri.includes('youtu.be')) return 'YouTube'
+  if (uri.includes('spotify.com')) return 'Spotify'
+  if (uri.includes('soundcloud.com')) return 'SoundCloud'
+  return 'Music'
+}
+
+function isValidTrack(
+  track: ImportedTrackLike
+): track is Required<
+  Pick<ImportedTrackLike, 'title' | 'uri' | 'author' | 'duration'>
+> &
+  ImportedTrackLike {
+  return (
+    typeof track.title === 'string' &&
+    typeof track.uri === 'string' &&
+    typeof track.author === 'string' &&
+    typeof track.duration === 'number'
+  )
 }
 
 @Declare({
   name: 'import',
-  description: '📥 Import a playlist from a JSON file'
+  description: 'Import a playlist from a JSON file'
 })
-// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
-@Options({
-  file: createAttachmentOption({
-    description: 'Playlist file to import',
-    required: true
-  }),
-  name: createStringOption({
-    description: 'Custom playlist name (optional)',
-    required: false
-  })
-} as any)
+@Options(options as unknown as OptionsRecord)
 export class ImportCommand extends SubCommand {
   async run(ctx: CommandContext) {
-    const { file: attachment } = ctx.options as { file: Attachment }
-    const { name: providedName } = ctx.options as { name: string }
+    const { file: attachment, name: providedName } = ctx.options as {
+      file: Attachment
+      name?: string
+    }
     const userId = ctx.author.id
-    const t = getContextTranslations(ctx)
+    const t = (
+      getContextTranslations(ctx) as {
+        playlist?: { import?: PlaylistImportTextLike }
+      }
+    ).playlist?.import
 
     try {
       const response = await fetch(attachment.url)
-      const data = (await response.json()) as any
+      const data = (await response.json()) as ImportedPlaylistPayload
 
       if (
         !data.name ||
         typeof data.name !== 'string' ||
         !Array.isArray(data.tracks)
       ) {
-        return await ctx.write({
+        return ctx.write({
           embeds: [
             createEmbed(
               'error',
-              t.playlist?.import?.invalidFile || 'Invalid File',
-              t.playlist?.import?.invalidFileDesc ||
+              t?.invalidFile || 'Invalid File',
+              t?.invalidFileDesc ||
                 'The file must contain a valid playlist with name and tracks array.'
             )
           ],
@@ -139,22 +190,13 @@ export class ImportCommand extends SubCommand {
         })
       }
 
-      const validTracks = (data.tracks as any[]).filter((track: any) => {
-        return (
-          track &&
-          typeof track.title === 'string' &&
-          typeof track.uri === 'string' &&
-          typeof track.author === 'string' &&
-          typeof track.duration === 'number'
-        )
-      })
-
+      const validTracks = data.tracks.filter(isValidTrack)
       if (validTracks.length === 0) {
-        return await ctx.write({
+        return ctx.write({
           embeds: [
             createEmbed(
               'error',
-              t.playlist?.import?.invalidFile || 'Invalid File',
+              t?.invalidFile || 'Invalid File',
               'The playlist contains no valid tracks.'
             )
           ],
@@ -163,19 +205,18 @@ export class ImportCommand extends SubCommand {
       }
 
       const playlistName = providedName || data.name
-
       const existing = playlistsCollection.findOne({
         userId,
         name: playlistName
       })
       if (existing) {
-        return await ctx.write({
+        return ctx.write({
           embeds: [
             createEmbed(
               'error',
-              t.playlist?.import?.nameConflict || 'Name Conflict',
+              t?.nameConflict || 'Name Conflict',
               (
-                t.playlist?.import?.nameConflictDesc ||
+                t?.nameConflictDesc ||
                 'A playlist named "{name}" already exists!'
               ).replace('{name}', playlistName)
             )
@@ -186,7 +227,7 @@ export class ImportCommand extends SubCommand {
 
       const timestamp = new Date().toISOString()
       const totalDuration = validTracks.reduce(
-        (sum: number, track: any) => sum + (track.duration || 0),
+        (sum, track) => sum + (track.duration || 0),
         0
       )
 
@@ -200,13 +241,13 @@ export class ImportCommand extends SubCommand {
             createdAt: timestamp,
             lastModified: timestamp,
             playCount: 0,
-            totalDuration: totalDuration,
+            totalDuration,
             trackCount: validTracks.length
           }
 
           playlistsCollection.insert(insertedPlaylist)
 
-          const tracksToInsert: Track[] = validTracks.map((track: any) => ({
+          const tracksToInsert: Track[] = validTracks.map((track) => ({
             _id: generateSortableId(),
             playlistId: insertedPlaylist._id,
             title: track.title,
@@ -223,14 +264,13 @@ export class ImportCommand extends SubCommand {
         })
       } catch (dbError) {
         console.error('Database error importing playlist:', dbError)
-        return await ctx.write({
+        return ctx.write({
           embeds: [
             createEmbed(
               'error',
-              t.playlist?.import?.importFailed || 'Import Failed',
+              t?.importFailed || 'Import Failed',
               (
-                t.playlist?.import?.importFailedDesc ||
-                'Could not save playlist: {error}'
+                t?.importFailedDesc || 'Could not save playlist: {error}'
               ).replace(
                 '{error}',
                 dbError instanceof Error ? dbError.message : 'Unknown error'
@@ -243,21 +283,21 @@ export class ImportCommand extends SubCommand {
 
       const embed = createEmbed(
         'success',
-        t.playlist?.import?.imported || 'Playlist Imported',
+        t?.imported || 'Playlist Imported',
         null,
         [
           {
-            name: `${ICONS.playlist} ${t.playlist?.import?.name || 'Name'}`,
+            name: `${ICONS.playlist} ${t?.name || 'Name'}`,
             value: `**${playlistName}**`,
             inline: true
           },
           {
-            name: `${ICONS.tracks} ${t.playlist?.import?.tracks || 'Tracks'}`,
-            value: `${validTracks.length}`,
+            name: `${ICONS.tracks} ${t?.tracks || 'Tracks'}`,
+            value: String(validTracks.length),
             inline: true
           },
           {
-            name: `${ICONS.duration} ${t.playlist?.import?.duration || 'Duration'}`,
+            name: `${ICONS.duration} ${t?.duration || 'Duration'}`,
             value: formatDuration(totalDuration),
             inline: true
           }
@@ -271,11 +311,13 @@ export class ImportCommand extends SubCommand {
         embeds: [
           createEmbed(
             'error',
-            t.playlist?.import?.importFailed || 'Import Failed',
+            t?.importFailed || 'Import Failed',
             (
-              t.playlist?.import?.importFailedDesc ||
-              'Could not import playlist: {error}'
-            ).replace('{error}', (error as Error).message)
+              t?.importFailedDesc || 'Could not import playlist: {error}'
+            ).replace(
+              '{error}',
+              error instanceof Error ? error.message : 'Unknown error'
+            )
           )
         ],
         flags: 64

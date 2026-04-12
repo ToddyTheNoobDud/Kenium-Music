@@ -1,5 +1,5 @@
 export interface Playlist {
-  [key: string]: any
+  [key: string]: unknown
   _id: string
   userId: string
   name: string
@@ -12,7 +12,7 @@ export interface Playlist {
 }
 
 export interface Track {
-  [key: string]: any
+  [key: string]: unknown
   _id: string
   playlistId: string
   title: string

@@ -7,11 +7,12 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { EMBED_COLOR } from '../shared/constants'
 import { getContextLanguage } from '../utils/i18n'
-import { safeDefer } from '../utils/interactions'
+import { getErrorCode, safeDefer } from '../utils/interactions'
 
-@Options({
+const options = {
   filters: createStringOption({
     description: 'Choose an audio filter preset.',
     required: true,
@@ -32,8 +33,10 @@ import { safeDefer } from '../utils/interactions'
       { name: 'Vaporwave', value: 'vaporwave' },
       { name: 'Clear', value: 'clear' }
     ] as const
-  }) as any
-})
+  })
+}
+
+@Options(options as unknown as OptionsRecord)
 
 @Declare({
   name: 'filters',
@@ -140,7 +143,7 @@ export default class FiltersCommand extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if ((error as any)?.code === 10065) return
+      if (getErrorCode(error) === 10065) return
       console.error('filters command error:', error)
     }
   }

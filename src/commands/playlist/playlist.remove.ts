@@ -6,6 +6,7 @@ import {
   Options,
   SubCommand
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { ICONS } from '../../shared/constants'
 import {
   createEmbed,
@@ -24,12 +25,21 @@ import { getContextTranslations } from '../../utils/i18n'
 const playlistsCollection = getPlaylistsCollection()
 const tracksCollection = getTracksCollection()
 
-@Declare({
-  name: 'remove',
-  description: '❌ Remove a track from a playlist'
-})
-// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
-@Options({
+type PlaylistRemoveTextLike = {
+  notFound?: string
+  notFoundDesc?: string
+  invalidIndex?: string
+  invalidIndexDesc?: string
+  removeFailed?: string
+  removeFailedDesc?: string
+  removed?: string
+  removedTrack?: string
+  artist?: string
+  source?: string
+  remaining?: string
+}
+
+const options = {
   playlist: createStringOption({
     description: 'Playlist name',
     required: true,
@@ -45,7 +55,13 @@ const tracksCollection = getTracksCollection()
       return handleTrackIndexAutocomplete(interaction, playlistsCollection)
     }
   })
-} as any)
+}
+
+@Declare({
+  name: 'remove',
+  description: '❌ Remove a track from a playlist'
+})
+@Options(options as unknown as OptionsRecord)
 export class RemoveCommand extends SubCommand {
   async run(ctx: CommandContext) {
     const { playlist: playlistName, index } = ctx.options as {
@@ -53,7 +69,11 @@ export class RemoveCommand extends SubCommand {
       index: number
     }
     const userId = ctx.author.id
-    const t = getContextTranslations(ctx)
+    const t = (
+      getContextTranslations(ctx) as {
+        playlist?: { remove?: PlaylistRemoveTextLike }
+      }
+    ).playlist?.remove
 
     const playlist = playlistsCollection.findOne(
       {
@@ -70,11 +90,11 @@ export class RemoveCommand extends SubCommand {
         embeds: [
           createEmbed(
             'error',
-            t.playlist?.remove?.notFound || 'Playlist Not Found',
-            (
-              t.playlist?.remove?.notFoundDesc ||
-              'No playlist named "{name}" exists!'
-            ).replace('{name}', playlistName)
+            t?.notFound || 'Playlist Not Found',
+            (t?.notFoundDesc || 'No playlist named "{name}" exists!').replace(
+              '{name}',
+              playlistName
+            )
           )
         ],
         flags: 64
@@ -91,10 +111,9 @@ export class RemoveCommand extends SubCommand {
         embeds: [
           createEmbed(
             'error',
-            t.playlist?.remove?.invalidIndex || 'Invalid Index',
+            t?.invalidIndex || 'Invalid Index',
             (
-              t.playlist?.remove?.invalidIndexDesc ||
-              'Track index must be between 1 and {max}'
+              t?.invalidIndexDesc || 'Track index must be between 1 and {max}'
             ).replace('{max}', String(totalTracks))
           )
         ],
@@ -115,7 +134,7 @@ export class RemoveCommand extends SubCommand {
         embeds: [
           createEmbed(
             'error',
-            t.playlist?.remove?.notFound || 'Track Not Found',
+            t?.notFound || 'Track Not Found',
             'Could not find the track at that index.'
           )
         ],
@@ -148,11 +167,8 @@ export class RemoveCommand extends SubCommand {
         embeds: [
           createEmbed(
             'error',
-            t.playlist?.remove?.removeFailed || 'Remove Failed',
-            (
-              t.playlist?.remove?.removeFailedDesc ||
-              'Could not remove track: {error}'
-            ).replace(
+            t?.removeFailed || 'Remove Failed',
+            (t?.removeFailedDesc || 'Could not remove track: {error}').replace(
               '{error}',
               dbError instanceof Error ? dbError.message : 'Unknown error'
             )
@@ -162,33 +178,28 @@ export class RemoveCommand extends SubCommand {
       })
     }
 
-    const embed = createEmbed(
-      'success',
-      t.playlist?.remove?.removed || 'Track Removed',
-      null,
-      [
-        {
-          name: `${ICONS.remove} ${t.playlist?.remove?.removedTrack || 'Removed'}`,
-          value: `**${removedTrack.title}**`,
-          inline: false
-        },
-        {
-          name: `${ICONS.artist} ${t.playlist?.remove?.artist || 'Artist'}`,
-          value: removedTrack.author || 'Unknown',
-          inline: true
-        },
-        {
-          name: `${ICONS.source} ${t.playlist?.remove?.source || 'Source'}`,
-          value: removedTrack.source || 'Unknown',
-          inline: true
-        },
-        {
-          name: `${ICONS.tracks} ${t.playlist?.remove?.remaining || 'Remaining'}`,
-          value: `${totalTracks - 1} tracks`,
-          inline: true
-        }
-      ]
-    )
+    const embed = createEmbed('success', t?.removed || 'Track Removed', null, [
+      {
+        name: `${ICONS.remove} ${t?.removedTrack || 'Removed'}`,
+        value: `**${removedTrack.title}**`,
+        inline: false
+      },
+      {
+        name: `${ICONS.artist} ${t?.artist || 'Artist'}`,
+        value: removedTrack.author || 'Unknown',
+        inline: true
+      },
+      {
+        name: `${ICONS.source} ${t?.source || 'Source'}`,
+        value: removedTrack.source || 'Unknown',
+        inline: true
+      },
+      {
+        name: `${ICONS.tracks} ${t?.remaining || 'Remaining'}`,
+        value: `${totalTracks - 1} tracks`,
+        inline: true
+      }
+    ])
 
     const videoId = extractYouTubeId(removedTrack.uri)
     if (videoId) {

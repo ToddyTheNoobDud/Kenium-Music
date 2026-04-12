@@ -6,6 +6,7 @@ import {
   LocalesT,
   Options
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { getGuildLang, setGuildLang } from '../utils/db_helper'
 import {
   getContextLanguage,
@@ -14,26 +15,41 @@ import {
 } from '../utils/i18n'
 import { safeDefer } from '../utils/interactions'
 
+type LanguageTextLike = {
+  success?: {
+    settingAlradySet?: string
+    languageSet?: string
+  }
+  errors?: {
+    databaseError?: string
+    general?: string
+  }
+}
+
+type LanguageOptions = {
+  language: string
+}
+
 const options = {
   language: createStringOption({
     description: 'Choose the language used for this server.',
     required: true,
     choices: getLanguageChoices()
   })
-} as any
+}
 
 const _functions = {
   handleLanguageSet: async (
-    ctx: CommandContext<typeof options>,
+    ctx: CommandContext,
     lang: string
   ): Promise<void> => {
     const currentLang = getContextLanguage(ctx)
-    const currentTranslations = ctx.t.get(currentLang)
+    const currentTranslations = ctx.t.get(currentLang) as LanguageTextLike
 
     if (getGuildLang(ctx.guildId || '') === lang) {
       await ctx.editOrReply({
         content:
-          (currentTranslations as any).success?.settingAlradySet ||
+          currentTranslations.success?.settingAlradySet ||
           'The language is already set to that option.',
         flags: 64
       })
@@ -41,13 +57,13 @@ const _functions = {
     }
 
     const success = setGuildLang(ctx.guildId || '', lang)
-    const t = ctx.t.get(lang)
+    const t = ctx.t.get(lang) as LanguageTextLike
     const displayName = getLanguageDisplayName(lang)
     const successBool = success !== undefined && success !== null
     const content = successBool
-      ? (t as any).success?.languageSet?.replace('{lang}', displayName) ||
+      ? t.success?.languageSet?.replace('{lang}', displayName) ||
         `Language set to ${displayName}`
-      : (t as any).errors?.databaseError || 'Failed to save settings'
+      : t.errors?.databaseError || 'Failed to save settings'
 
     await ctx.editOrReply({ content, flags: 64 })
   }
@@ -59,11 +75,9 @@ const _functions = {
   defaultMemberPermissions: ['Administrator']
 })
 @LocalesT('commands.language.name', 'commands.language.description')
-@Options(options)
+@Options(options as unknown as OptionsRecord)
 export default class LanguageCommand extends Command {
-  public override async run(
-    ctx: CommandContext<typeof options>
-  ): Promise<void> {
+  public override async run(ctx: CommandContext): Promise<void> {
     if (!(await safeDefer(ctx, true))) return
 
     if (!ctx.guildId) {
@@ -75,11 +89,12 @@ export default class LanguageCommand extends Command {
     }
 
     try {
-      await _functions.handleLanguageSet(ctx, (ctx.options as any).language)
+      const { language } = ctx.options as LanguageOptions
+      await _functions.handleLanguageSet(ctx, language)
     } catch (error) {
       console.error('Error in language command:', error)
       const currentLang = getContextLanguage(ctx)
-      const t = ctx.t.get(currentLang)
+      const t = ctx.t.get(currentLang) as LanguageTextLike
       await ctx.editOrReply({
         content: t.errors?.general || 'An error occurred',
         flags: 64

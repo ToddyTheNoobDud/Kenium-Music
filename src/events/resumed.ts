@@ -4,7 +4,14 @@ export default createEvent({
   data: { name: 'resumed', once: false },
   run: async (_args, client) => {
     const players = client.aqua?.players
-    if (!players?.size) return
+    if (
+      !players ||
+      typeof players.size !== 'number' ||
+      players.size <= 0 ||
+      typeof players.values !== 'function'
+    ) {
+      return
+    }
 
     for (const player of players.values()) {
       const vcId = player.voiceChannel ?? player._lastVoiceChannel
@@ -20,12 +27,15 @@ export default createEvent({
       }
 
       if (player.nowPlayingMessage) {
-        const fetched = await client.messages
-          .fetch(
-            player.nowPlayingMessage.id,
-            player.nowPlayingMessage.channelId
-          )
-          .catch(() => null)
+        const fetched =
+          typeof client.messages?.fetch === 'function'
+            ? await client.messages
+                .fetch(
+                  player.nowPlayingMessage.id,
+                  player.nowPlayingMessage.channelId
+                )
+                .catch(() => null)
+            : null
         player.nowPlayingMessage = fetched || null
       }
 
@@ -51,7 +61,7 @@ export default createEvent({
             self_deaf: player.deaf,
             self_mute: player.mute
           })
-          setTimeout(() => {
+          const inner: NodeJS.Timeout = setTimeout(() => {
             if (player.destroyed) return
             player.connect({
               guildId: player.guildId,
@@ -60,6 +70,7 @@ export default createEvent({
               mute: player.mute
             })
           }, 250)
+          inner?.unref?.()
         }
       }, 2500)
       t?.unref?.()

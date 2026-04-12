@@ -27,6 +27,18 @@ const BANNER_CACHE = {
   ttl: 7 * 24 * 60 * 60 * 1000 // 7 days
 }
 
+type StatusClientLike = CommandContext['client'] & {
+  me?: {
+    fetch?: () => Promise<{
+      bannerURL?: (options?: { size?: number }) => string | null
+    } | null>
+  }
+}
+
+type NodeStatsLike = {
+  playingPlayers?: number
+}
+
 function formatDates(totalSeconds: number): string {
   const SECONDS_IN_DAY = 86400
   const SECONDS_IN_HOUR = 3600
@@ -61,7 +73,7 @@ function formatMemoryUsage(bytes: number): string {
   return `${bytes.toFixed(2)} ${units[i]}`
 }
 
-async function getBannerURL(client: any): Promise<string | null> {
+async function getBannerURL(client: StatusClientLike): Promise<string | null> {
   const now = Date.now()
 
   // Check if we have a cached banner and it's still valid
@@ -72,7 +84,7 @@ async function getBannerURL(client: any): Promise<string | null> {
   try {
     // Only fetch if cache is expired or empty
     const user = await client.me?.fetch()
-    const bannerURL = user?.bannerURL({ size: 4096 }) || null
+    const bannerURL = user?.bannerURL?.({ size: 4096 }) || null
 
     // Update cache
     BANNER_CACHE.url = bannerURL
@@ -115,7 +127,7 @@ export default class statusCmds extends Command {
     })
 
     const activeNode = sortedNodes.find((node) => node.connected)
-    const { stats = {} as any } = activeNode || {}
+    const stats = (activeNode?.stats || {}) as NodeStatsLike
     const { playingPlayers = 0 } = stats
 
     const guilds = Array.from(client.cache.guilds?.values() || [])
@@ -125,10 +137,10 @@ export default class statusCmds extends Command {
     )
 
     // Use cached banner URL
-    const bannerURL = await getBannerURL(client)
+    const bannerURL = await getBannerURL(client as StatusClientLike)
 
     const embed = new Embed()
-      .setColor(0x532e68)
+      .setColor(0x100e09)
       .setDescription(
         `Hello, I am **${client.me?.username}**, a music bot created by [\`mushroom0162\`](https://github.com/ToddyTheNoobDud). Here is my current status:`
       )

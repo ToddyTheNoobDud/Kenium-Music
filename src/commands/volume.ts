@@ -7,16 +7,20 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
 
-@Options({
+const options = {
   volume: createIntegerOption({
     description: 'Volume, min is 0 and max is 200',
     max_value: 200,
     min_value: 0,
     required: true
   })
-} as any)
+}
+
+@Options(options as unknown as OptionsRecord)
 
 @Declare({
   name: 'volume',
@@ -38,7 +42,7 @@ export default class Volume extends Command {
         return ctx.write({
           embeds: [
             new Embed()
-              .setColor('#0x100e09')
+              .setColor(0x100e09)
               .setDescription(
                 t.volume?.rangeError || 'Use an integer between 0 and 200.'
               )
@@ -57,12 +61,12 @@ export default class Volume extends Command {
                 volume.toString()
               )
             )
-            .setColor('#0x100e09')
+            .setColor(0x100e09)
         ],
         flags: 64
       })
-    } catch (error: any) {
-      if (error?.code === 10065) return
+    } catch (error: unknown) {
+      if (getErrorCode(error) === 10065) return
     }
   }
 }

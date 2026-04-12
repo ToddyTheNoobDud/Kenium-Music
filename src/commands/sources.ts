@@ -1,7 +1,7 @@
 import { Command, type CommandContext, Container, Declare } from 'seyfert'
 import { lru } from 'tiny-lru'
 import { getContextLanguage } from '../utils/i18n'
-import { safeDefer } from '../utils/interactions'
+import { getErrorCode, safeDefer } from '../utils/interactions'
 
 const SOURCE_CACHE = lru<{
   fingerprint: string
@@ -34,6 +34,36 @@ const SOURCE_LABELS: Record<string, string> = Object.freeze({
   youtube: 'YouTube'
 })
 
+type NodeInfoLike = {
+  version?: {
+    semver?: string
+  }
+  buildTime?: string | number
+  sourceManagers?: unknown[]
+}
+
+type NodeLike = {
+  name?: string
+  host?: string
+  connected?: boolean
+  info?: NodeInfoLike | null
+  options?: {
+    name?: string
+  }
+  rest?: {
+    getInfo?: () => Promise<NodeInfoLike>
+  }
+}
+
+type SourcesSummary = {
+  nodeName: string
+  version: string
+  sources: string[]
+}
+
+type TextComponent = { type: 10; content: string }
+type DividerComponent = { type: 14; divider: true; spacing: 1 | 2 }
+
 const formatSourceName = (source: string): string => {
   const normalized = source.trim().toLowerCase()
   if (!normalized) return 'Unknown'
@@ -46,7 +76,9 @@ const formatSourceName = (source: string): string => {
     .join(' ')
 }
 
-async function getNodeSources(node: any) {
+async function getNodeSources(
+  node: NodeLike | null | undefined
+): Promise<SourcesSummary> {
   if (!node) {
     return {
       nodeName: 'Unknown',
@@ -115,20 +147,22 @@ const groupSources = (sources: string[]) =>
     })
   })).filter((group) => group.sources.length > 0)
 
-const getTargetNodes = (ctx: CommandContext): any[] => {
+const getTargetNodes = (ctx: CommandContext): NodeLike[] => {
   const player = ctx.client.aqua.players.get(ctx.guildId as string)
-  const playerNode = player?.nodes
+  const playerNode = player?.nodes as NodeLike | undefined
 
   if (playerNode) return [playerNode]
 
-  const allNodes = [...(ctx.client.aqua.nodeMap.values() as Iterable<any>)]
+  const allNodes = Array.from(
+    ctx.client.aqua.nodeMap.values() as Iterable<NodeLike>
+  )
   const connectedNodes = allNodes.filter((node) => node?.connected)
 
   return connectedNodes.length > 0 ? connectedNodes : allNodes
 }
 
 function createSourcesContainer(
-  summary: { nodeName: string; version: string; sources: string[] },
+  summary: SourcesSummary,
   options: {
     isCurrentPlayerNode: boolean
     page: number
@@ -147,7 +181,7 @@ function createSourcesContainer(
     : 'available node'
   const compactSummary = `**${summary.nodeName}** • \`${summary.version}\` • \`${summary.sources.length}\` sources • ${scope}`
 
-  const components: any[] = [
+  const components: Array<TextComponent | DividerComponent> = [
     { type: 10, content: title },
     { type: 14, divider: true, spacing: 1 },
     { type: 10, content: compactSummary }
@@ -234,8 +268,8 @@ export default class SourcesCommand extends Command {
         components: containers,
         flags: COMPONENTS_V2_FLAG
       })
-    } catch (error: any) {
-      if (error?.code === 10065) return
+    } catch (error: unknown) {
+      if (getErrorCode(error) === 10065) return
     }
   }
 }

@@ -1,12 +1,19 @@
 import { Container } from 'seyfert'
 import { MUSIC_PLATFORMS, PLAYBACK_E } from './emojis'
+import type {
+  AvatarClientLike,
+  PlayerLike,
+  QueueLike,
+  TrackLike
+} from './helperTypes'
 
 const MAX_TITLE_LENGTH = 60
 const FLAGS_UPDATE = 36864
 const TITLE_SANITIZE_RE = /[^\w\s\-_.]/g
 const WORD_START_RE = /\b\w/g
 
-export const getQueueLength = (queue: any) => queue?.size ?? queue?.length ?? 0
+export const getQueueLength = (queue?: QueueLike<TrackLike> | null) =>
+  queue?.size ?? queue?.length ?? 0
 
 export const formatTime = (ms: number | undefined) => {
   const s = Math.floor((ms || 0) / 1000)
@@ -40,7 +47,11 @@ export const getPlatform = (uri: string | undefined) => {
   return MUSIC_PLATFORMS.youtube
 }
 
-export const createNowPlayingEmbed = (player: any, track: any, client: any) => {
+export const createNowPlayingEmbed = (
+  player: PlayerLike,
+  track: TrackLike,
+  client: AvatarClientLike
+) => {
   const { position = 0, volume = 0, loop, paused } = player || {}
   const { title = 'Unknown', uri = '', length = 0, requester } = track || {}
 
@@ -48,6 +59,19 @@ export const createNowPlayingEmbed = (player: any, track: any, client: any) => {
   const volumeIcon = volume === 0 ? '🔇' : volume < 50 ? '🔈' : '🔊'
   const loopIcon = loop === 'track' ? '🔂' : loop === 'queue' ? '🔁' : '▶️'
   const displayTitle = titleCaseWordBoundaries(truncateText(title))
+  const me = client?.me as
+    | {
+        avatarURL?: (options?: {
+          extension?: string
+        }) => string | null | undefined
+      }
+    | undefined
+  const artworkUrl =
+    track?.info?.artworkUrl ||
+    (typeof me?.avatarURL === 'function'
+      ? me.avatarURL({ extension: 'webp' })
+      : undefined) ||
+    ''
 
   return new Container({
     components: [
@@ -71,10 +95,7 @@ export const createNowPlayingEmbed = (player: any, track: any, client: any) => {
         accessory: {
           type: 11,
           media: {
-            url:
-              track?.info?.artworkUrl ||
-              client?.me?.avatarURL?.({ extension: 'webp' }) ||
-              ''
+            url: artworkUrl
           }
         }
       },
@@ -114,7 +135,10 @@ export const createNowPlayingEmbed = (player: any, track: any, client: any) => {
   })
 }
 
-export const updateNowPlayingEmbed = async (player: any, client: any) => {
+export const updateNowPlayingEmbed = async (
+  player: PlayerLike,
+  client: AvatarClientLike
+) => {
   const msg = player?.nowPlayingMessage
   if (!msg?.edit || !player?.current) {
     if (player) player.nowPlayingMessage = null

@@ -10,6 +10,7 @@ import {
 } from 'seyfert'
 import { _functions } from '../events/interactionCreate'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
 
 @Cooldown({
   type: CooldownType.User,
@@ -102,8 +103,8 @@ export default class nowplayngcmds extends Command {
 
       const embed = this.createNowPlayingUI(player, track, client)
       await ctx.editOrReply({ components: [embed], flags: 64 | 32768 })
-    } catch (error: any) {
-      if (error?.code === 10065) return
+    } catch (error: unknown) {
+      if (getErrorCode(error) === 10065) return
     }
   }
 }

@@ -8,6 +8,7 @@ import {
   Middlewares
 } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
+import type { InteractionLike } from '../shared/helperTypes'
 import { getContextLanguage } from '../utils/i18n'
 import { safeDefer } from '../utils/interactions'
 
@@ -115,6 +116,64 @@ interface ReleaseNotes {
   removed: string[]
 }
 
+type ChangelogTextLike = {
+  invite?: {
+    github?: unknown
+    supportServer?: unknown
+  }
+  common?: {
+    next?: unknown
+    unknown?: unknown
+  }
+  errors?: {
+    general?: unknown
+    commandError?: unknown
+  }
+  github?: {
+    title?: unknown
+    label?: unknown
+  }
+  supportServer?: {
+    title?: unknown
+    label?: unknown
+  }
+  changelog?: unknown
+  commits?: unknown
+}
+
+type ChangelogInteractionLike = InteractionLike & {
+  client: CommandContext['client']
+  deferUpdate?: () => Promise<unknown>
+  editOrReply: (payload: {
+    components: Container[]
+    flags: number
+  }) => Promise<unknown>
+}
+
+type ChangelogMessageLike = {
+  edit: (payload: { components: [] }) => Promise<unknown>
+  createComponentCollector: (options: {
+    filter: (i: { user: { id: string } }) => boolean
+    idle: number
+    onStop: () => void
+  }) => {
+    run: (
+      customId: string,
+      handler: (interaction: ChangelogInteractionLike) => Promise<void>
+    ) => void
+  }
+}
+
+type PageContextLike = {
+  client: CommandContext['client']
+}
+
+const isAbortError = (error: unknown) =>
+  typeof error === 'object' &&
+  error !== null &&
+  'name' in error &&
+  (error as { name?: unknown }).name === 'AbortError'
+
 function asText(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value : fallback
 }
@@ -141,7 +200,7 @@ async function fetchCommits(): Promise<Record<string, unknown>[]> {
     return (await response.json()) as Record<string, unknown>[]
   } catch (error: unknown) {
     clearTimeout(timeoutId)
-    if ((error as any)?.name === 'AbortError') {
+    if (isAbortError(error)) {
       throw new Error('Request timeout')
     }
     throw error
@@ -181,9 +240,8 @@ function createReleaseBlock(
 }
 
 function createChangelogPage(
-  ctx: CommandContext,
-  // biome-ignore lint/suspicious/noExplicitAny: library requirement
-  thele: any,
+  ctx: PageContextLike,
+  thele: ChangelogTextLike,
   currentPage: 'changelog' | 'commits' = 'changelog'
 ): Container {
   const notes = CONFIG.BOT.RELEASE_NOTES
@@ -253,10 +311,9 @@ function createChangelogPage(
 }
 
 function createCommitsPage(
-  ctx: CommandContext,
+  ctx: PageContextLike,
   commits: GithubCommit[],
-  // biome-ignore lint/suspicious/noExplicitAny: library requirement
-  thele: any,
+  thele: ChangelogTextLike,
   currentPage: 'changelog' | 'commits' = 'commits'
 ): Container {
   const githubLabel = asText(thele?.invite?.github, 'GitHub')
@@ -329,8 +386,7 @@ function createCommitsPage(
 
 function createNavigationButtons(
   currentPage: 'changelog' | 'commits',
-  // biome-ignore lint/suspicious/noExplicitAny: library requirement
-  thele: any
+  thele: ChangelogTextLike
 ) {
   const changelog = asText(thele?.changelog, 'Changelog')
   const commits = asText(thele?.commits, 'Commits')
@@ -379,8 +435,7 @@ export default class Changelog extends Command {
 
   public override async run(ctx: CommandContext): Promise<void> {
     const lang = getContextLanguage(ctx)
-    // biome-ignore lint/suspicious/noExplicitAny: library requirement
-    const thele = ctx.t.get(lang) as any
+    const thele = ctx.t.get(lang) as unknown as ChangelogTextLike
 
     try {
       if (!(await safeDefer(ctx, true))) return
@@ -400,7 +455,7 @@ export default class Changelog extends Command {
 
       // Set up button interaction handler
       this.setupNavigationHandler(
-        message,
+        message as unknown as ChangelogMessageLike,
         ctx,
         commits as unknown as GithubCommit[],
         thele
@@ -438,12 +493,10 @@ export default class Changelog extends Command {
   }
 
   private setupNavigationHandler(
-    // biome-ignore lint/suspicious/noExplicitAny: library requirement
-    message: any,
+    message: ChangelogMessageLike,
     ctx: CommandContext,
     commits: GithubCommit[],
-    // biome-ignore lint/suspicious/noExplicitAny: library requirement
-    thele: any
+    thele: ChangelogTextLike
   ): void {
     const collector = message.createComponentCollector({
       filter: (i: { user: { id: string } }) =>
@@ -457,45 +510,47 @@ export default class Changelog extends Command {
 
     this.activeCollectors.add(collector)
 
-    // Handle changelog page button
-    // biome-ignore lint/suspicious/noExplicitAny: library requirement
-    collector.run('ignore_changelog_page', async (interaction: any) => {
-      try {
-        await interaction.deferUpdate()
-        const changelogContainer = createChangelogPage(
-          interaction,
-          thele,
-          'changelog'
-        )
+    collector.run(
+      'ignore_changelog_page',
+      async (interaction: ChangelogInteractionLike) => {
+        try {
+          await interaction.deferUpdate?.()
+          const changelogContainer = createChangelogPage(
+            interaction,
+            thele,
+            'changelog'
+          )
 
-        await interaction.editOrReply({
-          components: [changelogContainer],
-          flags: 64 | 32768
-        })
-      } catch (error) {
-        console.error('Navigation error:', error)
+          await interaction.editOrReply({
+            components: [changelogContainer],
+            flags: 64 | 32768
+          })
+        } catch (error) {
+          console.error('Navigation error:', error)
+        }
       }
-    })
+    )
 
-    // Handle commits page button
-    // biome-ignore lint/suspicious/noExplicitAny: library requirement
-    collector.run('ignore_commits_page', async (interaction: any) => {
-      try {
-        await interaction.deferUpdate()
-        const commitsContainer = createCommitsPage(
-          interaction,
-          commits,
-          thele,
-          'commits'
-        )
+    collector.run(
+      'ignore_commits_page',
+      async (interaction: ChangelogInteractionLike) => {
+        try {
+          await interaction.deferUpdate?.()
+          const commitsContainer = createCommitsPage(
+            interaction,
+            commits,
+            thele,
+            'commits'
+          )
 
-        await interaction.editOrReply({
-          components: [commitsContainer],
-          flags: 64 | 32768
-        })
-      } catch (error) {
-        console.error('Navigation error:', error)
+          await interaction.editOrReply({
+            components: [commitsContainer],
+            flags: 64 | 32768
+          })
+        } catch (error) {
+          console.error('Navigation error:', error)
+        }
       }
-    })
+    )
   }
 }

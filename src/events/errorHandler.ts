@@ -1,35 +1,32 @@
 const GLOBAL_HANDLER_FLAG = Symbol.for('kenium.errorHandlersRegistered')
 
-const handleEvent = (type: any, fn: any) => {
-  process.on(type, fn)
-}
+type ProcessWithFlags = NodeJS.Process & Record<symbol, boolean | undefined>
 
-const logEvent = (eventType: string, message: any, origin: any) => {
+const logEvent = (eventType: string, message: unknown, origin?: unknown) => {
   console.error(`${eventType} (Origin: ${origin}):`, message)
 }
 
-if (!(process as any)[GLOBAL_HANDLER_FLAG]) {
-  ;(process as any)[GLOBAL_HANDLER_FLAG] = true
+const flaggedProcess = process as ProcessWithFlags
 
-  handleEvent('unhandledRejection', (reason: any, origin: any) => {
-    logEvent('Unhandled Rejection', reason, origin)
+if (!flaggedProcess[GLOBAL_HANDLER_FLAG]) {
+  flaggedProcess[GLOBAL_HANDLER_FLAG] = true
+
+  process.on('unhandledRejection', (reason, promise) => {
+    logEvent('Unhandled Rejection', reason, promise)
   })
-  handleEvent('uncaughtException', (error: any, origin: any) =>
+  process.on('uncaughtException', (error, origin) => {
     logEvent('Uncaught Exception', error, origin)
+    process.exit(1)
+  })
+  process.on('warning', (warning) => logEvent('Warning', warning))
+  process.on('rejectionHandled', (promise) =>
+    logEvent('Rejection Handled', `Promise: ${String(promise)}`)
   )
-  handleEvent('warning', (warning: any, origin: any) =>
-    logEvent('Warning', warning, origin)
+  process.on('beforeExit', (code) =>
+    logEvent('Before Exit', `Code: ${String(code)}`)
   )
-  handleEvent('rejectionHandled', (promise: any, origin: any) =>
-    logEvent('Rejection Handled', `Promise: ${promise}`, origin)
-  )
-  handleEvent('beforeExit', (code: any, origin: any) =>
-    logEvent('Before Exit', `Code: ${code}`, origin)
-  )
-  handleEvent('exit', (code: any, origin: any) =>
-    logEvent('Exit', `Code: ${code}`, origin)
-  )
-  handleEvent('uncaughtExceptionMonitor', (error: any, origin: any) =>
+  process.on('exit', (code) => logEvent('Exit', `Code: ${String(code)}`))
+  process.on('uncaughtExceptionMonitor', (error, origin) =>
     logEvent('Uncaught Exception Monitor', error, origin)
   )
 }

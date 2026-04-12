@@ -31,6 +31,11 @@ const AVAILABLE_LANGUAGES: Record<string, string> = Object.freeze({
 
 const REPLACEMENT_REGEX = /\{(\w+)\}/g
 
+type TranslationValue = string | TranslationTree | undefined
+type TranslationTree = {
+  [key: string]: TranslationValue
+}
+
 export const _functions = {
   isValidLang: (lang: string) => VALID_LANGS.has(lang),
   getContextLang: (guildId: string | undefined): string => {
@@ -43,12 +48,14 @@ export const _functions = {
 export const getContextLanguage = (ctx: CommandContext): string =>
   _functions.getContextLang(ctx.guildId)
 
-export const getContextTranslations = (ctx: CommandContext): any => {
+export const getContextTranslations = (
+  ctx: CommandContext
+): TranslationTree => {
   const lang = getContextLanguage(ctx)
   try {
-    return ctx.t.get(lang)
+    return ctx.t.get(lang) as TranslationTree
   } catch {
-    return ctx.t.get('en')
+    return ctx.t.get('en') as TranslationTree
   }
 }
 
@@ -69,15 +76,19 @@ export const formatLocalizedString = (
   )
 
 export const safeTranslate = (
-  translations: any,
+  translations: TranslationTree,
   key: string,
   fallback = key
 ): string => {
   const keys = key.split('.')
-  let current = translations
+  let current: TranslationValue = translations
 
   for (const k of keys) {
-    if (current?.[k] !== undefined) {
+    if (
+      typeof current === 'object' &&
+      current !== null &&
+      current[k] !== undefined
+    ) {
       current = current[k]
     } else {
       return fallback

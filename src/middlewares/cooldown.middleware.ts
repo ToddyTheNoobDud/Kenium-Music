@@ -3,7 +3,10 @@ import { TimestampStyle } from 'seyfert/lib/common'
 
 export const cooldownMiddleware = createMiddleware<void>(
   async ({ context, next }) => {
-    const inCooldown = context.client.cooldown.context(context)
+    const cooldown = context.client.cooldown as unknown as {
+      context: (ctx: typeof context) => unknown
+    }
+    const inCooldown = cooldown.context(context)
 
     if (typeof inCooldown === 'number') {
       return context.write({

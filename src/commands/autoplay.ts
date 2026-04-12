@@ -6,6 +6,7 @@ import {
   Middlewares
 } from 'seyfert'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
 
 @Declare({
   name: 'autoplay',
@@ -32,7 +33,7 @@ export default class autoPlaycmd extends Command {
         : t?.player?.disabled || 'Autoplay has been **disabled**'
 
       const embed = new Embed()
-        .setColor(newState ? '#0x100e09' : '#0x100e09')
+        .setColor(newState ? 0x100e09 : 0x100e09)
         .setTitle(t.commands?.autoplay?.name || 'Autoplay Status')
         .setDescription(statusText)
         .setFooter({
@@ -42,8 +43,8 @@ export default class autoPlaycmd extends Command {
         .setTimestamp()
 
       await ctx.editOrReply({ embeds: [embed], flags: 64 })
-    } catch (error: any) {
-      if (error?.code === 10065) return
+    } catch (error: unknown) {
+      if (getErrorCode(error) === 10065) return
     }
   }
 }

@@ -7,6 +7,7 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import {
   ensurePlayerForVoice,
   maybeStartPlayback,
@@ -15,14 +16,16 @@ import {
 import { getContextLanguage } from '../utils/i18n'
 import { safeDefer } from '../utils/interactions'
 
-@Options({
+const options = {
   tts: createStringOption({
     description: 'Generate and play a TTS message on the voice channel',
     required: true,
     max_length: 500,
     min_length: 1
   })
-} as any)
+}
+
+@Options(options as unknown as OptionsRecord)
 @Middlewares(['checkVoice'])
 @Declare({
   name: 'tts',

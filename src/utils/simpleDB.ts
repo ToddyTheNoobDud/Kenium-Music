@@ -278,7 +278,7 @@ const _functions = {
 
 export const generateSortableId = (): string => _functions.generateId()
 
-class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
+class SQLiteCollection<T extends Record<string, unknown>> extends EventEmitter {
   private readonly db: SQLiteDB
   private readonly table: string
   private readonly qtable: string
@@ -402,9 +402,11 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
           .split('.')
           .reduce<unknown>(
             (acc, key) =>
-              _functions.isPlainObject(acc) || Array.isArray(acc)
-                ? (acc as any)?.[key]
-                : undefined,
+              Array.isArray(acc)
+                ? acc[Number(key)]
+                : _functions.isPlainObject(acc)
+                  ? acc[key]
+                  : undefined,
             doc
           )
       : doc[path]
@@ -760,26 +762,24 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
 
     _functions.runTx(this.txRunner, () => {
       for (const doc of items) {
-        const _id = (doc as any)._id || _functions.generateId()
+        const inputDoc = doc as T & Partial<Document> & { _id?: string }
+        const _id = inputDoc._id || _functions.generateId()
 
-        const shouldLookupCreatedAt =
-          !!(doc as any)._id && !(doc as any).createdAt
+        const shouldLookupCreatedAt = !!inputDoc._id && !inputDoc.createdAt
         const existing =
-          shouldLookupCreatedAt && (doc as any)._id
-            ? this.createdAtByIdStmt.get<{ createdAt: string }>(
-                (doc as any)._id
-              )
+          shouldLookupCreatedAt && inputDoc._id
+            ? this.createdAtByIdStmt.get<{ createdAt: string }>(inputDoc._id)
             : undefined
 
-        const createdAt = (doc as any).createdAt || existing?.createdAt || now
-        const updatedAt = (doc as any).updatedAt || now
+        const createdAt = inputDoc.createdAt || existing?.createdAt || now
+        const updatedAt = inputDoc.updatedAt || now
 
-        const full: T & Required<Document> = {
+        const full = {
           ...doc,
           _id,
           createdAt,
           updatedAt
-        }
+        } as T & Required<Document>
         const columnValues = this.getColumnValues(full)
 
         this.insertStmt.run(
@@ -797,7 +797,8 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
     if (changeData) {
       this.emit('change', 'insert', changeData)
     }
-    return isArray ? result : (result[0] as any)
+    const first = result[0] as T & Required<Document>
+    return isArray ? result : first
   }
 
   find(query: Query = {}, opts: FindOptions = {}): (T & Required<Document>)[] {
@@ -846,7 +847,7 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
 
     for (const row of rows) {
       if (usesDoc) {
-        const rawDoc = row['doc']
+        const rawDoc = (row as { doc?: unknown }).doc
         if (typeof rawDoc !== 'string') continue
         const doc = _functions.parseDoc(rawDoc)
         if (!doc) continue
@@ -1065,29 +1066,28 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
       if (ops.$set) Object.assign(next, ops.$set)
 
       if (ops.$inc) {
+        const mutable = next as Record<string, JsonValue | undefined>
         for (const [k, v] of Object.entries(ops.$inc)) {
-          ;(next as any)[k] =
-            (typeof (next as any)[k] === 'number'
-              ? ((next as any)[k] as number)
-              : 0) + v
+          const current = mutable[k]
+          mutable[k] = (typeof current === 'number' ? current : 0) + v
         }
       }
 
       if (ops.$push) {
+        const mutable = next as Record<string, JsonValue | undefined>
         for (const [k, v] of Object.entries(ops.$push)) {
-          const cur = (next as any)[k]
-          if (!Array.isArray(cur)) (next as any)[k] = [v]
+          const cur = mutable[k]
+          if (!Array.isArray(cur)) mutable[k] = [v]
           else (cur as JsonValue[]).push(v)
         }
       }
 
       if (ops.$pull) {
+        const mutable = next as Record<string, JsonValue | undefined>
         for (const [k, v] of Object.entries(ops.$pull)) {
-          const cur = (next as any)[k]
+          const cur = mutable[k]
           if (Array.isArray(cur))
-            (next as any)[k] = (cur as JsonValue[]).filter(
-              (x: JsonValue) => x !== v
-            )
+            mutable[k] = (cur as JsonValue[]).filter((x: JsonValue) => x !== v)
         }
       }
 
@@ -1169,7 +1169,10 @@ class SQLiteCollection<T extends Record<string, any>> extends EventEmitter {
 
 export class SimpleDB extends EventEmitter {
   private readonly db: SQLiteDB
-  private readonly collections = new Map<string, SQLiteCollection<any>>()
+  private readonly collections = new Map<
+    string,
+    SQLiteCollection<Record<string, unknown>>
+  >()
   private readonly cacheSize: number
 
   private _checkpointStmt?: SQLiteStmt
@@ -1273,12 +1276,12 @@ export class SimpleDB extends EventEmitter {
     }
   }
 
-  collection<T extends Record<string, any>>(
+  collection<T extends Record<string, unknown>>(
     name: string,
     options?: CollectionOptions
   ): SQLiteCollection<T> {
     const existing = this.collections.get(name)
-    if (existing) return existing as any
+    if (existing) return existing as unknown as SQLiteCollection<T>
 
     const col = new SQLiteCollection<T>(this.db, name, {
       cacheSize: options?.cacheSize ?? this.cacheSize,

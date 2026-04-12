@@ -1,8 +1,12 @@
 import { config } from 'seyfert'
 import 'dotenv/config'
 
+const env = process.env as NodeJS.ProcessEnv & {
+  token?: string
+}
+
 export default config.bot({
-  token: process.env.token ?? '',
+  token: env.token ?? '',
   locations: {
     base: './src',
     commands: 'commands',

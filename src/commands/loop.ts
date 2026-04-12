@@ -8,9 +8,11 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
 
-@Options({
+const options = {
   loop: createStringOption({
     description: 'select your loop mode',
     required: true,
@@ -19,8 +21,10 @@ import { getContextLanguage } from '../utils/i18n'
       { name: 'song', value: 'track' },
       { name: 'queue', value: 'queue' }
     ]
-  }) as any
-})
+  })
+}
+
+@Options(options as unknown as OptionsRecord)
 @Middlewares(['checkVoice', 'checkPlayer'])
 @Declare({
   name: 'loop',
@@ -63,7 +67,7 @@ export default class LoopCommand extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if ((error as any)?.code === 10065) return
+      if (getErrorCode(error) === 10065) return
     }
   }
 }

@@ -5,6 +5,7 @@ import {
   Options,
   SubCommand
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { ButtonStyle } from 'seyfert/lib/types'
 import { ICONS, LIMITS } from '../../shared/constants'
 import type { Playlist } from '../../shared/types'
@@ -15,28 +16,48 @@ import { generateSortableId } from '../../utils/simpleDB'
 
 const playlistsCollection = getPlaylistsCollection()
 
+type PlaylistCreateTextLike = {
+  invalidName?: string
+  nameTooLong?: string
+  exists?: string
+  alreadyExists?: string
+  limitReached?: string
+  maxPlaylists?: string
+  created?: string
+  name?: string
+  status?: string
+  readyForTracks?: string
+  addTracks?: string
+  viewPlaylist?: string
+}
+
+const options = {
+  name: createStringOption({ description: 'Playlist name', required: true })
+}
+
 @Declare({
   name: 'create',
-  description: '🎧 Create a new playlist'
+  description: 'Create a new playlist'
 })
-// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
-@Options({
-  name: createStringOption({ description: 'Playlist name', required: true })
-} as any)
+@Options(options as unknown as OptionsRecord)
 export class CreateCommand extends SubCommand {
   async run(ctx: CommandContext) {
     const { name } = ctx.options as { name: string }
     const userId = ctx.author.id
-    const t = getContextTranslations(ctx)
+    const t = (
+      getContextTranslations(ctx) as {
+        playlist?: { create?: PlaylistCreateTextLike }
+      }
+    ).playlist?.create
 
     if (name.length > LIMITS.MAX_NAME_LENGTH) {
       return ctx.write({
         embeds: [
           createEmbed(
             'error',
-            t.playlist?.create?.invalidName || 'Invalid Name',
+            t?.invalidName || 'Invalid Name',
             (
-              t.playlist?.create?.nameTooLong ||
+              t?.nameTooLong ||
               'Playlist name must be less than {maxLength} characters.'
             ).replace('{maxLength}', String(LIMITS.MAX_NAME_LENGTH))
           )
@@ -58,10 +79,9 @@ export class CreateCommand extends SubCommand {
         embeds: [
           createEmbed(
             'error',
-            t.playlist?.create?.exists || 'Playlist Exists',
+            t?.exists || 'Playlist Exists',
             (
-              t.playlist?.create?.alreadyExists ||
-              'A playlist named "{name}" already exists!'
+              t?.alreadyExists || 'A playlist named "{name}" already exists!'
             ).replace('{name}', name)
           )
         ],
@@ -76,9 +96,9 @@ export class CreateCommand extends SubCommand {
         embeds: [
           createEmbed(
             'error',
-            t.playlist?.create?.limitReached || 'Playlist Limit Reached',
+            t?.limitReached || 'Playlist Limit Reached',
             (
-              t.playlist?.create?.maxPlaylists ||
+              t?.maxPlaylists ||
               'You can only have a maximum of {max} playlists.'
             ).replace('{max}', String(LIMITS.MAX_PLAYLISTS))
           )
@@ -99,21 +119,21 @@ export class CreateCommand extends SubCommand {
       trackCount: 0
     }
 
-    playlistsCollection.insert(playlist as any)
+    playlistsCollection.insert(playlist)
 
     const embed = createEmbed(
       'success',
-      t.playlist?.create?.created || 'Playlist Created',
+      t?.created || 'Playlist Created',
       null,
       [
         {
-          name: `${ICONS.playlist} ${t.playlist?.create?.name || 'Name'}`,
+          name: `${ICONS.playlist} ${t?.name || 'Name'}`,
           value: `**${name}**`,
           inline: true
         },
         {
-          name: `${ICONS.star} ${t.playlist?.create?.status || 'Status'}`,
-          value: t.playlist?.create?.readyForTracks || 'Ready for tracks!',
+          name: `${ICONS.star} ${t?.status || 'Status'}`,
+          value: t?.readyForTracks || 'Ready for tracks!',
           inline: true
         }
       ]
@@ -122,13 +142,13 @@ export class CreateCommand extends SubCommand {
     const buttons = createButtons([
       {
         id: `add_track_${name}_${userId}`,
-        label: t.playlist?.create?.addTracks || 'Add Tracks',
+        label: t?.addTracks || 'Add Tracks',
         emoji: ICONS.add,
         style: ButtonStyle.Success
       },
       {
         id: `view_playlist_${name}_${userId}`,
-        label: t.playlist?.create?.viewPlaylist || 'View Playlist',
+        label: t?.viewPlaylist || 'View Playlist',
         emoji: ICONS.playlist,
         style: ButtonStyle.Primary
       }

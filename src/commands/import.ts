@@ -9,6 +9,7 @@ import {
   Options
 } from 'seyfert'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
 
 @Cooldown({
   type: CooldownType.User,
@@ -176,12 +177,12 @@ export default class importcmds extends Command {
       const resultEmbed = new Embed()
         .setTitle(completeTitle)
         .setDescription(description)
-        .setColor('#0x100e09')
+        .setColor(0x100e09)
         .setTimestamp()
 
       await ctx.editOrReply({ embeds: [resultEmbed], flags: 64 })
     } catch (error: unknown) {
-      if ((error as any)?.code === 10065) return
+      if (getErrorCode(error) === 10065) return
     }
   }
 }

@@ -14,7 +14,7 @@ import {
   resolveAndQueue
 } from '../shared/playback'
 import { getContextLanguage } from '../utils/i18n'
-import { safeDefer } from '../utils/interactions'
+import { getErrorCode, safeDefer } from '../utils/interactions'
 
 @Options({
   file: createAttachmentOption({
@@ -75,7 +75,7 @@ export default class PlayFile extends Command {
             embeds: [
               new Embed()
                 .setDescription(thele.player.noTrackFound)
-                .setColor('#0x100e09')
+                .setColor(0x100e09)
             ],
             flags: 64
           })
@@ -87,7 +87,7 @@ export default class PlayFile extends Command {
           embeds: [
             new Embed()
               .setDescription(thele.player.fileAdded)
-              .setColor('#0x100e09')
+              .setColor(0x100e09)
           ],
           flags: 64
         })
@@ -102,8 +102,8 @@ export default class PlayFile extends Command {
           flags: 64
         })
       }
-    } catch (error: any) {
-      if (error?.code === 10065) return
+    } catch (error: unknown) {
+      if (getErrorCode(error) === 10065) return
       await ctx.editOrReply({
         embeds: [
           new Embed()

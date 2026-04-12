@@ -1,5 +1,13 @@
 import { createEvent } from 'seyfert'
 import { ICONS, LIMITS } from '../shared/constants'
+import type {
+  AquaClientLike,
+  InteractionLike,
+  PlayerLike,
+  QueueLike,
+  ResolveResultLike,
+  TrackLike
+} from '../shared/helperTypes'
 import {
   formatTime,
   getPlatform,
@@ -20,6 +28,7 @@ import {
   getPlaylistTracks,
   getTracksCollection
 } from '../utils/db'
+import { isInteractionExpired, safeDefer } from '../utils/interactions'
 
 const VOLUME_STEP = 10
 const MAX_VOLUME = 100
@@ -29,6 +38,39 @@ const RESOLVE_CONCURRENCY = 5
 
 let _playlistsCol: ReturnType<typeof getPlaylistsCollection> | null = null
 let _tracksCol: ReturnType<typeof getTracksCollection> | null = null
+
+type ActionResult = {
+  message: string
+  shouldUpdate: boolean
+}
+
+type PlaylistButtonAction =
+  | 'play_playlist'
+  | 'shuffle_playlist'
+  | 'playlist_prev'
+  | 'playlist_next'
+
+type ParsedPlaylistButtonId = {
+  action: PlaylistButtonAction
+  playlistName: string
+  userId: string
+  page?: number
+}
+
+type StoredPlaylistTrackLike = {
+  uri?: string
+  title?: string
+  author?: string
+  duration?: number
+}
+
+type PlaylistSummaryLike = {
+  _id: string
+  description?: string
+  totalDuration?: number
+  playCount?: number
+  trackCount?: number
+}
 
 const playlistsCol = () => {
   if (!_playlistsCol) _playlistsCol = getPlaylistsCollection()
@@ -103,34 +145,44 @@ export const _functions = {
     return isValidId(id) ? id : null
   },
 
-  setPlayerVolume: (player: any, volume: number) => player?.setVolume?.(volume),
+  setPlayerVolume: (player: PlayerLike, volume: number) =>
+    player?.setVolume?.(volume),
 
-  addToQueueFront: (queue: any, item: any) => {
+  addToQueueFront: (
+    queue: QueueLike<TrackLike> | undefined,
+    item: TrackLike
+  ) => {
     if (!queue) return
-    if (typeof queue.unshift === 'function') queue.unshift(item)
-    else queue.add?.(item)?.catch?.(() => {})
-  },
+    if (typeof queue.unshift === 'function') {
+      queue.unshift(item)
+      return
+    }
 
-  safeDefer: async (interaction: any, flags = 64) => {
-    try {
-      await interaction.deferReply(flags)
-      return true
-    } catch {
-      try {
-        await interaction.deferReply({ flags })
-        return true
-      } catch {
-        return false
-      }
+    if (typeof queue.add !== 'function') return
+    const result = queue.add(item)
+    if (result && typeof result === 'object' && 'catch' in result) {
+      ;(result as Promise<unknown>).catch(() => {})
     }
   },
 
-  safeReply: (interaction: any, content: string | any) =>
-    interaction.editOrReply({ content }).catch(() => {}),
-  safeFollowup: (interaction: any, content: string | any) =>
-    interaction.followup({ content }).catch(() => {}),
+  safeReply: async (interaction: InteractionLike, content: string) => {
+    try {
+      if (typeof interaction.editOrReply === 'function') {
+        await interaction.editOrReply({ content })
+      }
+    } catch {}
+  },
+  safeFollowup: async (interaction: InteractionLike, content: string) => {
+    try {
+      if (typeof interaction.followup === 'function') {
+        await interaction.followup({ content })
+      }
+    } catch {}
+  },
 
-  parsePlaylistButtonId: (customId: any) => {
+  parsePlaylistButtonId: (
+    customId: string | null | undefined
+  ): ParsedPlaylistButtonId | null => {
     if (!customId) return null
     const parts = customId.split('_')
     if (parts.length < 3) return null
@@ -143,7 +195,7 @@ export const _functions = {
 
     if ((a0 === 'play' || a0 === 'shuffle') && a1 === 'playlist') {
       return {
-        action: `${a0}_${a1}`,
+        action: a0 === 'play' ? 'play_playlist' : 'shuffle_playlist',
         playlistName: parts.slice(2, -1).join('_'),
         userId
       }
@@ -152,10 +204,10 @@ export const _functions = {
     if (a0 === 'playlist' && (a1 === 'prev' || a1 === 'next')) {
       const page = Number(parts[2])
       return {
-        action: `playlist_${a1}`,
+        action: a1 === 'prev' ? 'playlist_prev' : 'playlist_next',
         playlistName: parts.slice(3, -1).join('_'),
         userId,
-        page: Number.isFinite(page) ? page : undefined
+        ...(Number.isFinite(page) ? { page } : {})
       }
     }
 
@@ -165,9 +217,11 @@ export const _functions = {
   updateNowPlayingEmbed,
 
   resolveTracksAndEnqueue: async (
-    tracks: any[],
-    resolveFn: (track: any) => Promise<any>,
-    enqueueFn: (track: any) => void,
+    tracks: StoredPlaylistTrackLike[],
+    resolveFn: (
+      track: StoredPlaylistTrackLike
+    ) => Promise<ResolveResultLike<TrackLike>>,
+    enqueueFn: (track: TrackLike) => void,
     limit = RESOLVE_CONCURRENCY
   ) => {
     const list = Array.isArray(tracks) ? tracks : []
@@ -176,14 +230,17 @@ export const _functions = {
       const settled = await Promise.allSettled(batch.map(resolveFn))
       for (const r of settled) {
         if (r.status !== 'fulfilled') continue
-        const track = (r.value as any)?.tracks?.[0]
+        const track = r.value?.tracks?.[0]
         if (track) enqueueFn(track)
       }
     }
   }
 }
 
-const adjustVolume = async (player: any, delta: number) => {
+const adjustVolume = async (
+  player: PlayerLike,
+  delta: number
+): Promise<ActionResult> => {
   const vol = _functions.clamp(
     (player?.volume || 0) + delta,
     MIN_VOLUME,
@@ -198,12 +255,12 @@ const adjustVolume = async (player: any, delta: number) => {
 
 const actionHandlers: Record<
   string,
-  (player: any) => { message: string; shouldUpdate: boolean } | Promise<any>
+  (player: PlayerLike) => ActionResult | Promise<ActionResult>
 > = {
-  volume_down: (player: any) => adjustVolume(player, -VOLUME_STEP),
-  volume_up: (player: any) => adjustVolume(player, VOLUME_STEP),
+  volume_down: (player: PlayerLike) => adjustVolume(player, -VOLUME_STEP),
+  volume_up: (player: PlayerLike) => adjustVolume(player, VOLUME_STEP),
 
-  previous: (player: any) => {
+  previous: (player: PlayerLike) => {
     if (!player?.previous)
       return { message: '❌ No previous track available', shouldUpdate: false }
     if (player.current) _functions.addToQueueFront(player.queue, player.current)
@@ -212,17 +269,17 @@ const actionHandlers: Record<
     return { message: '⏮️ Playing the previous track.', shouldUpdate: false }
   },
 
-  resume: (player: any) => {
+  resume: (player: PlayerLike) => {
     player.pause?.(false)
     return { message: '▶️ Resumed playback.', shouldUpdate: true }
   },
 
-  pause: (player: any) => {
+  pause: (player: PlayerLike) => {
     player.pause?.(true)
     return { message: '⏸️ Paused playback.', shouldUpdate: true }
   },
 
-  skip: (player: any) => {
+  skip: (player: PlayerLike) => {
     if (!_functions.getQueueLength(player?.queue))
       return {
         message: '❌ No tracks in queue to skip to.',
@@ -234,7 +291,7 @@ const actionHandlers: Record<
 }
 
 const buildPlaylistPage = (
-  playlist: any,
+  playlist: PlaylistSummaryLike,
   playlistName: string,
   userId: string,
   page: number | undefined
@@ -335,8 +392,10 @@ const buildPlaylistPage = (
 
 const PLAYLIST_BATCH_SIZE = 50
 
-const getAllPlaylistTracksBatched = (playlistId: string): any[] => {
-  const all: any[] = []
+const getAllPlaylistTracksBatched = (
+  playlistId: string
+): StoredPlaylistTrackLike[] => {
+  const all: StoredPlaylistTrackLike[] = []
   let offset = 0
   while (true) {
     const batch = getPlaylistTracks(playlistId, {
@@ -352,10 +411,19 @@ const getAllPlaylistTracksBatched = (playlistId: string): any[] => {
   return all
 }
 
-const playlistActionHandlers: Record<string, any> = {
+const playlistActionHandlers: Record<
+  PlaylistButtonAction,
+  (
+    interaction: InteractionLike,
+    client: AquaClientLike,
+    userId: string,
+    playlistName: string,
+    page?: number
+  ) => Promise<ActionResult>
+> = {
   play_playlist: async (
-    interaction: any,
-    client: any,
+    interaction: InteractionLike,
+    client: AquaClientLike,
     userId: string,
     playlistName: string
   ) => {
@@ -377,18 +445,31 @@ const playlistActionHandlers: Record<string, any> = {
 
     let voiceState = null
     try {
-      voiceState = await interaction.member?.voice()
+      voiceState =
+        typeof interaction.member?.voice === 'function'
+          ? await interaction.member.voice()
+          : null
     } catch {
       voiceState = null
     }
     if (!voiceState?.channelId)
-      return { message: '❌ Join a voice channel first', shouldUpdate: false }
+      return {
+        message: '\u274c Join a voice channel first',
+        shouldUpdate: false
+      }
+    if (!interaction.guildId)
+      return { message: '\u274c Guild not found', shouldUpdate: false }
 
     const player = getOrCreatePlayer(client, {
       guildId: interaction.guildId,
       voiceChannel: voiceState.channelId,
-      textChannel: interaction.channelId
+      ...(interaction.channelId !== undefined
+        ? { textChannel: interaction.channelId }
+        : {})
     })
+    if (!player) {
+      return { message: '\u274c Failed to create player', shouldUpdate: false }
+    }
 
     let loadedTracks = 0
     let offset = 0
@@ -402,9 +483,14 @@ const playlistActionHandlers: Record<string, any> = {
 
       await _functions.resolveTracksAndEnqueue(
         batch,
-        (t) =>
-          client.aqua.resolve({ query: t.uri, requester: interaction.user }),
-        (track) => player.queue.add(track),
+        (t: StoredPlaylistTrackLike) =>
+          client.aqua.resolve({
+            query: t.uri || '',
+            requester: interaction.user
+          }),
+        (track: TrackLike) => {
+          if (typeof player.queue?.add === 'function') player.queue.add(track)
+        },
         RESOLVE_CONCURRENCY
       )
 
@@ -420,8 +506,16 @@ const playlistActionHandlers: Record<string, any> = {
       }
     )
 
-    if (!player.playing && !player.paused && player.queue.size)
-      player.play().catch(() => {})
+    if (!player.playing && !player.paused && (player.queue?.size ?? 0) > 0) {
+      const playResult = player.play?.()
+      if (
+        playResult &&
+        typeof playResult === 'object' &&
+        'catch' in playResult
+      ) {
+        ;(playResult as Promise<unknown>).catch(() => {})
+      }
+    }
     return {
       message: `▶️ Playing playlist "${playlistName}" with ${loadedTracks} tracks`,
       shouldUpdate: false
@@ -429,8 +523,8 @@ const playlistActionHandlers: Record<string, any> = {
   },
 
   shuffle_playlist: async (
-    interaction: any,
-    client: any,
+    interaction: InteractionLike,
+    client: AquaClientLike,
     userId: string,
     playlistName: string
   ) => {
@@ -445,39 +539,60 @@ const playlistActionHandlers: Record<string, any> = {
     )
     if (!playlist)
       return { message: '❌ Playlist not found', shouldUpdate: false }
-
-    const trackCount = tracksCol().count({ playlistId: playlist._id })
-    if (trackCount === 0)
-      return { message: '❌ Playlist is empty', shouldUpdate: false }
-
     let voiceState = null
     try {
-      voiceState = await interaction.member?.voice()
+      voiceState =
+        typeof interaction.member?.voice === 'function'
+          ? await interaction.member.voice()
+          : null
     } catch {
       voiceState = null
     }
     if (!voiceState?.channelId)
-      return { message: '❌ Join a voice channel first', shouldUpdate: false }
+      return {
+        message: '\u274c Join a voice channel first',
+        shouldUpdate: false
+      }
+    if (!interaction.guildId)
+      return { message: '\u274c Guild not found', shouldUpdate: false }
 
     const player = getOrCreatePlayer(client, {
       guildId: interaction.guildId,
       voiceChannel: voiceState.channelId,
-      textChannel: interaction.channelId
+      ...(interaction.channelId !== undefined
+        ? { textChannel: interaction.channelId }
+        : {})
     })
+    if (!player) {
+      return { message: '\u274c Failed to create player', shouldUpdate: false }
+    }
 
     const allTracks = getAllPlaylistTracksBatched(playlist._id)
     const shuffled = shuffleArray(allTracks)
 
     await _functions.resolveTracksAndEnqueue(
       shuffled,
-      (t: any) =>
-        client.aqua.resolve({ query: t.uri, requester: interaction.user }),
-      (track: any) => player.queue.add(track),
+      (t: StoredPlaylistTrackLike) =>
+        client.aqua.resolve({
+          query: t.uri || '',
+          requester: interaction.user
+        }),
+      (track: TrackLike) => {
+        if (typeof player.queue?.add === 'function') player.queue.add(track)
+      },
       RESOLVE_CONCURRENCY
     )
 
-    if (!player.playing && !player.paused && player.queue.size)
-      player.play().catch(() => {})
+    if (!player.playing && !player.paused && (player.queue?.size ?? 0) > 0) {
+      const playResult = player.play?.()
+      if (
+        playResult &&
+        typeof playResult === 'object' &&
+        'catch' in playResult
+      ) {
+        ;(playResult as Promise<unknown>).catch(() => {})
+      }
+    }
     return {
       message: `🔀 Playing shuffled playlist "${playlistName}"`,
       shouldUpdate: false
@@ -485,8 +600,8 @@ const playlistActionHandlers: Record<string, any> = {
   },
 
   playlist_prev: async (
-    interaction: any,
-    _client: any,
+    interaction: InteractionLike,
+    _client: AquaClientLike,
     userId: string,
     playlistName: string,
     page: number | undefined
@@ -514,13 +629,15 @@ const playlistActionHandlers: Record<string, any> = {
       userId,
       Math.max(1, (page || 1) - 1)
     )
-    await interaction.editOrReply({ embeds: [embed], components })
+    if (typeof interaction.editOrReply === 'function') {
+      await interaction.editOrReply({ embeds: [embed], components })
+    }
     return { message: '', shouldUpdate: false }
   },
 
   playlist_next: async (
-    interaction: any,
-    _client: any,
+    interaction: InteractionLike,
+    _client: AquaClientLike,
     userId: string,
     playlistName: string,
     page: number | undefined
@@ -548,14 +665,16 @@ const playlistActionHandlers: Record<string, any> = {
       userId,
       (page || 1) + 1
     )
-    await interaction.editOrReply({ embeds: [embed], components })
+    if (typeof interaction.editOrReply === 'function') {
+      await interaction.editOrReply({ embeds: [embed], components })
+    }
     return { message: '', shouldUpdate: false }
   }
 }
 
 export default createEvent({
   data: { name: 'interactionCreate' },
-  run: async (interaction, client) => {
+  run: async (interaction, client): Promise<void> => {
     if (
       !interaction?.isButton?.() ||
       !interaction?.customId ||
@@ -565,11 +684,14 @@ export default createEvent({
     if (interaction.customId.startsWith('ignore_')) return
 
     const parsed = _functions.parsePlaylistButtonId(interaction.customId)
-    if (parsed && (playlistActionHandlers as any)[parsed.action]) {
+    const playlistHandler = parsed
+      ? playlistActionHandlers[parsed.action]
+      : null
+    if (parsed && playlistHandler) {
       if (parsed.userId !== interaction.user.id) return
-      if (!(await _functions.safeDefer(interaction))) return
+      if (!(await safeDefer(interaction, 64))) return
       try {
-        const result = await (playlistActionHandlers as any)[parsed.action](
+        const result = await playlistHandler(
           interaction,
           client,
           parsed.userId,
@@ -579,25 +701,30 @@ export default createEvent({
         if (result?.message)
           await _functions.safeFollowup(interaction, result.message)
       } catch (err) {
+        if (isInteractionExpired(err)) return
         console.error('Playlist button error:', err)
         _functions.safeReply(interaction, '❌ An error occurred.')
       }
       return
     }
 
-    if (!(await _functions.safeDefer(interaction))) return
+    if (!(await safeDefer(interaction, 64))) return
 
     const player = client.aqua?.players?.get?.(interaction.guildId)
-    if (!player)
-      return _functions.safeReply(
+    if (!player) {
+      await _functions.safeReply(
         interaction,
-        '❌ There is no active music player in this server.'
+        '\u274c There is no active music player in this server.'
       )
-    if (!player.current)
-      return _functions.safeReply(
+      return
+    }
+    if (!player.current) {
+      await _functions.safeReply(
         interaction,
-        '❌ There is no music playing right now.'
+        '\u274c There is no music playing right now.'
       )
+      return
+    }
 
     const controlCheck = await ensureMemberCanControlPlayer(
       interaction,
@@ -606,15 +733,22 @@ export default createEvent({
         requesterOnly: true
       }
     )
-    if (!controlCheck.ok)
-      return _functions.safeReply(interaction, controlCheck.reason)
-
-    const handler = (actionHandlers as any)[interaction.customId]
-    if (!handler)
-      return _functions.safeReply(
+    if (!controlCheck.ok) {
+      await _functions.safeReply(
         interaction,
-        '❌ This button action is not recognized.'
+        controlCheck.reason || '\u274c You are not allowed to use this button.'
       )
+      return
+    }
+
+    const handler = actionHandlers[interaction.customId]
+    if (!handler) {
+      await _functions.safeReply(
+        interaction,
+        '\u274c This button action is not recognized.'
+      )
+      return
+    }
 
     try {
       const result = await handler(player)
@@ -622,6 +756,7 @@ export default createEvent({
       if (result.shouldUpdate && player.current)
         queueMicrotask(() => _functions.updateNowPlayingEmbed(player, client))
     } catch (err) {
+      if (isInteractionExpired(err)) return
       console.error('Action button error:', err)
       _functions.safeReply(
         interaction,

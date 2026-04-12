@@ -2,6 +2,11 @@ import process from 'node:process'
 import { createEvent, Embed } from 'seyfert'
 import { lru } from 'tiny-lru'
 import { cleanupKaraokeSession, hasKaraokeSession } from '../commands/karaoke'
+import type {
+  AquaClientLike,
+  PlayerLike,
+  TrackLike
+} from '../shared/helperTypes'
 import { createPlayerConnection } from '../shared/player'
 import { get247ChannelIds, isTwentyFourSevenEnabled } from '../utils/db_helper'
 
@@ -12,6 +17,136 @@ const CACHE_SIZE = 1000
 const DEBOUNCE_DELAY = 50
 
 type RejoinOutcome = 'connected' | 'retry' | 'noop'
+type TimerLike = ReturnType<typeof setTimeout>
+type VoiceStateLike = { channelId?: string | null; userId?: string | null }
+type VoiceStateUpdatePayload = {
+  guildId: string
+  newState?: VoiceStateLike | null | undefined
+  oldState?: VoiceStateLike | null | undefined
+}
+type MessageLike = {
+  id?: string
+  delete?: () => Promise<unknown>
+}
+type MemberPresenceLike = {
+  user?: {
+    bot?: boolean
+  }
+}
+type MembersLike =
+  | Iterable<MemberPresenceLike>
+  | {
+      values?: () => Iterable<MemberPresenceLike>
+      cache?: {
+        values?: () => Iterable<MemberPresenceLike>
+      }
+    }
+  | null
+  | undefined
+
+const getIterableMembers = (
+  members: MembersLike
+): Iterable<MemberPresenceLike> | null => {
+  if (!members) return null
+  if (Array.isArray(members)) return members
+  if (
+    typeof members === 'object' &&
+    members !== null &&
+    'values' in members &&
+    typeof members.values === 'function'
+  ) {
+    return members.values()
+  }
+  if (
+    typeof members === 'object' &&
+    members !== null &&
+    Symbol.iterator in members
+  ) {
+    return members as Iterable<MemberPresenceLike>
+  }
+  if (
+    typeof members === 'object' &&
+    members !== null &&
+    'cache' in members &&
+    members.cache &&
+    typeof members.cache.values === 'function'
+  ) {
+    return members.cache.values()
+  }
+  return null
+}
+type VoiceChannelLike = {
+  type?: number
+  members?: MembersLike
+  voiceMembers?: MembersLike
+}
+type GuildLike = {
+  channels?: {
+    get?: (channelId: string) => VoiceChannelLike | undefined
+    fetch?: (channelId: string) => Promise<VoiceChannelLike | undefined>
+  }
+  members?: {
+    me?: {
+      voice?: {
+        channelId?: string | null
+      }
+    }
+    get?: (userId: string) =>
+      | {
+          voice?: {
+            channelId?: string | null
+          }
+        }
+      | undefined
+  }
+  voiceStates?: {
+    get?: (userId: string) =>
+      | {
+          channelId?: string | null
+        }
+      | undefined
+  }
+}
+type GuildCacheLike = {
+  get: (guildId: string) => GuildLike | undefined
+  set: (guildId: string, guild: GuildLike) => unknown
+  clear: () => void
+}
+type VoiceHandlers = {
+  trackStart: (player: PlayerLike) => void
+  queueEnd: (player: PlayerLike) => void
+  playerDestroy: (player: PlayerLike) => void
+  socketClosed: (
+    player: PlayerLike,
+    payload: {
+      code?: number
+    }
+  ) => void
+}
+type VoiceClientLike = AquaClientLike<TrackLike> & {
+  aqua: AquaClientLike<TrackLike>['aqua'] & {
+    on?: unknown
+    off?: unknown
+    players?: {
+      get?: unknown
+    }
+  }
+  cache?: {
+    guilds?: {
+      get?: unknown
+    }
+  }
+  guilds?: {
+    fetch?: unknown
+  }
+  messages?: {
+    write?: unknown
+  }
+  me?: { id?: string }
+  user?: { id?: string }
+  bot?: { id?: string }
+  _voiceHandlers?: VoiceHandlers
+}
 
 const STATE_IDLE = 1
 const STATE_PLAYING = 2
@@ -30,15 +165,15 @@ const _functions = {
     if (typeof t.unref === 'function') t.unref()
     return t
   },
-  clearTimer(timer: any) {
+  clearTimer(timer: TimerLike | null | undefined) {
     if (timer) clearTimeout(timer)
     return null
   },
-  safeDelete(msg: any, guildId: string) {
+  safeDelete(msg: MessageLike | null | undefined, guildId: string) {
     if (hasKaraokeSession(guildId)) cleanupKaraokeSession(guildId)
     msg?.delete?.().catch(() => {})
   },
-  getBotId(client: any) {
+  getBotId(client: VoiceClientLike) {
     return client.me?.id || client.user?.id || client.bot?.id
   },
   getChannelPair(
@@ -55,32 +190,59 @@ const _functions = {
       textChannelId: textId ?? ids?.textChannelId ?? null
     }
   },
-  async fetchGuild(cache: any, client: any, guildId: string): Promise<any> {
+  async fetchGuild(
+    cache: GuildCacheLike,
+    client: VoiceClientLike,
+    guildId: string
+  ): Promise<GuildLike | null> {
     let guild = cache.get(guildId)
     if (guild) return guild
 
-    guild = client.cache?.guilds?.get?.(guildId)
-    if (guild) return cache.set(guildId, guild)
+    const guildCache = client.cache?.guilds as
+      | { get?: (guildId: string) => GuildLike | undefined }
+      | undefined
+    guild =
+      typeof guildCache?.get === 'function'
+        ? guildCache.get(guildId)
+        : undefined
+    if (guild) {
+      cache.set(guildId, guild)
+      return guild
+    }
 
     try {
-      guild = await client.guilds?.fetch?.(guildId)
+      const guilds = client.guilds as
+        | { fetch?: (guildId: string) => Promise<GuildLike | undefined> }
+        | undefined
+      guild =
+        typeof guilds?.fetch === 'function'
+          ? await guilds.fetch(guildId)
+          : undefined
       if (guild) cache.set(guildId, guild)
       return guild ?? null
     } catch {
       return null
     }
   },
-  async getVoiceChannel(guild: any, channelId: string): Promise<any> {
-    let ch = guild.channels?.get?.(channelId)
+  async getVoiceChannel(
+    guild: GuildLike,
+    channelId: string
+  ): Promise<VoiceChannelLike | null> {
+    const channels = guild.channels
+    let ch =
+      typeof channels?.get === 'function' ? channels.get(channelId) : undefined
     if (ch) return ch.type === 2 ? ch : null
     try {
-      ch = await guild.channels?.fetch?.(channelId)
+      ch =
+        typeof channels?.fetch === 'function'
+          ? await channels.fetch(channelId)
+          : undefined
       return ch?.type === 2 ? ch : null
     } catch {
       return null
     }
   },
-  getBotVoiceChannelId(guild: any, botId: string): string | null {
+  getBotVoiceChannelId(guild: GuildLike, botId: string): string | null {
     return (
       guild?.members?.me?.voice?.channelId ||
       guild?.members?.get?.(botId)?.voice?.channelId ||
@@ -88,21 +250,11 @@ const _functions = {
       null
     )
   },
-  countHumans(members: any): number {
-    if (!members) return 0
+  countHumans(members: MembersLike): number {
     let n = 0
-    const it =
-      typeof members.values === 'function'
-        ? members.values()
-        : Array.isArray(members)
-          ? members
-          : typeof members[Symbol.iterator] === 'function'
-            ? members
-            : typeof members.cache?.values === 'function'
-              ? members.cache.values()
-              : null
+    const it = getIterableMembers(members)
     if (!it) return 0
-    for (const m of it as any) if (!m?.user?.bot) n++
+    for (const member of it) if (!member?.user?.bot) n++
     return n
   }
 }
@@ -143,13 +295,16 @@ class CircuitBreaker {
 }
 
 class VoiceManager {
-  timeouts = new Map<string, any>()
+  timeouts = new Map<string, TimerLike>()
   states = new Map<string, number>()
-  pending = new Map<string, { timer: any; event: any }>()
+  pending = new Map<
+    string,
+    { timer: TimerLike | null; event: VoiceStateUpdatePayload }
+  >()
   breaker = new CircuitBreaker()
-  guildCache = lru(CACHE_SIZE, 60000)
-  registered = new WeakSet<any>()
-  cleanupTimer: any = null
+  guildCache = lru(CACHE_SIZE, 60000) as GuildCacheLike
+  registered = new WeakSet<VoiceClientLike>()
+  cleanupTimer: TimerLike | null = null
   stopped = false
 
   constructor() {
@@ -193,33 +348,43 @@ class VoiceManager {
     )
   }
 
-  register(client: any) {
+  register(client: VoiceClientLike) {
     if (this.registered.has(client)) return
 
     const old = client._voiceHandlers
-    if (old && client.aqua?.off) {
-      client.aqua.off('trackStart', old.trackStart)
-      client.aqua.off('queueEnd', old.queueEnd)
-      client.aqua.off('playerDestroy', old.playerDestroy)
-      if (old.socketClosed) client.aqua.off('socketClosed', old.socketClosed)
+    const aqua = client.aqua
+    const off =
+      typeof aqua?.off === 'function'
+        ? (aqua.off.bind(aqua) as (
+            event: string,
+            handler: (...args: unknown[]) => void
+          ) => void)
+        : undefined
+    if (old && off) {
+      off('trackStart', old.trackStart as (...args: unknown[]) => void)
+      off('queueEnd', old.queueEnd as (...args: unknown[]) => void)
+      off('playerDestroy', old.playerDestroy as (...args: unknown[]) => void)
+      if (old.socketClosed)
+        off('socketClosed', old.socketClosed as (...args: unknown[]) => void)
     }
 
     this.registered.add(client)
 
-    const aqua = client.aqua
     const handlers = {
-      trackStart: (player: any) => {
+      trackStart: (player: PlayerLike) => {
+        if (!player.guildId) return
         this.setState(player.guildId, STATE_PLAYING)
         this.clearTimeout(player.guildId)
       },
 
-      queueEnd: (player: any) => {
+      queueEnd: (player: PlayerLike) => {
+        if (!player.guildId) return
         this.setState(player.guildId, STATE_IDLE)
         if (!isTwentyFourSevenEnabled(player.guildId))
           this.scheduleDestroy(client, player)
       },
 
-      playerDestroy: (player: any) => {
+      playerDestroy: (player: PlayerLike) => {
         if (!player?.guildId) return
         this.setState(player.guildId, STATE_DESTROYING)
         this.clearTimeout(player.guildId)
@@ -228,39 +393,58 @@ class VoiceManager {
           this.scheduleRejoin(
             client,
             player.guildId,
-            player.voiceChannel,
-            player.textChannel
+            player.voiceChannel ?? undefined,
+            player.textChannel ?? undefined
           )
         } else {
           this.states.delete(player.guildId)
         }
       },
 
-      socketClosed: (player: any, payload: any) => {
+      socketClosed: (
+        player: PlayerLike,
+        payload: {
+          code?: number
+        }
+      ) => {
         const guildId = player?.guildId
-        if (!guildId || ![4014, 4022].includes(payload?.code)) return
+        const code = payload?.code
+        if (!guildId || code === undefined || ![4014, 4022].includes(code))
+          return
         if (!isTwentyFourSevenEnabled(guildId)) return
+        // Don't fight Aqualink's built-in recovery/reconnection
+        if ((player as Record<string, unknown>)?.['_reconnecting']) return
 
         this.scheduleRejoin(
           client,
           guildId,
-          player?.voiceChannel,
-          player?.textChannel
+          player?.voiceChannel ?? undefined,
+          player?.textChannel ?? undefined
         )
       }
     }
 
-    if (aqua?.on) {
-      aqua.on('trackStart', handlers.trackStart)
-      aqua.on('queueEnd', handlers.queueEnd)
-      aqua.on('playerDestroy', handlers.playerDestroy)
-      aqua.on('socketClosed', handlers.socketClosed)
+    const on =
+      typeof aqua?.on === 'function'
+        ? (aqua.on.bind(aqua) as (
+            event: string,
+            handler: (...args: unknown[]) => void
+          ) => void)
+        : undefined
+    if (on) {
+      on('trackStart', handlers.trackStart as (...args: unknown[]) => void)
+      on('queueEnd', handlers.queueEnd as (...args: unknown[]) => void)
+      on(
+        'playerDestroy',
+        handlers.playerDestroy as (...args: unknown[]) => void
+      )
+      on('socketClosed', handlers.socketClosed as (...args: unknown[]) => void)
     }
     client._voiceHandlers = handlers
   }
 
-  handleUpdate(event: any, client: any) {
-    const guildId = event.guildId as string
+  handleUpdate(event: VoiceStateUpdatePayload, client: VoiceClientLike) {
+    const guildId = event.guildId
     if (!guildId) return
 
     const existing = this.pending.get(guildId)
@@ -275,12 +459,16 @@ class VoiceManager {
     })
   }
 
-  processUpdate(event: any, client: any) {
+  processUpdate(event: VoiceStateUpdatePayload, client: VoiceClientLike) {
     const { newState, oldState } = event
-    const guildId = event.guildId as string
+    const guildId = event.guildId
     if (!guildId || oldState?.channelId === newState?.channelId) return
 
-    const player = client.aqua?.players?.get?.(guildId)
+    const players = client.aqua?.players as
+      | { get?: (guildId: string) => PlayerLike | undefined }
+      | undefined
+    const player =
+      typeof players?.get === 'function' ? players.get(guildId) : undefined
     const is247 = isTwentyFourSevenEnabled(guildId)
 
     if (is247) {
@@ -293,8 +481,8 @@ class VoiceManager {
         this.scheduleRejoin(
           client,
           guildId,
-          player?.voiceChannel ?? oldState.channelId,
-          player?.textChannel
+          player?.voiceChannel ?? oldState.channelId ?? undefined,
+          player?.textChannel ?? undefined
         )
         return
       }
@@ -318,7 +506,7 @@ class VoiceManager {
   }
 
   scheduleRejoin(
-    client: any,
+    client: VoiceClientLike,
     guildId: string,
     voiceId?: string,
     textId?: string
@@ -355,7 +543,7 @@ class VoiceManager {
   }
 
   async rejoinChannel(
-    client: any,
+    client: VoiceClientLike,
     guildId: string,
     voiceId?: string,
     textId?: string
@@ -378,7 +566,11 @@ class VoiceManager {
     )
     if (!voiceChannel) return 'retry'
 
-    const existing = client.aqua?.players?.get?.(guildId)
+    const players = client.aqua?.players as
+      | { get?: (guildId: string) => PlayerLike | undefined }
+      | undefined
+    const existing =
+      typeof players?.get === 'function' ? players.get(guildId) : undefined
     const connectionOptions = {
       guildId,
       voiceChannel: pair.voiceChannelId,
@@ -403,17 +595,21 @@ class VoiceManager {
     return 'connected'
   }
 
-  scheduleDestroy(client: any, player: any) {
+  scheduleDestroy(client: VoiceClientLike, player: PlayerLike) {
+    if (!player.guildId) return
+    const guildId = player.guildId
     this.setTimeout(
-      player.guildId,
+      guildId,
       () => {
         void (async () => {
-          const current = client.aqua?.players?.get?.(player.guildId)
-          if (
-            !current ||
-            current.playing ||
-            isTwentyFourSevenEnabled(player.guildId)
-          )
+          const players = client.aqua?.players as
+            | { get?: (guildId: string) => PlayerLike | undefined }
+            | undefined
+          const current =
+            typeof players?.get === 'function'
+              ? players.get(guildId)
+              : undefined
+          if (!current || current.playing || isTwentyFourSevenEnabled(guildId))
             return
 
           const embed = new Embed()
@@ -424,25 +620,41 @@ class VoiceManager {
             .setFooter({ text: 'Automatically destroying player' })
 
           try {
-            const msg = (await client.messages.write(current.textChannel, {
-              embeds: [embed]
-            })) as any
-            if (msg)
+            if (!current.textChannel) return
+            const messages = client.messages as
+              | {
+                  write?: (
+                    channelId: string,
+                    payload: { embeds: Embed[] }
+                  ) => Promise<MessageLike | undefined>
+                }
+              | undefined
+            const msg =
+              typeof messages?.write === 'function'
+                ? await messages.write(current.textChannel, {
+                    embeds: [embed]
+                  })
+                : undefined
+            if (msg?.id)
               this.setTimeout(
                 `msg_${msg.id}`,
-                () => _functions.safeDelete(msg, player.guildId),
+                () => _functions.safeDelete(msg, guildId),
                 10000
               )
           } catch {}
 
-          current.destroy()
+          current.destroy?.()
         })()
       },
       NO_SONG_TIMEOUT
     )
   }
 
-  async checkActivity(client: any, guildId: string, player: any) {
+  async checkActivity(
+    client: VoiceClientLike,
+    guildId: string,
+    player: PlayerLike
+  ) {
     const voiceId = player?.voiceChannel
     if (!voiceId) return
 
@@ -452,10 +664,7 @@ class VoiceManager {
     const voiceChannel = await _functions.getVoiceChannel(guild, voiceId)
     if (!voiceChannel) return
 
-    const members =
-      voiceChannel.members ||
-      voiceChannel.voiceMembers ||
-      voiceChannel?.members?.cache
+    const members = voiceChannel.members || voiceChannel.voiceMembers || null
     if (_functions.countHumans(members) === 0)
       this.scheduleDestroy(client, player)
     else this.clearTimeout(guildId)
@@ -464,8 +673,8 @@ class VoiceManager {
   cleanup() {
     this.stopped = true
     for (const t of this.timeouts.values()) _functions.clearTimer(t)
-    for (const p of (this.pending as any).values())
-      _functions.clearTimer(p.timer)
+    for (const pending of this.pending.values())
+      _functions.clearTimer(pending.timer)
     _functions.clearTimer(this.cleanupTimer)
 
     this.timeouts.clear()
@@ -488,15 +697,16 @@ export default createEvent({
     if (!guildId) return
     if (oldState?.channelId === newState?.channelId) return
 
-    manager.register(client)
-    manager.handleUpdate({ newState, oldState, guildId }, client)
+    const voiceClient = client as unknown as VoiceClientLike
+    manager.register(voiceClient)
+    manager.handleUpdate({ newState, oldState, guildId }, voiceClient)
   }
 })
 
 const HOOK_FLAG = '_voiceManagerCleanupHookAdded'
-const anyProcess: any = process
-if (!anyProcess[HOOK_FLAG]) {
-  anyProcess[HOOK_FLAG] = true
+const processHooks = process as NodeJS.Process & Record<string, unknown>
+if (!processHooks[HOOK_FLAG]) {
+  processHooks[HOOK_FLAG] = true
   const cleanup = () => manager.cleanup()
   process.once('exit', cleanup)
   process.once('SIGTERM', cleanup)

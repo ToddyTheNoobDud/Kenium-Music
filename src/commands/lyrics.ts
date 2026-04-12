@@ -10,6 +10,7 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { ButtonStyle, ComponentType } from 'seyfert/lib/types'
 import {
   buildLyricsQueryFromHints,
@@ -26,8 +27,33 @@ const MAX_SYNC_LINES_PER_PAGE = 18
 const EMBED_COLOR = 0x100e09
 const COLLECTOR_TIMEOUT = 300_000
 
-// biome-ignore lint/suspicious/noExplicitAny: thele is a dynamic translation object
-function createErrorEmbed(message: string, thele: any) {
+type LyricsTrackLike = {
+  title?: string
+  author?: string
+  albumArt?: string
+}
+
+type LyricsTextLike = {
+  common: {
+    close: string
+    previous: string
+    next: string
+    page: string
+    unknown: string
+  }
+  lyrics: {
+    error: string
+    title: string
+    noLyrics: string
+    syncedLyrics: string
+    textLyrics: string
+    noActivePlayer: string
+    noLyricsFound: string
+    serviceUnavailable: string
+  }
+}
+
+function createErrorEmbed(message: string, thele: LyricsTextLike) {
   return new Embed()
     .setColor(0xe74c3c)
     .setTitle(thele.lyrics.error)
@@ -146,8 +172,7 @@ function chunkSyncedContent(lines: string[]) {
 function createNavigationRow(
   currentPage: number,
   totalPages: number,
-  // biome-ignore lint/suspicious/noExplicitAny: thele is a dynamic translation object
-  thele: any
+  thele: LyricsTextLike
 ) {
   const row = new ActionRow().addComponents(
     new Button()
@@ -189,8 +214,7 @@ async function displayLyricsUI(
     albumArt?: string
     source?: string
   },
-  // biome-ignore lint/suspicious/noExplicitAny: thele is a dynamic translation object
-  thele: any
+  thele: LyricsTextLike
 ) {
   const chunks = data.lines
     ? chunkSyncedContent(formatSyncedLyrics(data.lines))
@@ -282,7 +306,7 @@ async function fetchMusixmatchLyrics(
   query: string | undefined,
   currentTrack: unknown
 ) {
-  const hints = extractLyricsSearchHints(currentTrack as any)
+  const hints = extractLyricsSearchHints(currentTrack as LyricsTrackLike)
   const searchQuery = query?.trim() || buildLyricsQueryFromHints(hints)
 
   if (!searchQuery) return null
@@ -310,17 +334,19 @@ function shouldPreferMatchedTrackTitle(
   return Boolean(search?.trim()) || normalizeLoose(matchedTitle).length > 0
 }
 
+const options = {
+  search: createStringOption({
+    description: 'Song title to search for',
+    required: false
+  })
+}
+
 @Cooldown({
   type: CooldownType.User,
   interval: 60_000,
   uses: { default: 2 }
 })
-@Options({
-  search: createStringOption({
-    description: 'Song title to search for',
-    required: false
-  }) as any
-})
+@Options(options as unknown as OptionsRecord)
 @Declare({
   name: 'lyrics',
   description: 'Get lyrics for the current song or search'
@@ -329,12 +355,12 @@ function shouldPreferMatchedTrackTitle(
 export default class LyricsCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const lang = getContextLanguage(ctx)
-    const thele = ctx.t.get(lang)
+    const thele = ctx.t.get(lang) as unknown as LyricsTextLike
     if (!(await safeDefer(ctx))) return
 
     const search = ((ctx.options as { search?: string }).search || '').trim()
     const player = ctx.guildId ? ctx.client.aqua.players.get(ctx.guildId) : null
-    const currentTrack = player?.current as any
+    const currentTrack = (player?.current || null) as LyricsTrackLike | null
 
     if (!search && !currentTrack) {
       await ctx.editOrReply({

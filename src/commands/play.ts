@@ -7,10 +7,16 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { LRU } from 'tiny-lru'
+import type { PlayerLike, TrackLike, UserLike } from '../shared/helperTypes'
 import { ensurePlayerForVoice, maybeStartPlayback } from '../shared/playback'
 import { getContextLanguage } from '../utils/i18n'
-import { safeDefer } from '../utils/interactions'
+import {
+  getErrorCode,
+  isInteractionExpired,
+  safeDefer
+} from '../utils/interactions'
 
 const RECENT_CACHE_SIZE = 8
 const USER_CACHE_LIMIT = 150
@@ -28,7 +34,39 @@ const MAX_URI_LENGTH = 98
 const AUTOCOMPLETE_DEBOUNCE_MS = 200
 
 type TrackInfo = { title: string; uri: string }
-type SearchResult = { info?: TrackInfo; [key: string]: any }
+
+type SearchResult = TrackLike
+
+type PlayAutocompleteInteractionLike = {
+  user: UserLike
+  client: CommandContext['client']
+  getInput?: () => unknown
+  respond: (
+    choices: Array<{ name: string; value: string }>
+  ) => Promise<unknown> | unknown
+}
+
+type ResolveResponseLike = {
+  loadType?: string
+  tracks?: SearchResult[]
+  playlistInfo?: {
+    name?: string
+    thumbnail?: string | null
+  }
+}
+
+type PlayTextLike = {
+  player?: {
+    noVoiceChannel?: string
+    noTracksFound?: string
+    trackAdded?: string
+    playlistAdded?: string
+  }
+  errors?: {
+    unsupportedContentType?: string
+    general?: string
+  }
+}
 
 const _functions = {
   isUrl(query: unknown): boolean {
@@ -55,7 +93,7 @@ const _functions = {
     return query.toLowerCase().slice(0, 60)
   },
 
-  safeUnref(timer: any): void {
+  safeUnref(timer: { unref?: () => void } | null | undefined): void {
     try {
       timer?.unref?.()
     } catch {}
@@ -63,7 +101,8 @@ const _functions = {
 
   bindProcessCleanupOnce(cleanup: () => void): void {
     const sym = Symbol.for('play.autocomplete.cleanup.bound')
-    const g = globalThis as any
+    const g = globalThis as typeof globalThis &
+      Record<symbol, boolean | undefined>
     if (g[sym]) return
     g[sym] = true
 
@@ -72,16 +111,16 @@ const _functions = {
     process.once('SIGTERM', cleanup)
   },
 
-  addRecentFromTrack(userId: string, track: any): void {
+  addRecentFromTrack(userId: string, track: TrackLike): void {
     const info = track?.info
     if (info?.uri && info?.title) recentTracks.add(userId, info.title, info.uri)
   },
 
   async processAutocomplete(
-    interaction: any,
+    interaction: PlayAutocompleteInteractionLike,
     userId: string,
     query: string
-  ): Promise<any> {
+  ): Promise<unknown> {
     if (!query || query.length < MIN_QUERY_LENGTH) {
       const recent = recentTracks.getRecent(userId, MAX_AUTOCOMPLETE_RESULTS)
       if (!recent.length) return interaction.respond([])
@@ -99,12 +138,22 @@ const _functions = {
     let results = searchCache.get(key)
 
     if (!results) {
-      const res = await interaction.client.aqua.resolve({
+      const res = (await interaction.client.aqua.resolve({
         query,
         requester: interaction.user
-      })
-      results = (Array.isArray(res) ? res : res?.tracks || []) as SearchResult[]
-      if (results?.length) searchCache.set(key, results)
+      })) as ResolveResponseLike | SearchResult[]
+      results = Array.isArray(res)
+        ? res
+        : Array.isArray(res?.tracks)
+          ? res.tracks
+          : []
+      if (results?.length) {
+        searchCache.set(key, results)
+        for (const r of results) {
+          const uri = (r as any)?.info?.uri
+          if (uri) uriToTrackCache.set(String(uri), r)
+        }
+      }
     }
 
     if (!results || !results.length) return interaction.respond([])
@@ -115,7 +164,7 @@ const _functions = {
       i < results.length && choices.length < MAX_AUTOCOMPLETE_RESULTS;
       i++
     ) {
-      const item: any = results[i]
+      const item = results[i]
       const info = item?.info || item
       const uri = info?.uri
       if (!uri) continue
@@ -190,30 +239,38 @@ class ThrottleMap {
 }
 
 const searchCache = new LRU<SearchResult[]>(SEARCH_CACHE_SIZE, SEARCH_TTL_MS)
+const uriToTrackCache = new LRU<SearchResult>(SEARCH_CACHE_SIZE, SEARCH_TTL_MS)
 const recentTracks = new OptimizedRecentTracks()
 const throttleMap = new ThrottleMap()
-const debounceTimers = new Map<string, NodeJS.Timeout>()
+const debounceTimers = new Map<
+  string,
+  { timer: NodeJS.Timeout; resolve: (value?: unknown) => void }
+>()
 
 const _cleanupTimers = (): void => {
-  for (const timer of debounceTimers.values()) clearTimeout(timer)
+  for (const entry of debounceTimers.values()) clearTimeout(entry.timer)
   debounceTimers.clear()
   searchCache.clear()
+  uriToTrackCache.clear()
 }
 _functions.bindProcessCleanupOnce(_cleanupTimers)
 
-const _handleAutocomplete = async (interaction: any): Promise<void> => {
+const _handleAutocomplete = async (
+  interaction: PlayAutocompleteInteractionLike
+): Promise<unknown> => {
   const userId = interaction.user.id
   const query = String(interaction.getInput?.() ?? '').trim()
 
   const prev = debounceTimers.get(userId)
   if (prev) {
-    clearTimeout(prev)
+    clearTimeout(prev.timer)
+    prev.resolve()
     debounceTimers.delete(userId)
   }
 
   if (throttleMap.shouldThrottle(userId)) return interaction.respond([])
 
-  return new Promise((resolve) => {
+  return new Promise<unknown>((resolve) => {
     const timer = setTimeout(() => {
       debounceTimers.delete(userId)
       _functions
@@ -227,12 +284,15 @@ const _handleAutocomplete = async (interaction: any): Promise<void> => {
     if (debounceTimers.size >= MAX_DEBOUNCE_ENTRIES) {
       const firstKey = debounceTimers.keys().next().value
       if (firstKey) {
-        const tm = debounceTimers.get(firstKey)
-        if (tm) clearTimeout(tm)
+        const evicted = debounceTimers.get(firstKey)
+        if (evicted) {
+          clearTimeout(evicted.timer)
+          evicted.resolve()
+        }
         debounceTimers.delete(firstKey)
       }
     }
-    debounceTimers.set(userId, timer)
+    debounceTimers.set(userId, { timer, resolve })
   })
 }
 
@@ -245,15 +305,15 @@ const options = {
 }
 
 @Declare({ name: 'play', description: 'Play a song by search query or URL.' })
-@Options(options as any)
+@Options(options as unknown as OptionsRecord)
 @Middlewares(['checkVoice'])
 export default class Play extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const { query } = ctx.options as { query: string }
     const lang = getContextLanguage(ctx)
-    const t = ctx.t.get(lang)
+    const t = ctx.t.get(lang) as unknown as PlayTextLike
 
-    let player: any
+    let player: PlayerLike | null = null
     try {
       if (!(await safeDefer(ctx, true))) return
 
@@ -267,12 +327,24 @@ export default class Play extends Command {
         return
       }
 
-      const result = await ctx.client.aqua.resolve({
-        query,
-        requester: ctx.interaction.user
-      })
+      let result: ResolveResponseLike | null = null
 
-      if (!result?.tracks?.length) {
+      if (_functions.isUrl(query)) {
+        const cached = uriToTrackCache.get(query)
+        if (cached) {
+          result = { loadType: 'track', tracks: [cached] }
+        }
+      }
+
+      if (!result) {
+        result = (await ctx.client.aqua.resolve({
+          query,
+          requester: ctx.interaction.user
+        })) as ResolveResponseLike
+      }
+
+      const tracks = Array.isArray(result?.tracks) ? result.tracks : []
+      if (!tracks.length) {
         await ctx.editResponse({
           content:
             t.player?.noTracksFound || 'No tracks found for the given query.'
@@ -280,13 +352,23 @@ export default class Play extends Command {
         return
       }
 
-      const { loadType, tracks, playlistInfo } = result
+      const loadType = String(result.loadType || '').toLowerCase()
+      const playlistInfo = result.playlistInfo
       const embed = new Embed().setColor(EMBED_COLOR).setTimestamp()
       const userId = ctx.interaction.user.id
+      const queue = player.queue
 
       if (loadType === 'track' || loadType === 'search') {
         const track = tracks[0]
-        player.queue.add(track)
+        if (!track) {
+          await ctx.editResponse({
+            content:
+              t.player?.noTracksFound || 'No tracks found for the given query.'
+          })
+          return
+        }
+
+        if (typeof queue?.add === 'function') queue.add(track)
         _functions.addRecentFromTrack(userId, track)
 
         const info = track?.info
@@ -301,9 +383,13 @@ export default class Play extends Command {
             `Added [**${title}**](${info?.uri || '#'}) to the queue.`
         )
       } else if (loadType === 'playlist' && playlistInfo?.name) {
-        for (const track of tracks) player.queue.add(track)
-        for (let i = 0; i < tracks.length && i < 3; i++)
-          _functions.addRecentFromTrack(userId, tracks[i])
+        for (const track of tracks) {
+          if (typeof queue?.add === 'function') queue.add(track)
+        }
+        for (let i = 0; i < tracks.length && i < 3; i++) {
+          const track = tracks[i]
+          if (track) _functions.addRecentFromTrack(userId, track)
+        }
 
         const playlistName = _functions.truncate(
           playlistInfo.name,
@@ -328,14 +414,15 @@ export default class Play extends Command {
 
       await ctx.editResponse({ embeds: [embed] })
       await maybeStartPlayback(player)
-    } catch (err: any) {
+    } catch (err: unknown) {
+      if (isInteractionExpired(err) || getErrorCode(err) === 10065) return
       console.error(err)
-      if (err?.code === 10065) return
       try {
         await ctx.editOrReply({
           content: t.errors?.general || 'An error occurred. Please try again.'
         })
       } catch (err) {
+        if (isInteractionExpired(err)) return
         console.error(err)
       }
     }

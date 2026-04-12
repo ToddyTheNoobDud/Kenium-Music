@@ -43,11 +43,77 @@ export const _functions = {
   }
 }
 
+type EmbedFieldInput = {
+  name: string | number
+  value: string | number
+  inline?: boolean
+}
+
+type ButtonEmoji = string | { name: string }
+
+type ButtonConfig = {
+  id: string
+  label: string
+  style?: ButtonStyle
+  emoji?: ButtonEmoji
+  disabled?: boolean
+}
+
+type AutocompleteOption = {
+  name: string
+  value: string
+}
+
+type PlaylistNameLike = {
+  name?: string
+}
+
+type PlaylistRecordLike = PlaylistNameLike & {
+  _id: string
+}
+
+type TrackOptionLike = {
+  title?: string
+  uri?: string
+}
+
+type PlaylistCollectionLike = {
+  find: (
+    query: { userId?: string | undefined },
+    options: {
+      sort: { lastModified: -1 }
+      limit: number
+      fields: ['name']
+    }
+  ) => PlaylistNameLike[] | null | undefined
+  findOne: (query: {
+    userId?: string | undefined
+    name: string
+  }) => PlaylistRecordLike | null | undefined
+}
+
+type AutocompleteInteractionLike = {
+  user?: { id?: string }
+  respond: (options: AutocompleteOption[]) => Promise<unknown> | unknown
+  getInput?: () => unknown
+  options: {
+    getString: (name: string) => string | null
+  }
+  client: {
+    aqua: {
+      resolve: (options: {
+        query: string
+        requester: unknown
+      }) => Promise<{ tracks?: TrackOptionLike[] | null }>
+    }
+  }
+}
+
 export const createEmbed = (
   type: keyof typeof TITLE_ICONS,
   title: string,
   description: string | null,
-  fields: any[] = []
+  fields: EmbedFieldInput[] = []
 ) => {
   const embed = new Embed()
     .setColor(COLORS[type])
@@ -73,12 +139,13 @@ export const createEmbed = (
   return embed
 }
 
-export const createButtons = (configs: any[]) => {
+export const createButtons = (configs: ButtonConfig[]) => {
   const row = new ActionRow()
   const limit = Math.min(configs.length, MAX_BUTTONS_PER_ROW)
 
   for (let i = 0; i < limit; i++) {
     const c = configs[i]
+    if (!c) continue
     const button = new Button()
       .setCustomId(c.id)
       .setLabel(c.label)
@@ -109,12 +176,16 @@ export const extractYouTubeId = (url: string | undefined) => {
 }
 
 export const handlePlaylistAutocomplete = async (
-  interaction: any,
-  playlistsCollection: any
+  interaction: AutocompleteInteractionLike,
+  playlistsCollection: PlaylistCollectionLike
 ) => {
   const items =
     playlistsCollection.find(
-      { userId: interaction.user?.id },
+      {
+        ...(interaction.user?.id !== undefined
+          ? { userId: interaction.user.id }
+          : {})
+      },
       {
         sort: { lastModified: -1 },
         limit: MAX_AUTOCOMPLETE_OPTIONS,
@@ -123,7 +194,7 @@ export const handlePlaylistAutocomplete = async (
     ) || []
   const options =
     items.length > 0
-      ? items.slice(0, MAX_AUTOCOMPLETE_OPTIONS).map((p: any) => ({
+      ? items.slice(0, MAX_AUTOCOMPLETE_OPTIONS).map((p: PlaylistNameLike) => ({
           name: String(p.name || '').slice(0, 100),
           value: String(p.name || '')
         }))
@@ -132,7 +203,9 @@ export const handlePlaylistAutocomplete = async (
   return interaction.respond(options)
 }
 
-export const handleTrackAutocomplete = async (interaction: any) => {
+export const handleTrackAutocomplete = async (
+  interaction: AutocompleteInteractionLike
+) => {
   try {
     const raw = interaction.getInput?.()
     const query =
@@ -151,10 +224,12 @@ export const handleTrackAutocomplete = async (interaction: any) => {
     const tracks = Array.isArray(res?.tracks) ? res.tracks : []
     const options =
       tracks.length > 0
-        ? tracks.slice(0, MAX_AUTOCOMPLETE_OPTIONS).map((track: any) => ({
-            name: String(track.title || track.uri || 'Unknown').slice(0, 100),
-            value: String(track.uri || '')
-          }))
+        ? tracks
+            .slice(0, MAX_AUTOCOMPLETE_OPTIONS)
+            .map((track: TrackOptionLike) => ({
+              name: String(track.title || track.uri || 'Unknown').slice(0, 100),
+              value: String(track.uri || '')
+            }))
         : [{ name: 'No Tracks Found', value: 'no_tracks' }]
 
     return interaction.respond(options)
@@ -166,8 +241,8 @@ export const handleTrackAutocomplete = async (interaction: any) => {
 }
 
 export const handleTrackIndexAutocomplete = async (
-  interaction: any,
-  playlistsCollection: any
+  interaction: AutocompleteInteractionLike,
+  playlistsCollection: PlaylistCollectionLike
 ) => {
   const playlistName = interaction.options.getString('playlist')
   if (!playlistName) {
@@ -175,7 +250,9 @@ export const handleTrackIndexAutocomplete = async (
   }
 
   const playlist = playlistsCollection.findOne({
-    userId: interaction.user?.id,
+    ...(interaction.user?.id !== undefined
+      ? { userId: interaction.user.id }
+      : {}),
     name: playlistName
   })
 
@@ -200,11 +277,13 @@ export const handleTrackIndexAutocomplete = async (
   return interaction.respond(options)
 }
 
-export const shuffleArray = (array: any[]) => {
+export const shuffleArray = <T>(array: T[]) => {
   const shuffled = [...array]
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
-    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    const current = shuffled[i] as T
+    shuffled[i] = shuffled[j] as T
+    shuffled[j] = current
   }
   return shuffled
 }

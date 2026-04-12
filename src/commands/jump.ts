@@ -8,10 +8,51 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
+
+type QueueItemLike = {
+  info?: {
+    title?: string
+  }
+}
+
+type JumpTextLike = {
+  jump?: {
+    noSongsInQueue?: string
+    specifyPositionOrName?: string
+  }
+  commands?: {
+    jump?: {
+      positionRange?: string
+      alreadyAt?: string
+      jumpedTo?: string
+      songNotFound?: string
+      alreadyPlaying?: string
+      jumpedToSong?: string
+    }
+  }
+}
+
+type AutocompleteInteractionLike = {
+  guildId?: string | null
+  client: CommandContext['client']
+  getInput?: () => string | undefined
+  respond: (
+    options: { name: string; value: number | string }[]
+  ) => Promise<unknown> | unknown
+}
+
+type JumpPlayerLike = Player & {
+  queue: QueueItemLike[] & {
+    findIndex: (predicate: (song: QueueItemLike) => boolean) => number
+    shift: () => QueueItemLike | undefined
+  }
+}
 
 const createAutocompleteResults = (
-  queue: { info: { title: string } }[],
+  queue: QueueItemLike[],
   focused: string,
   includePosition = false
 ): { name: string; value: number | string }[] => {
@@ -23,8 +64,8 @@ const createAutocompleteResults = (
 
   for (let i = 0; i < queue.length && results.length < maxResults; i++) {
     const item = queue[i]
-    if (!item?.info) continue
-    const { title } = item.info
+    const title = item?.info?.title
+    if (!title) continue
     const titleLower = title.toLowerCase()
 
     if (focused && !titleLower.includes(focusedLower)) continue
@@ -49,19 +90,23 @@ const createAutocompleteResults = (
   return results
 }
 
-@Middlewares(['checkPlayer', 'checkVoice'])
-@Options({
+const getQueueItems = (player: { queue?: unknown } | null | undefined) => {
+  const queue = player?.queue
+  return Array.isArray(queue) ? (queue as QueueItemLike[]) : []
+}
+
+const options = {
   name: createStringOption({
     description: 'The song to jump to',
     required: false,
-    autocomplete: async (interaction) => {
+    autocomplete: async (interaction: AutocompleteInteractionLike) => {
       try {
         const player = interaction.client.aqua.players.get(
           interaction.guildId || ''
         )
-        const focused = interaction.getInput()?.toLowerCase() || ''
+        const focused = interaction.getInput?.()?.toLowerCase() || ''
         const results = createAutocompleteResults(
-          (player?.queue as any) || [],
+          getQueueItems(player),
           focused,
           false
         )
@@ -74,14 +119,14 @@ const createAutocompleteResults = (
   position: createIntegerOption({
     description: 'The song number to jump to',
     required: false,
-    autocomplete: async (interaction) => {
+    autocomplete: async (interaction: AutocompleteInteractionLike) => {
       try {
         const player = interaction.client.aqua.players.get(
           interaction.guildId || ''
         )
-        const focused = interaction.getInput()?.toLowerCase() || ''
+        const focused = interaction.getInput?.()?.toLowerCase() || ''
         const results = createAutocompleteResults(
-          (player?.queue as any) || [],
+          getQueueItems(player),
           focused,
           true
         )
@@ -91,7 +136,10 @@ const createAutocompleteResults = (
       }
     }
   })
-} as any)
+}
+
+@Middlewares(['checkPlayer', 'checkVoice'])
+@Options(options as unknown as OptionsRecord)
 @Declare({
   name: 'jump',
   description: 'Jump to a specific position or song in the queue'
@@ -99,12 +147,14 @@ const createAutocompleteResults = (
 export default class JumpCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const lang = getContextLanguage(ctx)
-    const t = ctx.t.get(lang)
-    const player = ctx.client.aqua.players.get(ctx.guildId || '')
+    const t = ctx.t.get(lang) as JumpTextLike
+    const player = ctx.client.aqua.players.get(ctx.guildId || '') as
+      | JumpPlayerLike
+      | undefined
 
     if (!player?.queue?.length) {
       await ctx.editOrReply({
-        content: (t as any).jump?.noSongsInQueue || 'No songs in queue',
+        content: t.jump?.noSongsInQueue || 'No songs in queue',
         flags: 64
       })
       return
@@ -127,12 +177,12 @@ export default class JumpCommand extends Command {
 
       await ctx.editOrReply({
         content:
-          (t as any).jump?.specifyPositionOrName ||
+          t.jump?.specifyPositionOrName ||
           'Please specify either a position number or song name',
         flags: 64
       })
     } catch (error: unknown) {
-      if ((error as any)?.code === 10065) return
+      if (getErrorCode(error) === 10065) return
 
       console.error('Jump command error:', error)
       await ctx
@@ -146,16 +196,15 @@ export default class JumpCommand extends Command {
 
   private async handlePositionJump(
     ctx: CommandContext,
-    player: Player,
+    player: JumpPlayerLike,
     position: number,
-    // biome-ignore lint/suspicious/noExplicitAny: t is a dynamic translation object
-    t: any
+    t: JumpTextLike
   ): Promise<void> {
     const queueLength = player.queue.length
 
     if (position < 1 || position > queueLength) {
       const errorMsg =
-        (t as any).commands?.jump?.positionRange
+        t.commands?.jump?.positionRange
           ?.replace('{min}', '1')
           ?.replace('{max}', queueLength.toString()) ||
         `Position must be between 1 and ${queueLength}`
@@ -170,7 +219,7 @@ export default class JumpCommand extends Command {
     if (position === 1) {
       await ctx.editOrReply({
         content:
-          (t as any).commands?.jump?.alreadyAt?.replace('{position}', '1') ||
+          t.commands?.jump?.alreadyAt?.replace('{position}', '1') ||
           'Already at position 1',
         flags: 64
       })
@@ -185,28 +234,25 @@ export default class JumpCommand extends Command {
     player.stop()
 
     const successMsg =
-      (t as any).commands?.jump?.jumpedTo?.replace(
-        '{position}',
-        position.toString()
-      ) || `Jumped to song ${position}`
+      t.commands?.jump?.jumpedTo?.replace('{position}', position.toString()) ||
+      `Jumped to song ${position}`
 
     await ctx.editOrReply({ content: successMsg, flags: 64 })
   }
 
   private async handleNameJump(
     ctx: CommandContext,
-    player: Player,
+    player: JumpPlayerLike,
     name: string,
-    // biome-ignore lint/suspicious/noExplicitAny: t is a dynamic translation object
-    t: any
+    t: JumpTextLike
   ): Promise<void> {
     const songIndex = player.queue.findIndex(
-      (song: { info: { title: string } }) => song.info.title === name
+      (song) => song.info?.title === name
     )
 
     if (songIndex === -1) {
       const errorMsg =
-        (t as any).commands?.jump?.songNotFound?.replace('{name}', name) ||
+        t.commands?.jump?.songNotFound?.replace('{name}', name) ||
         `Couldn't find "${name}" in the queue`
 
       await ctx.editOrReply({
@@ -218,7 +264,7 @@ export default class JumpCommand extends Command {
 
     if (songIndex === 0) {
       const alreadyPlayingMsg =
-        (t as any).commands?.jump?.alreadyPlaying?.replace('{name}', name) ||
+        t.commands?.jump?.alreadyPlaying?.replace('{name}', name) ||
         `"${name}" is already playing`
 
       await ctx.editOrReply({
@@ -235,7 +281,7 @@ export default class JumpCommand extends Command {
     player.stop()
 
     const successMsg =
-      (t as any).commands?.jump?.jumpedToSong?.replace('{name}', name) ||
+      t.commands?.jump?.jumpedToSong?.replace('{name}', name) ||
       `Jumped to song "${name}"`
 
     await ctx.editOrReply({ content: successMsg, flags: 64 })

@@ -7,53 +7,66 @@ import {
   Options,
   SubCommand
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { handlePlaylistAutocomplete } from '../../shared/utils'
 import { getPlaylistsCollection, getTracksCollection } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
 
-// Modern Emoji Set
 const ICONS = {
-  music: '🎵',
-  tracks: '💿',
-  export: '📤',
-  artist: '🎤',
-  duration: '⏱️'
-}
+  music: 'Music',
+  tracks: 'Tracks',
+  export: 'Export'
+} as const
 
-// Modern Black Theme Colors
 const COLORS = {
-  primary: '#0x100e09',
-  success: '#0x100e09',
-  error: '#0x100e09'
-}
+  primary: 0x100e09,
+  success: 0x100e09,
+  error: 0x100e09
+} as const
 
 const playlistsCollection = getPlaylistsCollection()
 const tracksCollection = getTracksCollection()
 
+type PlaylistViewTextLike = {
+  notFound?: string
+  notFoundDesc?: string
+}
+
+type EmbedVariant = 'default' | 'success' | 'error'
+
+const options = {
+  name: createStringOption({
+    description: 'Playlist name',
+    required: true,
+    autocomplete: async (interaction) =>
+      handlePlaylistAutocomplete(interaction, playlistsCollection)
+  })
+}
+
 function createEmbed(
-  type: string,
+  type: EmbedVariant,
   title: string,
   description: string | null = null,
   fields: Array<{ name: string; value: string; inline?: boolean }> = []
 ) {
-  const colors = {
+  const colors: Record<EmbedVariant, number> = {
     default: COLORS.primary,
     success: COLORS.success,
     error: COLORS.error
   }
 
-  const icons = {
+  const icons: Record<EmbedVariant, string> = {
     default: ICONS.music,
-    success: '✨',
-    error: '❌'
+    success: 'Success',
+    error: 'Error'
   }
 
   const embed = new Embed()
-    .setColor((colors as any)[type] || colors.default)
-    .setTitle(`${(icons as any)[type] || icons.default} ${title}`)
+    .setColor(colors[type])
+    .setTitle(`${icons[type]} ${title}`)
     .setTimestamp()
     .setFooter({
-      text: `${ICONS.tracks} Kenium Music • Playlist System`,
+      text: `${ICONS.tracks} Kenium Music - Playlist System`,
       iconUrl:
         'https://toddythenoobdud.github.io/0a0f3c0476c8b495838fa6a94c7e88c2.png'
     })
@@ -71,39 +84,34 @@ function createEmbed(
 
 @Declare({
   name: 'export',
-  description: '📤 Export a playlist'
+  description: 'Export a playlist'
 })
-// biome-ignore lint/suspicious/noExplicitAny: bypassed for exactOptionalPropertyTypes
-@Options({
-  name: createStringOption({
-    description: 'Playlist name',
-    required: true,
-    autocomplete: async (interaction) => {
-      return handlePlaylistAutocomplete(interaction, playlistsCollection)
-    }
-  })
-} as any)
+@Options(options as unknown as OptionsRecord)
 export class ExportCommand extends SubCommand {
   async run(ctx: CommandContext) {
-    const { name } = ctx.options as { name: string }
-    const playlistName = name
+    const { name: playlistName } = ctx.options as { name: string }
     const userId = ctx.author.id
-    const t = getContextTranslations(ctx)
+    const t = (
+      getContextTranslations(ctx) as {
+        playlist?: { view?: PlaylistViewTextLike }
+      }
+    ).playlist?.view
 
     const playlist = playlistsCollection.findOne({
       userId,
       name: playlistName
     })
+
     if (!playlist) {
-      return await ctx.write({
+      return ctx.write({
         embeds: [
           createEmbed(
             'error',
-            t.playlist?.view?.notFound || 'Playlist Not Found',
-            (
-              t.playlist?.view?.notFoundDesc ||
-              'No playlist named "{name}" exists!'
-            ).replace('{name}', playlistName)
+            t?.notFound || 'Playlist Not Found',
+            (t?.notFoundDesc || 'No playlist named "{name}" exists!').replace(
+              '{name}',
+              playlistName
+            )
           )
         ],
         flags: 64

@@ -7,6 +7,13 @@ import {
   Middlewares
 } from 'seyfert'
 import { lru } from 'tiny-lru'
+import type {
+  ComponentCollectorSourceLike,
+  InteractionLike,
+  PlayerLike,
+  QueueLike,
+  TrackLike
+} from '../shared/helperTypes'
 import { getContextLanguage } from '../utils/i18n'
 
 const TRACKS_PER_PAGE = 5
@@ -16,7 +23,53 @@ const EPHEMERAL_FLAG = 64 | (32768 as const)
 // use tiny-lru for a bounded LRU cache instead of a plain Map
 const durationCache = lru(MAX_DURATION_CACHE)
 
-const queueViewState = new Map<string, { page: number; maxPages: number }>()
+type QueueViewState = { page: number; maxPages: number }
+type ContainerComponentLike = Record<string, unknown>
+
+type QueueTextLike = {
+  queue: {
+    title: string
+    page: string
+    resume: string
+    pause: string
+    loopOn: string
+    loopOff: string
+    refresh: string
+    clear: string
+    nowPlaying: string
+    comingUp: string
+    noTracksInQueue: string
+    queueEmpty: string
+    tip: string
+    noActivePlayerFound: string
+    errorDisplayingQueue: string
+  }
+  common: {
+    unknown: string
+    of: string
+  }
+  player: {
+    requestedBy: string
+    author: string
+  }
+}
+
+const getErrorCode = (error: unknown) =>
+  typeof error === 'object' && error !== null && 'code' in error
+    ? (error as { code?: unknown }).code
+    : undefined
+
+const queueViewState = new Map<string, QueueViewState>()
+
+const disposeQueueView = (
+  message: ComponentCollectorSourceLike<InteractionLike>
+) => {
+  if (!message.id) return
+  queueViewState.delete(message.id)
+  if (typeof message.edit === 'function') {
+    message.edit({ components: [] }).catch(() => null)
+  }
+}
 
 function pad(n: number) {
   return n < 10 ? `0${n}` : `${n}`
@@ -60,27 +113,46 @@ function createProgressBar(current: number, total: number, size = 18): string {
   return `${'─'.repeat(knobPos)}●${'─'.repeat(size - 1 - knobPos)}`
 }
 
-function getQueueLength(q: any): number {
+function formatTrackMeta(
+  track: TrackLike,
+  thele: QueueTextLike,
+  opts: { includeRequester?: boolean } = {}
+): string {
+  const artist = truncate(track.info?.author ?? thele.common.unknown, 36)
+  const requester =
+    opts.includeRequester && track.requester?.id
+      ? ` • ${thele.player.requestedBy} <@${track.requester.id}>`
+      : ''
+  const lengthMs = track.info?.length ?? 0
+
+  return `${thele.player.author}: ${artist} • ${lengthMs > 0 ? formatDuration(lengthMs) : 'LIVE'}${requester}`
+}
+
+function getQueueLength(q?: QueueLike<TrackLike> | null): number {
   if (typeof q?.size === 'number') return q.size
   if (typeof q?.length === 'number') return q.length
   if (typeof q?.toArray === 'function') return q.toArray().length
   if (typeof q?.[Symbol.iterator] === 'function') {
     let count = 0
-    for (const _item of q as Iterable<any>) count++
+    for (const _item of q as Iterable<TrackLike>) count++
     return count
   }
   return 0
 }
 
-function sliceQueue(q: any, start: number, end: number): any[] {
+function sliceQueue(
+  q: QueueLike<TrackLike> | null | undefined,
+  start: number,
+  end: number
+): TrackLike[] {
   if (!q || start >= end) return []
   if (typeof q?.slice === 'function') return q.slice(start, end)
   if (Array.isArray(q)) return q.slice(start, end)
   if (typeof q?.toArray === 'function') return q.toArray().slice(start, end)
 
-  const items: any[] = []
+  const items: TrackLike[] = []
   let index = 0
-  for (const item of q as Iterable<any>) {
+  for (const item of q as Iterable<TrackLike>) {
     if (index >= end) break
     if (index >= start) items.push(item)
     index++
@@ -92,8 +164,8 @@ const createButtonRows = (
   page: number,
   maxPages: number,
   opts: { paused: boolean; loop: boolean },
-  thele: any
-) => {
+  thele: QueueTextLike
+): ContainerComponentLike[] => {
   const isFirst = page <= 1
   const isLast = page >= maxPages
   return [
@@ -167,9 +239,9 @@ const createButtonRows = (
 }
 
 function createQueueContainer(
-  player: any,
+  player: PlayerLike,
   page: number,
-  thele: any
+  thele: QueueTextLike
 ): Container {
   const queueLength = getQueueLength(player?.queue)
   const { validPage, maxPages, startIndex, endIndex } = calcPagination(
@@ -179,34 +251,25 @@ function createQueueContainer(
   const currentTrack = player?.current
   const queueSlice = sliceQueue(player?.queue, startIndex, endIndex)
 
-  const components: any[] = [
+  const components: ContainerComponentLike[] = [
     {
       type: 10,
-      content: `**${thele.queue.title} • ${thele.queue.page.replace('{current}', validPage).replace('{total}', maxPages)}**`
+      content: `## DECK STACK\n-# ${thele.queue.page.replace('{current}', String(validPage)).replace('{total}', String(maxPages))} • ${queueLength} waiting in line`
     },
     { type: 14, divider: true, spacing: 1 }
   ]
 
   if (currentTrack) {
     const title = truncate(currentTrack.info?.title ?? thele.common.unknown, 60)
-    const artist = truncate(
-      currentTrack.info?.author ?? thele.common.unknown,
-      40
-    )
     const lengthMs = currentTrack.info?.length ?? 0
     const posMs = player.position ?? 0
     const bar = createProgressBar(posMs, lengthMs)
     const pct = lengthMs > 0 ? Math.round((posMs / lengthMs) * 100) : 0
-    const requester = currentTrack.requester?.id
-      ? ` • ${thele.player.requestedBy} 👤 <@${currentTrack.requester.id}>`
-      : ''
     const nowPlayingContent = [
-      `## ${thele.queue.nowPlaying}`,
+      `### ${thele.queue.nowPlaying}`,
       `**[${title}](${currentTrack.info?.uri ?? '#'})**`,
-      `${thele.player.author}: ${artist}${requester}`,
-      '',
-      `${bar}  **${pct}%**`,
-      `\`${formatDuration(posMs)}\` / \`${lengthMs > 0 ? formatDuration(lengthMs) : 'LIVE'}\``
+      `-# ${formatTrackMeta(currentTrack, thele, { includeRequester: true })}`,
+      `\`${formatDuration(posMs)}\`  ${bar}  \`${lengthMs > 0 ? formatDuration(lengthMs) : 'LIVE'}\`  **${pct}%**`
     ].join('\n')
 
     components.push({
@@ -225,19 +288,22 @@ function createQueueContainer(
   }
 
   if (queueLength > 0) {
-    const lines = queueSlice.map((track: any, i: number) => {
+    const lines = queueSlice.map((track: TrackLike, i: number) => {
       const num = startIndex + i + 1
       const title = truncate(track?.info?.title ?? thele.common.unknown, 52)
       const uri = track?.info?.uri ?? '#'
-      return `• \`${num}.\` [\`${title}\`](${uri})`
+      return [
+        `**${num}.** [\`${title}\`](${uri})`,
+        `-# ${formatTrackMeta(track, thele)}`
+      ].join('\n')
     })
     const comingUpTitle = `${thele.queue.comingUp}${queueLength > TRACKS_PER_PAGE ? ` (${startIndex + 1}-${endIndex} ${thele.common.of} ${queueLength})` : ''}`
     components.push(
       { type: 14, divider: true, spacing: 1 },
-      { type: 10, content: `**${comingUpTitle}**` },
+      { type: 10, content: `### ${comingUpTitle}` },
       {
         type: 10,
-        content: lines.join('\n') || `*${thele.queue.noTracksInQueue}*`
+        content: lines.join('\n\n') || `*${thele.queue.noTracksInQueue}*`
       }
     )
   }
@@ -252,22 +318,27 @@ function createQueueContainer(
     thele
   )
 
-  components.push({ type: 14, divider: true, spacing: 2 }, ...buttonRows)
-  return new Container({ components })
+  components.push({ type: 14, divider: true, spacing: 2 })
+  if (buttonRows[0]) components.push(buttonRows[0])
+  if (buttonRows[1]) {
+    components.push({ type: 14, divider: true, spacing: 1 }, buttonRows[1])
+  }
+  return new Container({ components: components as never })
 }
 
 async function handleQueueNavigation(
-  interaction: any,
-  player: any,
+  interaction: InteractionLike,
+  player: PlayerLike,
   action: string,
-  thele: any
+  thele: QueueTextLike
 ): Promise<void> {
   try {
-    await interaction.deferUpdate()
+    await interaction.deferUpdate?.()
     const normalizedAction = action.replace(/^ignore_/, '')
     const messageId = interaction?.message?.id
     const state = messageId ? queueViewState.get(messageId) : undefined
     if (!state) return
+    if (!messageId) return
 
     let newPage = state.page
 
@@ -297,8 +368,8 @@ async function handleQueueNavigation(
       case 'queue_refresh':
         break
       case 'queue_playpause':
-        if (player?.paused) await player.pause(false)
-        else await player.pause(true)
+        if (player?.paused) await player.pause?.(false)
+        else await player.pause?.(true)
         break
       case 'queue_loop': {
         const currentLoop = player?.loop || 0
@@ -321,17 +392,19 @@ async function handleQueueNavigation(
     queueViewState.set(messageId, { page: newPage, maxPages })
 
     const container = createQueueContainer(player, newPage, thele)
-    await interaction.editOrReply({
-      components: [container],
-      flags: EPHEMERAL_FLAG
-    })
+    if (typeof interaction.editOrReply === 'function') {
+      await interaction.editOrReply({
+        components: [container],
+        flags: EPHEMERAL_FLAG
+      })
+    }
   } catch {}
 }
 
 async function handleShowQueue(
   ctx: CommandContext,
-  player: any,
-  thele: any
+  player: PlayerLike,
+  thele: QueueTextLike
 ): Promise<void> {
   const queueLength = getQueueLength(player?.queue)
   if (queueLength === 0 && !player?.current) {
@@ -356,23 +429,20 @@ async function handleShowQueue(
 
   const container = createQueueContainer(player, 1, thele)
   const { maxPages } = calcPagination(queueLength, 1)
-  const message = await ctx.editOrReply(
+  const message = (await ctx.editOrReply(
     { components: [container], flags: EPHEMERAL_FLAG },
     true
-  )
+  )) as ComponentCollectorSourceLike<InteractionLike> | null
   if (!message?.id) return
 
   queueViewState.set(message.id, { page: 1, maxPages })
 
   const collector = message.createComponentCollector?.({
     idle: 180000,
-    filter: (i: any) =>
+    filter: (i: InteractionLike) =>
       i.user.id === ctx.interaction.user.id &&
       (typeof i.isButton !== 'function' || i.isButton()),
-    onStop: () => {
-      queueViewState.delete(message.id)
-      message.edit({ components: [] }).catch(() => null)
-    }
+    onStop: () => disposeQueueView(message)
   })
 
   if (collector) {
@@ -386,12 +456,14 @@ async function handleShowQueue(
       'ignore_queue_loop',
       'ignore_queue_clear'
     ]) {
-      collector.run(id, (i: any) => handleQueueNavigation(i, player, id, thele))
+      collector.run(id, (i: InteractionLike) =>
+        handleQueueNavigation(i, player, id, thele)
+      )
     }
+  } else {
+    const timer = setTimeout(() => disposeQueueView(message), 180000)
+    if (typeof timer.unref === 'function') timer.unref()
   }
-
-  const t = setTimeout(() => queueViewState.delete(message.id), 180000)
-  if (typeof (t as any).unref === 'function') (t as any).unref()
 }
 
 @Cooldown({
@@ -421,8 +493,8 @@ export default class QueueCommand extends Command {
       }
 
       await handleShowQueue(ctx, player, thele)
-    } catch (error: any) {
-      if (error?.code === 10065) return
+    } catch (error: unknown) {
+      if (getErrorCode(error) === 10065) return
       try {
         await ctx.editOrReply({
           content: thele.queue.errorDisplayingQueue,

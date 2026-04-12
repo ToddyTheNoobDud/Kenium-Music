@@ -6,6 +6,7 @@ import {
   Middlewares
 } from 'seyfert'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
 @Declare({
   name: 'previous',
   description: 'Play the previous song'
@@ -42,12 +43,12 @@ export default class previoiusCmds extends Command {
                 ? t.player.previousPlayed
                 : t.player.previousAdded || 'Playing/added the previous track'
             )
-            .setColor('#0x100e09')
+            .setColor(0x100e09)
         ],
         flags: 64
       })
-    } catch (error: any) {
-      if (error?.code === 10065) return
+    } catch (error: unknown) {
+      if (getErrorCode(error) === 10065) return
     }
   }
 }

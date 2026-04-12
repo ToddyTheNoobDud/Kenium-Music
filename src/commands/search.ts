@@ -7,9 +7,18 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { MUSIC_PLATFORMS } from '../shared/emojis'
+import type {
+  ComponentCollectorLike,
+  ComponentCollectorSourceLike,
+  InteractionLike,
+  PlayerLike,
+  TrackLike
+} from '../shared/helperTypes'
 import { ensurePlayerForVoice, maybeStartPlayback } from '../shared/playback'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
 
 const CONFIG = Object.freeze({
   INTERACTION_TIMEOUT: 45000,
@@ -25,6 +34,11 @@ const REGEX_PATTERNS = Object.freeze({
   DURATION_PARTS: /(\d+):(\d+)/,
   CLEAN_QUERY: /[^\w\s-]/g,
   WHITESPACE: /\s+/g
+})
+
+const UI_LIMITS = Object.freeze({
+  TITLE: 46,
+  AUTHOR: 28
 })
 
 const formatDuration = (ms: number): string => {
@@ -50,7 +64,76 @@ const sanitizeQuery = (query: string): string => {
     .slice(0, CONFIG.MAX_QUERY_LENGTH)
 }
 
-@Options({
+const clampText = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max - 3).trimEnd()}...` : text
+
+type MusicPlatform = (typeof MUSIC_PLATFORMS)[keyof typeof MUSIC_PLATFORMS]
+
+type SearchTrackLike = TrackLike & {
+  platform?: {
+    emoji?: string
+  } | null
+}
+
+type SearchTextLike = {
+  common?: {
+    unknown?: string
+  }
+  player?: {
+    author?: string
+  }
+  commands?: {
+    search?: {
+      name?: string
+    }
+  }
+  search: {
+    invalidQuery: string
+    noResults: string
+    genericError: string
+    noVoiceChannel: string
+    failedToJoinVoice: string
+    trackAdded: string
+    searchError: string
+  }
+}
+
+type SearchInteractionLike = InteractionLike & {
+  customId: string
+  deferUpdate: () => Promise<unknown>
+  followup: (
+    payload: { content: string; flags: number },
+    fetchReply?: boolean
+  ) => Promise<unknown>
+  editOrReply: (payload: {
+    components: Container[]
+    flags?: number
+  }) => Promise<unknown>
+}
+
+type SearchMessageLike = ComponentCollectorSourceLike<SearchInteractionLike> & {
+  delete?: () => Promise<unknown>
+  edit?: (payload: { components: Container[] | [] }) => Promise<unknown>
+}
+
+type TextDisplayComponent = { type: 10; content: string }
+type DividerComponent = { type: 14; divider: true; spacing: 1 | 2 }
+type ButtonComponent = {
+  type: 2
+  custom_id: string
+  label: string
+  emoji?: { name: string; id?: string }
+  style: number
+  disabled?: boolean
+}
+type ActionRowComponent = { type: 1; components: ButtonComponent[] }
+type SectionComponent = {
+  type: 9
+  components: TextDisplayComponent[]
+  accessory: ButtonComponent
+}
+
+const options = {
   query: createStringOption({
     description: 'The song you want to search for',
     required: true
@@ -65,18 +148,22 @@ const sanitizeQuery = (query: string): string => {
       { name: 'Deezer', value: 'deezer' }
     ]
   })
-} as any)
+}
+
+@Options(options as unknown as OptionsRecord)
 @Middlewares(['checkVoice'])
 @Declare({
   name: 'search',
   description: 'Search for a song on music platforms'
 })
 export default class SearchCommand extends Command {
-  private activeCollectors = new WeakSet<any>()
+  private activeCollectors = new WeakSet<
+    ComponentCollectorLike<SearchInteractionLike>
+  >()
 
   public override async run(ctx: CommandContext): Promise<void> {
     const lang = getContextLanguage(ctx)
-    const thele = ctx.t.get(lang)
+    const thele = ctx.t.get(lang) as unknown as SearchTextLike
     const { query, platform = 'youtube' } = ctx.options as {
       query: string
       platform?: string
@@ -115,10 +202,10 @@ export default class SearchCommand extends Command {
         selectedPlatform,
         thele
       )
-      const message = await ctx.write(
+      const message = (await ctx.write(
         { components: [searchContainer], flags: 32768 | 64 },
         true
-      )
+      )) as SearchMessageLike
 
       this.setupInteractionHandler(
         message,
@@ -126,19 +213,19 @@ export default class SearchCommand extends Command {
         player,
         cleanQuery,
         tracks,
-        selectedPlatform,
         thele
       )
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Search command error:', error)
+      if (getErrorCode(error) === 10065) return
       await ctx.write({ content: thele.search.genericError, flags: 64 })
     }
   }
 
   private async getOrCreatePlayer(
     ctx: CommandContext,
-    thele: any
-  ): Promise<any> {
+    thele: SearchTextLike
+  ): Promise<PlayerLike | null> {
     try {
       const player = await ensurePlayerForVoice(ctx, ctx.channelId)
       if (!player) {
@@ -160,57 +247,108 @@ export default class SearchCommand extends Command {
     ctx: CommandContext,
     query: string,
     source: string
-  ): Promise<any[]> {
+  ): Promise<SearchTrackLike[]> {
     try {
       const result = await ctx.client.aqua.resolve({
         query,
         source,
         requester: ctx.interaction.user
       })
-      return result.tracks?.slice(0, CONFIG.MAX_RESULTS) || []
-    } catch (error: any) {
+      return Array.isArray(result.tracks)
+        ? (result.tracks.slice(0, CONFIG.MAX_RESULTS) as SearchTrackLike[])
+        : []
+    } catch (error: unknown) {
       console.error(`Search tracks error for ${source}:`, error)
       return []
     }
   }
 
-  private createTrackList(tracks: any[], platform: any, thele: any): string {
-    return tracks
-      .map((track, i) => {
-        const emoji = track.platform?.emoji || platform.emoji
-        const title =
-          track.info.title.slice(0, 50) +
-          (track.info.title.length > 50 ? '...' : '')
-        const author = track.info.author || thele.common.unknown
-        return `**${i + 1}.** ${emoji} [\`${title}\`](${track.info.uri}) \`[${formatDuration(track.info.length)}]\`- ${thele.player.author}: ${author}`
-      })
-      .join('\n')
+  private createTrackLine(
+    track: SearchTrackLike,
+    index: number,
+    platform: MusicPlatform,
+    thele: SearchTextLike
+  ): string {
+    const emoji = track.platform?.emoji || platform.emoji
+    const titleValue = String(track.info?.title || track.title || 'Unknown')
+    const title = clampText(titleValue, UI_LIMITS.TITLE)
+    const author = clampText(
+      String(
+        track.info?.author || track.author || thele.common?.unknown || 'Unknown'
+      ),
+      UI_LIMITS.AUTHOR
+    )
+    const uri = String(track.info?.uri || track.uri || '#')
+    const length = Number(track.info?.length || track.length || 0)
+    const authorLabel = String(thele.player?.author || 'Author')
+
+    return [
+      `**${index + 1}** ${emoji} [\`${title}\`](${uri})`,
+      `-# ${formatDuration(length)} | ${authorLabel}: ${author}`
+    ].join('\n')
+  }
+
+  private createTrackSection(
+    track: SearchTrackLike,
+    index: number,
+    platform: MusicPlatform,
+    thele: SearchTextLike
+  ): SectionComponent {
+    return {
+      type: 9,
+      components: [
+        {
+          type: 10,
+          content: this.createTrackLine(track, index, platform, thele)
+        }
+      ],
+      accessory: {
+        type: 2,
+        custom_id: `ignore_select_${index}`,
+        label: index === 0 ? 'Play First' : 'Play',
+        style: index === 0 ? 1 : CONFIG.BUTTON_STYLE_SELECTION
+      }
+    }
   }
 
   private createSearchContainer(
     query: string,
-    tracks: any[],
-    platform: any,
-    thele: any
+    tracks: SearchTrackLike[],
+    platform: MusicPlatform,
+    thele: SearchTextLike
   ): Container {
+    const components: Array<
+      | TextDisplayComponent
+      | DividerComponent
+      | ActionRowComponent
+      | SectionComponent
+    > = [
+      {
+        type: 10,
+        content: `-# Query | \`${query}\` | audition one lane at a time`
+      },
+      { type: 1, components: this.createPlatformButtons(platform) },
+      { type: 14, divider: true, spacing: 2 },
+      ...tracks.flatMap((track, index) => {
+        const rows: Array<SectionComponent | DividerComponent> = [
+          this.createTrackSection(track, index, platform, thele)
+        ]
+        if (index < tracks.length - 1) {
+          rows.push({ type: 14, divider: true, spacing: 1 })
+        }
+        return rows
+      })
+    ]
+
     return new Container({
-      components: [
-        {
-          type: 10,
-          content: `### ${platform.emoji} **${platform.name} ${thele.commands.search.name.toUpperCase()}**\n> \`${query}\``
-        },
-        { type: 14, divider: true, spacing: 1 },
-        { type: 10, content: this.createTrackList(tracks, platform, thele) },
-        { type: 14, divider: true, spacing: 2 },
-        { type: 1, components: this.createSelectionButtons(tracks.length) },
-        { type: 14, divider: true, spacing: 2 },
-        { type: 1, components: this.createPlatformButtons(platform) }
-      ],
+      components,
       accent_color: platform.color
     })
   }
 
-  private createPlatformButtons(currentPlatform: any): any[] {
+  private createPlatformButtons(
+    currentPlatform: MusicPlatform
+  ): ButtonComponent[] {
     return Object.entries(MUSIC_PLATFORMS).map(([key, platform]) => {
       const emoji = parseEmoji(platform.emoji) || parseEmoji(platform.icon)
       const isActive = platform.name === currentPlatform.name
@@ -226,58 +364,58 @@ export default class SearchCommand extends Command {
     })
   }
 
-  private createSelectionButtons(count: number): any[] {
-    return Array.from(
-      { length: Math.min(count, CONFIG.MAX_RESULTS) },
-      (_, i) => ({
-        type: 2,
-        custom_id: `ignore_select_${i}`,
-        label: `${i + 1}`,
-        emoji: { name: '▶️' },
-        style: CONFIG.BUTTON_STYLE_SELECTION
-      })
-    )
-  }
-
   private setupInteractionHandler(
-    message: any,
+    message: SearchMessageLike,
     ctx: CommandContext,
-    player: any,
+    player: PlayerLike,
     query: string,
-    tracks: any[],
-    currentPlatform: any,
-    thele: any
+    tracks: SearchTrackLike[],
+    thele: SearchTextLike
   ): void {
-    const collector = message.createComponentCollector({
-      filter: (i: any) => i.user.id === ctx.interaction.user.id,
+    let collector: ComponentCollectorLike<SearchInteractionLike> | undefined
+    collector = message.createComponentCollector?.({
+      filter: (i: SearchInteractionLike) =>
+        i.user.id === ctx.interaction.user.id,
       idle: CONFIG.INTERACTION_TIMEOUT,
       onStop: () => {
-        this.activeCollectors.delete(collector)
-        message
-          .delete?.()
-          .catch(() => message.edit?.({ components: [] }).catch(() => {}))
+        if (collector) this.activeCollectors.delete(collector)
+        if (typeof message.delete === 'function') {
+          message.delete().catch(() => {
+            if (typeof message.edit === 'function') {
+              message.edit({ components: [] }).catch(() => {})
+            }
+          })
+          return
+        }
+        if (typeof message.edit === 'function') {
+          message.edit({ components: [] }).catch(() => {})
+        }
       }
     })
+    if (!collector) return
 
     this.activeCollectors.add(collector)
 
     // Handle track selection
     for (let i = 0; i < Math.min(tracks.length, CONFIG.MAX_RESULTS); i++) {
-      collector.run(`ignore_select_${i}`, async (interaction: any) => {
-        try {
-          await interaction.deferUpdate()
-          await this.handleTrackSelection(interaction, player, tracks, thele)
-        } catch (error) {
-          console.error('Track selection error:', error)
+      collector.run(
+        `ignore_select_${i}`,
+        async (interaction: SearchInteractionLike) => {
+          try {
+            await interaction.deferUpdate()
+            await this.handleTrackSelection(interaction, player, tracks, thele)
+          } catch (error) {
+            console.error('Track selection error:', error)
+          }
         }
-      })
+      )
     }
 
     // Handle platform switching
     Object.keys(MUSIC_PLATFORMS).forEach((key) => {
       collector.run(
         `ignore_platform_${key.toLowerCase()}`,
-        async (interaction: any) => {
+        async (interaction: SearchInteractionLike) => {
           try {
             await interaction.deferUpdate()
             await this.handlePlatformSwitch(
@@ -285,8 +423,6 @@ export default class SearchCommand extends Command {
               ctx,
               query,
               tracks,
-              currentPlatform,
-              message,
               thele
             )
           } catch (error) {
@@ -298,19 +434,22 @@ export default class SearchCommand extends Command {
   }
 
   private async handleTrackSelection(
-    i: any,
-    player: any,
-    tracks: any[],
-    thele: any
+    i: SearchInteractionLike,
+    player: PlayerLike,
+    tracks: SearchTrackLike[],
+    thele: SearchTextLike
   ): Promise<void> {
-    const trackIndex = parseInt(i.customId.split('_')[2], 10)
+    const trackIndex = parseInt(i.customId.split('_')[2] || '-1', 10)
     const track = tracks[trackIndex]
 
     if (track) {
-      player.queue.add(track)
+      if (typeof player.queue?.add === 'function') {
+        player.queue.add(track)
+      }
+      const titleValue = String(track.info?.title || track.title || 'Unknown')
       await i.followup(
         {
-          content: `${thele.search.trackAdded}: **${track.info.title.slice(0, 30)}${track.info.title.length > 30 ? '...' : ''}**`,
+          content: `${thele.search.trackAdded}: **${titleValue.slice(0, 30)}${titleValue.length > 30 ? '...' : ''}**`,
           flags: 64
         },
         true
@@ -321,13 +460,11 @@ export default class SearchCommand extends Command {
   }
 
   private async handlePlatformSwitch(
-    i: any,
+    i: SearchInteractionLike,
     ctx: CommandContext,
     query: string,
-    tracks: any[],
-    _currentPlatform: any,
-    _message: any,
-    thele: any
+    tracks: SearchTrackLike[],
+    thele: SearchTextLike
   ): Promise<void> {
     const platformKey = i.customId.split('_')[2] as keyof typeof MUSIC_PLATFORMS
     const newPlatform = MUSIC_PLATFORMS[platformKey]
@@ -336,7 +473,11 @@ export default class SearchCommand extends Command {
     }
 
     try {
-      const newTracks = await this.searchTracks(ctx, query, newPlatform.source)
+      const newTracks = await this.searchTracks(
+        ctx,
+        query,
+        String(newPlatform.source || '')
+      )
 
       if (newTracks.length) {
         tracks.length = 0

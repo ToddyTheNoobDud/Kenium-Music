@@ -6,6 +6,7 @@ import {
   Middlewares
 } from 'seyfert'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
 
 @Declare({
   name: 'shuffle',
@@ -25,12 +26,12 @@ export default class shuffleCmds extends Command {
 
       await ctx.editOrReply({
         embeds: [
-          new Embed().setDescription(t.player.seeked).setColor('#0x100e09')
+          new Embed().setDescription(t.player.seeked).setColor(0x100e09)
         ],
         flags: 64
       })
-    } catch (error: any) {
-      if (error?.code === 10065) return
+    } catch (error: unknown) {
+      if (getErrorCode(error) === 10065) return
     }
   }
 }

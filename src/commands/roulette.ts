@@ -40,9 +40,13 @@ export default class roulettecmds extends Command {
       const randomIndex = Math.floor(Math.random() * queue.length)
       const randomTrack = queue[randomIndex]
 
-      if (queue.splice) {
+      if (randomTrack && queue.splice) {
         queue.splice(randomIndex, 1)
-        queue.unshift(randomTrack as any)
+        ;(
+          queue as typeof queue & {
+            unshift?: (track: typeof randomTrack) => void
+          }
+        ).unshift?.(randomTrack)
       }
 
       if (player.playing || player.paused) {
@@ -73,7 +77,7 @@ export default class roulettecmds extends Command {
         ],
         flags: 64
       })
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Roulette command error:', error)
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)

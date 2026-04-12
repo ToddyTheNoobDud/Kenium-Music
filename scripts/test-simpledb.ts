@@ -8,6 +8,7 @@ async function main() {
     // Clean up any existing doc with same _id by just creating a fresh one
     const raw = col.insert({ foo: 'bar', counter: 0, arr: [] })
     const doc = Array.isArray(raw) ? raw[0] : raw
+    if (!doc) throw new Error('Insert returned no document')
     console.log('Inserted:', doc)
 
     const changes = col.updateAtomic(
