@@ -1,4 +1,4 @@
-// @ts-ignore bun runtime module
+// @ts-expect-error bun runtime module
 import { Database } from 'bun:sqlite'
 import { mkdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -11,7 +11,11 @@ const sourcePath = join(dbDir, 'sey.sqlite')
 const jsonPath = join(benchDir, 'bench_json.sqlite')
 const jsonbPath = join(benchDir, 'bench_jsonb.sqlite')
 const keep = process.argv.includes('--keep')
-const tables = ['col_guildSettings', 'col_playlists_v2', 'col_tracks_v2'] as const
+const tables = [
+  'col_guildSettings',
+  'col_playlists_v2',
+  'col_tracks_v2'
+] as const
 
 interface BenchResult {
   name: string
@@ -44,13 +48,17 @@ function ensureBenchCopies() {
 
   const convert = new Database(jsonbPath)
   for (const table of tables) {
-    convert.exec(`UPDATE "${table}" SET doc = jsonb(doc)`) 
+    convert.exec(`UPDATE "${table}" SET doc = jsonb(doc)`)
   }
   convert.exec('VACUUM')
   convert.close()
 }
 
-function bench(name: string, iterations: number, fn: (i: number) => void): BenchResult {
+function bench(
+  name: string,
+  iterations: number,
+  fn: (i: number) => void
+): BenchResult {
   const warmup = Math.min(100, Math.max(10, Math.floor(iterations / 20)))
   for (let i = 0; i < warmup; i++) fn(i)
 
@@ -90,7 +98,13 @@ const samplePlaylist = jsonDb
     ORDER BY trackCount DESC, lastModified DESC
     LIMIT 1
   `)
-  .get() as { _id: string; userId: string; name: string; trackCount: number; doc: string } | null
+  .get() as {
+  _id: string
+  userId: string
+  name: string
+  trackCount: number
+  doc: string
+} | null
 
 if (!samplePlaylist) {
   console.error('No playlist data found to benchmark.')
@@ -107,7 +121,11 @@ const sampleTrackRows = jsonDb
     ORDER BY addedAt ASC, _id ASC
     LIMIT ?
   `)
-  .all(samplePlaylist._id, sampleTrackLimit) as { _id: string; uri: string; title: string }[]
+  .all(samplePlaylist._id, sampleTrackLimit) as {
+  _id: string
+  uri: string
+  title: string
+}[]
 
 const ownerPlaylistRows = jsonDb
   .query(
@@ -120,15 +138,15 @@ const ownerPlaylistRows = jsonDb
     `
   )
   .all(samplePlaylist.userId) as Array<{
-    _id: string
-    userId: string
-    name: string
-    totalDuration: number
-    lastModified: string
-    createdAt: string
-    playCount: number
-    trackCount: number
-  }>
+  _id: string
+  userId: string
+  name: string
+  totalDuration: number
+  lastModified: string
+  createdAt: string
+  playCount: number
+  trackCount: number
+}>
 
 const playlistLookupJson = jsonDb.query(
   `SELECT _id, playCount, totalDuration FROM "col_playlists_v2" WHERE userId = ? AND name = ? LIMIT 1`
@@ -210,7 +228,11 @@ const writeIterations = {
   full: 2500
 }
 
-const results: Array<{ workload: string; json: BenchResult; jsonb: BenchResult }> = []
+const results: Array<{
+  workload: string
+  json: BenchResult
+  jsonb: BenchResult
+}> = []
 
 results.push({
   workload: 'Hot playlist lookup (projected columns)',
@@ -245,13 +267,22 @@ results.push({
 results.push({
   workload: 'Cold track docs fetch + app JSON.parse',
   json: bench('json cold parse', readIterations.coldParse, () => {
-    const rows = coldDocJson.all(samplePlaylist._id, sampleTrackLimit) as { doc: string }[]
+    const rows = coldDocJson.all(samplePlaylist._id, sampleTrackLimit) as {
+      doc: string
+    }[]
     for (const row of rows) JSON.parse(row.doc)
   }),
-  jsonb: bench('jsonb cold parse via json(doc)', readIterations.coldParse, () => {
-    const rows = coldDocJsonbToText.all(samplePlaylist._id, sampleTrackLimit) as { doc: string }[]
-    for (const row of rows) JSON.parse(row.doc)
-  })
+  jsonb: bench(
+    'jsonb cold parse via json(doc)',
+    readIterations.coldParse,
+    () => {
+      const rows = coldDocJsonbToText.all(
+        samplePlaylist._id,
+        sampleTrackLimit
+      ) as { doc: string }[]
+      for (const row of rows) JSON.parse(row.doc)
+    }
+  )
 })
 
 results.push({
@@ -270,11 +301,23 @@ results.push({
   workload: 'Partial hot update using json_set/jsonb_set',
   json: bench('json partial update', writeIterations.partial, (i) => {
     const iso = nowIso(i)
-    partialUpdateJson.run(iso, iso, JSON.stringify(iso), JSON.stringify(iso), samplePlaylist._id)
+    partialUpdateJson.run(
+      iso,
+      iso,
+      JSON.stringify(iso),
+      JSON.stringify(iso),
+      samplePlaylist._id
+    )
   }),
   jsonb: bench('jsonb partial update', writeIterations.partial, (i) => {
     const iso = nowIso(i)
-    partialUpdateJsonb.run(iso, iso, JSON.stringify(iso), JSON.stringify(iso), samplePlaylist._id)
+    partialUpdateJsonb.run(
+      iso,
+      iso,
+      JSON.stringify(iso),
+      JSON.stringify(iso),
+      samplePlaylist._id
+    )
   })
 })
 jsonWriteDb.exec('ROLLBACK')
@@ -299,16 +342,25 @@ const jsonbSize = statSync(jsonbPath).size
 
 console.log('SQLite JSON vs JSONB benchmark')
 console.log(`Source DB: ${sourcePath}`)
-console.log(`Representative playlist: ${samplePlaylist.name} (${sampleTrackCount} tracks)`)
-console.log(`Representative owner: ${samplePlaylist.userId} (${ownerPlaylistRows.length} playlists)`)
+console.log(
+  `Representative playlist: ${samplePlaylist.name} (${sampleTrackCount} tracks)`
+)
+console.log(
+  `Representative owner: ${samplePlaylist.userId} (${ownerPlaylistRows.length} playlists)`
+)
 console.log(`Benchmark track sample: ${sampleTrackRows.length} rows`)
 console.log(`JSON DB size: ${jsonSize} bytes`)
-console.log(`JSONB DB size: ${jsonbSize} bytes (${formatPct(((jsonbSize - jsonSize) / jsonSize) * 100)})`)
+console.log(
+  `JSONB DB size: ${jsonbSize} bytes (${formatPct(((jsonbSize - jsonSize) / jsonSize) * 100)})`
+)
 console.log('')
-console.log('| Workload | JSON avg ms | JSON ops/s | JSONB avg ms | JSONB ops/s | JSONB delta vs JSON |')
+console.log(
+  '| Workload | JSON avg ms | JSON ops/s | JSONB avg ms | JSONB ops/s | JSONB delta vs JSON |'
+)
 console.log('| --- | ---: | ---: | ---: | ---: | ---: |')
 for (const row of results) {
-  const delta = ((row.json.opsPerSec - row.jsonb.opsPerSec) / row.json.opsPerSec) * -100
+  const delta =
+    ((row.json.opsPerSec - row.jsonb.opsPerSec) / row.json.opsPerSec) * -100
   console.log(
     `| ${row.workload} | ${formatMs(row.json.avgMs)} | ${formatOps(row.json.opsPerSec)} | ${formatMs(row.jsonb.avgMs)} | ${formatOps(row.jsonb.opsPerSec)} | ${formatPct(delta)} |`
   )

@@ -9,9 +9,10 @@ import {
 } from '../utils/db_helper'
 
 const NICKNAME_SUFFIX = ' [24/7]'
-const BATCH_SIZE = 10
-const BATCH_DELAY = 500
-const STARTUP_DELAY = 6000
+const BATCH_SIZE = 5
+const BATCH_DELAY = 1000
+const STARTUP_DELAY = 12000
+const PURGE_DELAY = 6000
 const AQUA_RETRY_DELAY = 30000
 
 type LoggerLike = {
@@ -296,9 +297,10 @@ const processAutoJoin = async (client: BotReadyClient) => {
     client.logger.info(
       `[24/7] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}...`
     )
-    await Promise.allSettled(
-      batch.map((settings) => processGuild(client, settings))
-    )
+
+    for (const settings of batch) {
+      await processGuild(client, settings)
+    }
 
     if (i + BATCH_SIZE < enabled.length) {
       await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY))
@@ -347,12 +349,14 @@ export default createEvent({
     updatePresence(readyClient)
     readyClient.logger.info(`${user.username} is ready`)
 
-    const purged = purgeInvalidSettings()
-    if (purged > 0) {
-      readyClient.logger.info(
-        `[24/7] Purged ${purged} malformed guild settings from database.`
-      )
-    }
+    setTimeout(async () => {
+      const purged = await purgeInvalidSettings()
+      if (purged > 0) {
+        readyClient.logger.info(
+          `[24/7] Purged ${purged} malformed guild settings from database.`
+        )
+      }
+    }, PURGE_DELAY)
 
     if (hasReadyAqua(readyClient)) {
       setTimeout(() => void processAutoJoin(readyClient), STARTUP_DELAY)

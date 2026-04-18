@@ -317,6 +317,9 @@ class VoiceManager {
       if (this.stopped) return
       try {
         this.breaker.cleanup()
+        const now = Date.now()
+        for (const [guildId, state] of this.states)
+          if (now - state > 600000) this.states.delete(guildId)
       } catch {}
       this.setupCleanup()
     }, CLEANUP_INTERVAL)

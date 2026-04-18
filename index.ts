@@ -1,7 +1,7 @@
 ﻿import process from 'node:process'
 import 'dotenv/config'
 import { CooldownManager } from '@slipher/cooldown'
-import { Aqua, type Player, type Track, AqualinkEvents } from 'aqualink'
+import { Aqua, AqualinkEvents, type Player, type Track } from 'aqualink'
 import {
   Client,
   type Container,
@@ -52,12 +52,12 @@ if (!id) {
 
 const client = new Client({
   onShardDisconnect({ shardId, code, reason }) {
-    client.logger.warn(`Shard ${shardId} disconnected: ${code} — ${reason}`);
+    client.logger.warn(`Shard ${shardId} disconnected: ${code} — ${reason}`)
   },
   onShardReconnect({ shardId }) {
-    client.logger.info(`Shard ${shardId} reconnected`);
-  },
-});
+    client.logger.info(`Shard ${shardId} reconnected`)
+  }
+})
 
 const aqua = new Aqua(
   client,
@@ -222,7 +222,6 @@ aqua.on('lyricsFound', (_player, track, payload) => {
 aqua.on('lyricsNotFound', (_player, track) => {
   console.log(`Lyrics not found for ${track.info?.title || track.title}`)
 })
-
 
 aqua.on(
   'trackStart',

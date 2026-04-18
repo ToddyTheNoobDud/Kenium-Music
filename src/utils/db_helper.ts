@@ -459,7 +459,7 @@ export const disable247Sync = (guildId: string, reason?: string) => {
   })
 }
 
-export const purgeInvalidSettings = () => {
+export const purgeInvalidSettings = async () => {
   try {
     const collection = dbManager.getSettingsCollection()
     const all = collection.find({}, { fields: ['_id'] })
@@ -472,8 +472,14 @@ export const purgeInvalidSettings = () => {
     }
 
     if (toDelete.length > 0) {
-      const res = collection.delete({ _id: { $in: toDelete } })
-      return res
+      let count = 0
+      for (let i = 0; i < toDelete.length; i += 50) {
+        const chunk = toDelete.slice(i, i + 50)
+        collection.delete({ _id: { $in: chunk } })
+        count += chunk.length
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      }
+      return count
     }
   } catch (err) {
     console.error('[DatabaseHelper] Failed to purge invalid settings:', err)
