@@ -1,4 +1,4 @@
-﻿import process from 'node:process'
+import process from 'node:process'
 import 'dotenv/config'
 import { CooldownManager } from '@slipher/cooldown'
 import { Aqua, AqualinkEvents, type Player, type Track } from 'aqualink'
@@ -87,7 +87,7 @@ const aqua = new Aqua(
 
 Object.assign(client, { aqua })
 
-const state = {
+export const state = {
   presenceInterval: null as NodeJS.Timeout | null,
   voiceStatusUpdates: new Map<string, number>(),
   nowPlayingInflight: new Map<string, Promise<void>>(),
