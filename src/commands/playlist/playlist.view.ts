@@ -24,15 +24,15 @@ import {
   getTracksCollection
 } from '../../utils/db'
 
-const playlistsCollection = getPlaylistsCollection()
-const tracksCollection = getTracksCollection()
+const playlistsCol = () => getPlaylistsCollection()
+const tracksCol = () => getTracksCollection()
 
 const options = {
   playlist: createStringOption({
     description: 'Playlist name',
     required: true,
     autocomplete: async (interaction) =>
-      handlePlaylistAutocomplete(interaction, playlistsCollection)
+      handlePlaylistAutocomplete(interaction, playlistsCol())
   })
 }
 
@@ -84,7 +84,7 @@ export class ViewCommand extends SubCommand {
     if (!playlistName) {
       const page = 1
       const pageSize = 25
-      const playlists = playlistsCollection.find(
+      const playlists = playlistsCol().find(
         { userId },
         {
           sort: { lastModified: -1 },
@@ -161,7 +161,7 @@ export class ViewCommand extends SubCommand {
       return ctx.write({ embeds: [embed], components, flags: 64 })
     }
 
-    const playlist = playlistsCollection.findOne(
+    const playlist = playlistsCol().findOne(
       {
         userId,
         name: playlistName
@@ -192,7 +192,7 @@ export class ViewCommand extends SubCommand {
     const totalTracks =
       typeof playlist.trackCount === 'number'
         ? playlist.trackCount
-        : tracksCollection.count({ playlistId: playlist._id })
+        : tracksCol().count({ playlistId: playlist._id })
 
     if (totalTracks === 0) {
       const embed = createEmbed(

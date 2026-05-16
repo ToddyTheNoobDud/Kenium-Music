@@ -1,9 +1,11 @@
 import { ActionRow, Button, Embed } from 'seyfert'
 import { ButtonStyle } from 'seyfert/lib/types'
+import { lru } from 'tiny-lru'
 import { getPlaylistTracks } from '../utils/db'
 import { COLORS, ICONS } from './constants'
 
 const MAX_AUTOCOMPLETE_OPTIONS = 25
+const PLAYLIST_NAME_CACHE = lru<string[]>(200, 30_000) // 200 users, 30s TTL
 const MAX_EMBED_FIELDS = 25
 const MAX_BUTTONS_PER_ROW = 5
 
@@ -179,6 +181,20 @@ export const handlePlaylistAutocomplete = async (
   interaction: AutocompleteInteractionLike,
   playlistsCollection: PlaylistCollectionLike
 ) => {
+  const userId = interaction.user?.id
+  if (userId) {
+    const cachedNames = PLAYLIST_NAME_CACHE.get(userId)
+    if (cachedNames) {
+      const options =
+        cachedNames.length > 0
+          ? cachedNames.map((name) => ({
+              name: name.slice(0, 100),
+              value: name
+            }))
+          : [{ name: 'No Playlists', value: 'No Playlists' }]
+      return interaction.respond(options)
+    }
+  }
   const items =
     playlistsCollection.find(
       {
@@ -192,14 +208,17 @@ export const handlePlaylistAutocomplete = async (
         fields: ['name']
       }
     ) || []
+  const names = items
+    .slice(0, MAX_AUTOCOMPLETE_OPTIONS)
+    .map((p: PlaylistNameLike) => String(p.name || ''))
+  if (userId) PLAYLIST_NAME_CACHE.set(userId, names)
   const options =
-    items.length > 0
-      ? items.slice(0, MAX_AUTOCOMPLETE_OPTIONS).map((p: PlaylistNameLike) => ({
-          name: String(p.name || '').slice(0, 100),
-          value: String(p.name || '')
+    names.length > 0
+      ? names.map((name) => ({
+          name: name.slice(0, 100),
+          value: name
         }))
       : [{ name: 'No Playlists', value: 'No Playlists' }]
-
   return interaction.respond(options)
 }
 

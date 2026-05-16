@@ -27,8 +27,8 @@ import { getContextTranslations } from '../../utils/i18n'
 import { safeDefer } from '../../utils/interactions'
 import { generateSortableId } from '../../utils/simpleDB'
 
-const playlistsCollection = getPlaylistsCollection()
-const tracksCollection = getTracksCollection()
+const playlistsCol = () => getPlaylistsCollection()
+const tracksCol = () => getTracksCollection()
 
 type PlaylistAddTextLike = {
   notFound?: string
@@ -77,7 +77,7 @@ const options = {
     description: 'Playlist name',
     required: true,
     autocomplete: async (interaction) =>
-      handlePlaylistAutocomplete(interaction, playlistsCollection)
+      handlePlaylistAutocomplete(interaction, playlistsCol())
   }),
   tracks: createStringOption({
     description: 'Track names or URLs (comma/newline separated)',
@@ -157,7 +157,7 @@ export class AddCommand extends SubCommand {
       }
     ).playlist?.add
 
-    const playlistDb = playlistsCollection.findOne(
+    const playlistDb = playlistsCol().findOne(
       {
         userId,
         name: playlistName
@@ -186,7 +186,7 @@ export class AddCommand extends SubCommand {
     const currentTracksCount =
       typeof playlistDb.trackCount === 'number'
         ? playlistDb.trackCount
-        : tracksCollection.count({ playlistId: playlistDb._id })
+        : tracksCol().count({ playlistId: playlistDb._id })
     const availableSlots = Math.max(0, LIMITS.MAX_TRACKS - currentTracksCount)
 
     if (availableSlots === 0) {
@@ -208,7 +208,7 @@ export class AddCommand extends SubCommand {
 
     const timestamp = new Date().toISOString()
     const existingCanonical = new Set<string>()
-    const existingUris = tracksCollection.find(
+    const existingUris = tracksCol().find(
       { playlistId: playlistDb._id },
       { fields: ['uri'] }
     ) as Array<{ uri: string }>
@@ -312,8 +312,8 @@ export class AddCommand extends SubCommand {
 
       try {
         getDatabase().transaction(() => {
-          tracksCollection.insert(toAdd)
-          playlistsCollection.update(
+          tracksCol().insert(toAdd)
+          playlistsCol().update(
             { _id: playlistDb._id },
             {
               lastModified: timestamp,

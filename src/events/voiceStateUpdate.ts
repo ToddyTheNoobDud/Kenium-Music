@@ -8,7 +8,11 @@ import type {
   TrackLike
 } from '../shared/helperTypes'
 import { createPlayerConnection } from '../shared/player'
-import { get247ChannelIds, isTwentyFourSevenEnabled } from '../utils/db_helper'
+import {
+  disable247Sync,
+  get247ChannelIds,
+  isTwentyFourSevenEnabled
+} from '../utils/db_helper'
 
 const NO_SONG_TIMEOUT = 600000
 const REJOIN_DELAY = 5000
@@ -159,6 +163,9 @@ TRANSITIONS[STATE_PLAYING] = STATE_IDLE | STATE_DESTROYING | STATE_REJOINING
 TRANSITIONS[STATE_REJOINING] = STATE_PLAYING | STATE_IDLE
 TRANSITIONS[STATE_DESTROYING] = STATE_REJOINING
 
+
+const humanCountCache = lru<number>(CACHE_SIZE, 60000)
+
 const _functions = {
   unrefTimeout(fn: () => void, delay: number) {
     const t = setTimeout(fn, delay)
@@ -250,28 +257,40 @@ const _functions = {
       null
     )
   },
-  countHumans(members: MembersLike): number {
+  countHumans(channelId: string, members: MembersLike): number {
+    const cached = humanCountCache.get(channelId)
+    if (cached != null) return cached
     let n = 0
     const it = getIterableMembers(members)
     if (!it) return 0
     for (const member of it) if (!member?.user?.bot) n++
+    humanCountCache.set(channelId, n)
     return n
   }
 }
+
+const MAX_REJOIN_ATTEMPTS = 60
+
+type GiveUpCallback = (guildId: string) => void
 
 class CircuitBreaker {
   failures = new Map<string, { count: number; lastAttempt: number }>()
   maxFailures = 15
   baseResetTime = 30000
+  onGiveUp: GiveUpCallback | null = null
 
   canAttempt(guildId: string) {
     const entry = this.failures.get(guildId)
     if (!entry) return true
-
+    if (entry.count >= MAX_REJOIN_ATTEMPTS) {
+      this.onGiveUp?.(guildId)
+      this.failures.delete(guildId)
+      return false
+    }
     const backoffLevel = Math.max(0, entry.count - this.maxFailures)
     const resetTime = this.baseResetTime * 2 ** Math.min(backoffLevel, 5)
     if (Date.now() - entry.lastAttempt > resetTime) {
-      this.failures.delete(guildId)
+      entry.lastAttempt = Date.now()
       return true
     }
     return entry.count < this.maxFailures
@@ -284,6 +303,10 @@ class CircuitBreaker {
       count: (entry?.count ?? 0) + 1,
       lastAttempt: Date.now()
     })
+  }
+
+  reset(guildId: string) {
+    this.failures.delete(guildId)
   }
 
   cleanup() {
@@ -302,12 +325,43 @@ class VoiceManager {
     { timer: TimerLike | null; event: VoiceStateUpdatePayload }
   >()
   breaker = new CircuitBreaker()
+
+  /** Guilds where 24/7 was auto-disabled due to persistent rejoin failure */
+  autoDisabled247 = new Set<string>()
+
+  /** Called by CircuitBreaker when a guild hits MAX_REJOIN_ATTEMPTS */
+  private handleRejoinGiveUp = (guildId: string) => {
+    if (this.autoDisabled247.has(guildId)) return
+    if (!isTwentyFourSevenEnabled(guildId)) return
+    try {
+      disable247Sync(
+        guildId,
+        'Voice channel unreachable after 60 rejoin attempts'
+      )
+      this.autoDisabled247.add(guildId)
+      this.states.delete(guildId)
+      console.error(
+        '[VoiceManager] Auto-disabled 24/7 for guild',
+        guildId,
+        '- channel unreachable after',
+        MAX_REJOIN_ATTEMPTS,
+        'attempts'
+      )
+    } catch (err) {
+      console.error(
+        '[VoiceManager] Failed to auto-disable 24/7 for',
+        guildId,
+        err
+      )
+    }
+  }
   guildCache = lru(CACHE_SIZE, 60000) as GuildCacheLike
   registered = new WeakSet<VoiceClientLike>()
   cleanupTimer: TimerLike | null = null
   stopped = false
 
   constructor() {
+    this.breaker.onGiveUp = this.handleRejoinGiveUp
     this.setupCleanup()
   }
 
@@ -317,9 +371,17 @@ class VoiceManager {
       if (this.stopped) return
       try {
         this.breaker.cleanup()
-        const now = Date.now()
-        for (const [guildId, state] of this.states)
-          if (now - state > 600000) this.states.delete(guildId)
+       const MAX_STATES_ENTRIES = 2000
+        if (this.states.size > MAX_STATES_ENTRIES) {
+          for (const [gid, st] of this.states) {
+            if (st === STATE_IDLE) this.states.delete(gid)
+            if (this.states.size <= Math.floor(MAX_STATES_ENTRIES * 0.8)) break
+          }
+        }
+        for (const [gid, pending] of this.pending) {
+          if (pending.timer) _functions.clearTimer(pending.timer)
+          this.pending.delete(gid)
+        }
       } catch {}
       this.setupCleanup()
     }, CLEANUP_INTERVAL)
@@ -466,6 +528,8 @@ class VoiceManager {
     const { newState, oldState } = event
     const guildId = event.guildId
     if (!guildId || oldState?.channelId === newState?.channelId) return
+    if (oldState?.channelId) humanCountCache.delete(oldState.channelId)
+    if (newState?.channelId) humanCountCache.delete(newState.channelId)
 
     const players = client.aqua?.players as
       | { get?: (guildId: string) => PlayerLike | undefined }
@@ -668,7 +732,7 @@ class VoiceManager {
     if (!voiceChannel) return
 
     const members = voiceChannel.members || voiceChannel.voiceMembers || null
-    if (_functions.countHumans(members) === 0)
+    if (_functions.countHumans(voiceId, members) === 0)
       this.scheduleDestroy(client, player)
     else this.clearTimeout(guildId)
   }
@@ -705,6 +769,12 @@ export default createEvent({
     manager.handleUpdate({ newState, oldState, guildId }, voiceClient)
   }
 })
+
+/** Reset the rejoin circuit breaker for a guild. Call when 24/7 is re-enabled. */
+export const resetRejoinBreaker = (guildId: string) => {
+  manager.breaker.reset(guildId)
+  manager.autoDisabled247.delete(guildId)
+}
 
 const HOOK_FLAG = '_voiceManagerCleanupHookAdded'
 const processHooks = process as NodeJS.Process & Record<string, unknown>

@@ -32,8 +32,8 @@ const COLORS = {
   error: 0x100e09
 } as const
 
-const playlistsCollection = getPlaylistsCollection()
-const tracksCollection = getTracksCollection()
+const playlistsCol = () => getPlaylistsCollection()
+const tracksCol = () => getTracksCollection()
 
 type EmbedVariant = 'default' | 'success' | 'error'
 
@@ -205,7 +205,7 @@ export class ImportCommand extends SubCommand {
       }
 
       const playlistName = providedName || data.name
-      const existing = playlistsCollection.findOne({
+      const existing = playlistsCol().findOne({
         userId,
         name: playlistName
       })
@@ -245,7 +245,7 @@ export class ImportCommand extends SubCommand {
             trackCount: validTracks.length
           }
 
-          playlistsCollection.insert(insertedPlaylist)
+          playlistsCol().insert(insertedPlaylist)
 
           const tracksToInsert: Track[] = validTracks.map((track) => ({
             _id: generateSortableId(),
@@ -260,7 +260,7 @@ export class ImportCommand extends SubCommand {
             identifier: track.identifier || ''
           }))
 
-          tracksCollection.insert(tracksToInsert)
+          tracksCol().insert(tracksToInsert)
         })
       } catch (dbError) {
         console.error('Database error importing playlist:', dbError)

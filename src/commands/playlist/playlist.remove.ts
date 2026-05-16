@@ -22,8 +22,8 @@ import {
 } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
 
-const playlistsCollection = getPlaylistsCollection()
-const tracksCollection = getTracksCollection()
+const playlistsCol = () => getPlaylistsCollection()
+const tracksCol = () => getTracksCollection()
 
 type PlaylistRemoveTextLike = {
   notFound?: string
@@ -44,7 +44,7 @@ const options = {
     description: 'Playlist name',
     required: true,
     autocomplete: async (interaction) => {
-      return handlePlaylistAutocomplete(interaction, playlistsCollection)
+      return handlePlaylistAutocomplete(interaction, playlistsCol())
     }
   }),
   index: createIntegerOption({
@@ -52,7 +52,7 @@ const options = {
     required: true,
     min_value: 1,
     autocomplete: async (interaction) => {
-      return handleTrackIndexAutocomplete(interaction, playlistsCollection)
+      return handleTrackIndexAutocomplete(interaction, playlistsCol())
     }
   })
 }
@@ -75,7 +75,7 @@ export class RemoveCommand extends SubCommand {
       }
     ).playlist?.remove
 
-    const playlist = playlistsCollection.findOne(
+    const playlist = playlistsCol().findOne(
       {
         userId,
         name: playlistName
@@ -104,7 +104,7 @@ export class RemoveCommand extends SubCommand {
     const totalTracks =
       typeof playlist.trackCount === 'number'
         ? playlist.trackCount
-        : getTracksCollection().count({ playlistId: playlist._id })
+        : tracksCol().count({ playlistId: playlist._id })
 
     if (index < 1 || index > totalTracks) {
       return ctx.write({
@@ -151,8 +151,8 @@ export class RemoveCommand extends SubCommand {
     // Use atomic operation with proper error handling
     try {
       getDatabase().transaction(() => {
-        tracksCollection.delete({ _id: removedTrack._id })
-        playlistsCollection.update(
+        tracksCol().delete({ _id: removedTrack._id })
+        playlistsCol().update(
           { _id: playlist._id },
           {
             lastModified: timestamp,

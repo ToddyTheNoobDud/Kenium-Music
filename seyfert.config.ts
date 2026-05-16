@@ -8,7 +8,7 @@ const env = process.env as NodeJS.ProcessEnv & {
 export default config.bot({
   token: env.token ?? '',
   locations: {
-    base: './src',
+    base: 'src',
     commands: 'commands',
     events: 'events',
     langs: 'languages'

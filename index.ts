@@ -1,7 +1,8 @@
-import process from 'node:process'
+﻿import process from 'node:process'
 import 'dotenv/config'
 import { CooldownManager } from '@slipher/cooldown'
-import { Aqua, AqualinkEvents, type Player, type Track } from 'aqualink'
+import { Aqua, type Player, type Track } from 'aqualink'
+import { lru } from 'tiny-lru'
 import {
   Client,
   type Container,
@@ -22,7 +23,7 @@ import { middlewares } from './src/middlewares/middlewares'
 import { APP_VERSION } from './src/shared/constants'
 import { createNowPlayingEmbed, truncateText } from './src/shared/nowPlaying'
 import { closeDatabase, initDatabase } from './src/utils/db'
-import { flushDatabaseUpdates } from './src/utils/db_helper'
+import { flushDatabaseUpdates, isTwentyFourSevenEnabled } from './src/utils/db_helper'
 
 // Constants
 const PRESENCE_UPDATE_INTERVAL = 60000
@@ -31,9 +32,6 @@ const VOICE_STATUS_THROTTLE = 5000
 const COUNT_CACHE_TTL = 300000
 const RESUMED_NOW_PLAYING_RESTORE_DELAY = 1500
 const NOW_PLAYING_DEDUPE_WINDOW_MS = 2500
-type CachedGuildCountLike = {
-  memberCount?: number
-}
 
 const {
   NODE_HOST,
@@ -89,9 +87,9 @@ Object.assign(client, { aqua })
 
 export const state = {
   presenceInterval: null as NodeJS.Timeout | null,
-  voiceStatusUpdates: new Map<string, number>(),
-  nowPlayingInflight: new Map<string, Promise<void>>(),
-  nowPlayingLastStart: new Map<string, { trackKey: string; at: number }>(),
+  voiceStatusUpdates: lru<number>(500, 3_600_000), // 500 guilds, 1hr auto-expiry
+  nowPlayingInflight: lru<Promise<void>>(500, 3_600_000), // 500 guilds, 1hr auto-expiry
+  nowPlayingLastStart: lru<{ trackKey: string; at: number }>(500, 3_600_000), // 500 guilds, 1hr auto-expiry
   lastErrorLog: 0,
   cachedGuildCount: 0,
   cachedUserCount: 0,
@@ -109,10 +107,19 @@ const getTrackKey = (track: Track | null | undefined) => {
   return [uri, identifier, title, author].filter(Boolean).join('|')
 }
 
-const cleanupPlayer = (player: Player) => {
+const cleanupPlayer = (player: Player, reason?: 'queueEnd' | 'playerDestroy') => {
+  const is247 = isTwentyFourSevenEnabled(player.guildId)
+  const isQueueEnd = reason === 'queueEnd'
+
+  // For 24/7 guilds on queueEnd: keep voice status + lastStart, only clean inflight/karaoke
+  if (is247 && isQueueEnd) {
+    state.nowPlayingInflight.delete(player.guildId)
+    if (hasKaraokeSession(player.guildId)) cleanupKaraokeSession(player.guildId)
+    return
+  }
+
   const voiceChannel = player.voiceChannel || player._lastVoiceChannel
-  if (voiceChannel)
-    client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
+  if (voiceChannel) client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
   state.voiceStatusUpdates.delete(player.guildId)
   state.nowPlayingInflight.delete(player.guildId)
   state.nowPlayingLastStart.delete(player.guildId)
@@ -162,16 +169,12 @@ export const updatePresence = (clientInstance: Client) => {
 
     const now = Date.now()
     if (now - state.lastCountUpdate > COUNT_CACHE_TTL) {
-      const guilds = clientInstance.cache.guilds as
-        | { size?: number; values?: () => Iterable<CachedGuildCountLike> }
-        | undefined
-      state.cachedGuildCount = 0
-      state.cachedUserCount = 0
-      if (typeof guilds?.size === 'number') state.cachedGuildCount = guilds.size
-      for (const guild of guilds?.values?.() || []) {
-        if (typeof guilds?.size !== 'number') state.cachedGuildCount += 1
-        state.cachedUserCount += guild.memberCount || 0
-      }
+      const guildCount = clientInstance.cache.guilds?.count()
+      if (typeof guildCount === 'number') state.cachedGuildCount = guildCount
+      const allGuilds = clientInstance.cache.guilds?.values() ?? []
+      state.cachedUserCount = (allGuilds as Array<{ memberCount?: number }>).reduce(
+        (sum: number, g: { memberCount?: number }) => sum + (g.memberCount ?? 0), 0
+      )
       state.lastCountUpdate = now
     }
 
@@ -184,8 +187,7 @@ export const updatePresence = (clientInstance: Client) => {
 
     clientInstance.gateway?.setPresence({
       activities: [{ ...currentActivity, name: activityName }],
-      // @ts-expect-error
-      status: 'idle',
+      status: 'idle' as any,
       since: now,
       afk: true
     })
@@ -208,7 +210,12 @@ client.setServices({
       stageInstances: true
     },
     adapter: new LimitedMemoryAdapter({
-      message: { expire: 5 * 60 * 1000, limit: 10 }
+      message: { expire: 300_000, limit: 10 },
+      voice_state: { expire: 600_000, limit: 5000 },
+      member: { expire: 900_000, limit: 10000 },
+      channel: { expire: 1_800_000, limit: 5000 },
+      user: { expire: 3_600_000, limit: 5000 },
+      overwrite: { expire: 3_600_000, limit: 2000 }
     })
   }
 })
@@ -244,11 +251,9 @@ aqua.on(
       return
     }
 
-    if (state.nowPlayingInflight.has(player.guildId)) {
-      const inflight = state.nowPlayingInflight.get(player.guildId)
-      if (inflight) {
-        await inflight.catch(() => null)
-      }
+   const existingInflight = state.nowPlayingInflight.get(player.guildId)
+    if (existingInflight) {
+      await existingInflight.catch(() => null)
 
       const lastAfterWait = state.nowPlayingLastStart.get(player.guildId)
       if (
@@ -410,9 +415,8 @@ if (AQUALINK_TRACE) {
   }
 }
 
-const cleanupHandler = (player: Player) => cleanupPlayer(player)
-aqua.on('playerDestroy', cleanupHandler)
-aqua.on('queueEnd', cleanupHandler)
+aqua.on('playerDestroy', (player: Player) => cleanupPlayer(player, 'playerDestroy'))
+aqua.on('queueEnd', (player: Player) => cleanupPlayer(player, 'queueEnd'))
 
 aqua.on('nodeError', (node, error) => {
   console.error(`Node [${node.name}] error: ${error.message}`)
@@ -432,19 +436,7 @@ aqua.on('nodeDisconnect', (_, reason) => {
   client.logger.info(`Node disconnected: ${details}`)
 })
 
-// Periodic cleanup of stale state maps to prevent memory leaks
-const STATE_CLEANUP_INTERVAL = 300_000 // 5 minutes
-const STATE_STALE_THRESHOLD = 3_600_000 // 1 hour
-const stateCleanupTimer = setInterval(() => {
-  const cutoff = Date.now() - STATE_STALE_THRESHOLD
-  for (const [key, ts] of state.voiceStatusUpdates) {
-    if (ts < cutoff) state.voiceStatusUpdates.delete(key)
-  }
-  for (const [key, data] of state.nowPlayingLastStart) {
-    if (data.at < cutoff) state.nowPlayingLastStart.delete(key)
-  }
-}, STATE_CLEANUP_INTERVAL)
-if (stateCleanupTimer.unref) stateCleanupTimer.unref()
+
 
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)

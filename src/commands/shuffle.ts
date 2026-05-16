@@ -26,7 +26,7 @@ export default class shuffleCmds extends Command {
 
       await ctx.editOrReply({
         embeds: [
-          new Embed().setDescription(t.player.seeked).setColor(0x100e09)
+          new Embed().setDescription(t.player.shuffled).setColor(0x100e09)
         ],
         flags: 64
       })

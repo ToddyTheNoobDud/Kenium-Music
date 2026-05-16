@@ -14,7 +14,8 @@ import {
 } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
 
-const playlistsCollection = getPlaylistsCollection()
+const playlistsCol = () => getPlaylistsCollection()
+const tracksCol = () => getTracksCollection()
 
 type PlaylistDeleteTextLike = {
   notFound?: string
@@ -28,8 +29,7 @@ const options = {
     description: 'Playlist name',
     required: true,
     autocomplete: async (interaction) => {
-      const playlistsCollection = getPlaylistsCollection()
-      return handlePlaylistAutocomplete(interaction, playlistsCollection)
+      return handlePlaylistAutocomplete(interaction, playlistsCol())
     }
   })
 }
@@ -48,7 +48,7 @@ export class DeleteCommand extends SubCommand {
       }
     ).playlist?.delete
 
-    const playlist = playlistsCollection.findOne(
+    const playlist = playlistsCol().findOne(
       {
         userId,
         name: playlistName
@@ -75,8 +75,8 @@ export class DeleteCommand extends SubCommand {
     getDatabase().transaction(() => {
       const playlistId = playlist._id
       if (playlistId) {
-        getTracksCollection().delete({ playlistId })
-        playlistsCollection.delete({ _id: playlistId })
+        tracksCol().delete({ playlistId })
+        playlistsCol().delete({ _id: playlistId })
       }
     })
 

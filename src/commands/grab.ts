@@ -5,7 +5,7 @@ import {
   Declare,
   Middlewares
 } from 'seyfert'
-import { _functions } from '../events/interactionCreate'
+import { formatTime, getPlatform, truncateText } from '../shared/nowPlaying'
 import { getContextLanguage } from '../utils/i18n'
 import { getErrorCode } from '../utils/interactions'
 
@@ -49,10 +49,10 @@ export default class Grab extends Command {
       length: number
       requester: { username: string }
     }) || {}
-    const platform = _functions.getPlatform(uri)
+    const platform = getPlatform(uri)
     const volumeIcon = volume === 0 ? '🔇' : volume < 50 ? '🔈' : '🔊'
     const loopIcon = loop === 'track' ? '🔂' : loop === 'queue' ? '🔁' : '▶️'
-    const truncatedTitle = _functions.truncateText(title)
+    const truncatedTitle = truncateText(title)
     const capitalizedTitle = truncatedTitle.replace(/\b\w/g, (l) =>
       l.toUpperCase()
     )
@@ -71,7 +71,7 @@ export default class Grab extends Command {
           components: [
             {
               type: 10,
-              content: `## **[\`${capitalizedTitle}\`](${uri})**\n\`${_functions.formatTime(position)}\` / \`${_functions.formatTime(length)}\``
+              content: `## **[\`${capitalizedTitle}\`](${uri})**\n\`${formatTime(position)}\` / \`${formatTime(length)}\``
             },
             {
               type: 10,

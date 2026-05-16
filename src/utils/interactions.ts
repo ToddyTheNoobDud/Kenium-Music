@@ -107,7 +107,7 @@ export const safeDefer = async (
   ctx: DeferableContext,
   option: DeferReplyOptionsLike = false
 ): Promise<boolean> => {
-  if (!ctx.interaction && Boolean(ctx.deferred)) return true
+  if (!ctx.interaction && ctx.deferred) return true
   if (ctx.replied) return true
   if (ctx.interaction?.replied) return true
 
@@ -176,4 +176,18 @@ export const getMemberVoiceState = async (
 
   ctx[MEMBER_VOICE_STATE] = voiceState ?? null
   return ctx[MEMBER_VOICE_STATE] ?? null
+}
+
+const SILENT_DISCORD_CODES: (string | number)[] = [10065, 10008, 10062, 10015]
+
+export const withDiscordErrorGuard = <T>(
+  fn: () => Promise<T>,
+  silentCodes: (string | number)[] = SILENT_DISCORD_CODES
+): Promise<T | undefined> => {
+  return fn().catch((error) => {
+    const code = getErrorCode(error)
+    if (code != null && silentCodes.includes(code as string | number))
+      return undefined
+    throw error
+  })
 }

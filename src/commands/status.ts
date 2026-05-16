@@ -9,14 +9,7 @@ import {
 } from 'seyfert'
 
 const CPU_CACHE = {
-  model:
-    cpus()[0]
-      ?.model.replace(
-        /KATEX_INLINE_OPENRKATEX_INLINE_CLOSE|®|KATEX_INLINE_OPENTMKATEX_INLINE_CLOSE|™/g,
-        ''
-      )
-      .trim()
-      .split('@') || [],
+  model: cpus()[0]?.model.replace(/®|™/g, '').trim().split('@') || [],
   cores: cpus().length,
   lastCheck: 0,
   loadAvg: [0, 0, 0]
@@ -35,9 +28,7 @@ type StatusClientLike = CommandContext['client'] & {
   }
 }
 
-type NodeStatsLike = {
-  playingPlayers?: number
-}
+type NodeStatsLike = { players?: number; playingPlayers?: number }
 
 function formatDates(totalSeconds: number): string {
   const SECONDS_IN_DAY = 86400
@@ -128,12 +119,12 @@ export default class statusCmds extends Command {
 
     const activeNode = sortedNodes.find((node) => node.connected)
     const stats = (activeNode?.stats || {}) as NodeStatsLike
-    const { playingPlayers = 0 } = stats
+    const { players: totalPlayers = 0, playingPlayers = 0 } = stats
 
-    const guilds = Array.from(client.cache.guilds?.values() || [])
-    const userCount = guilds.reduce(
-      (total, guild) => total + (guild.memberCount || 0),
-      0
+    const guildCount = client.cache.guilds?.count() ?? 0
+    const allGuilds = client.cache.guilds?.values() ?? []
+    const userCount = (allGuilds as Array<{ memberCount?: number }>).reduce(
+      (sum: number, g: { memberCount?: number }) => sum + (g.memberCount ?? 0), 0
     )
 
     // Use cached banner URL
@@ -148,7 +139,7 @@ export default class statusCmds extends Command {
         {
           inline: true,
           name: '`📋` Info',
-          value: `\`📦\` Guilds: ${guilds.length}\n\`👤\`Users: ${userCount}\n\`🎤\`Players: ${client.aqua.players.size} / Playing: ${playingPlayers || 0}`
+          value: `\`📦\` Guilds: ${guildCount}\n\`👤\`Users: ${userCount}\n\`🎤\`Players: ${totalPlayers || client.aqua.players.size} / Playing: ${playingPlayers || 0}`
         },
         {
           inline: true,

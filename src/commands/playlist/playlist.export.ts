@@ -24,8 +24,8 @@ const COLORS = {
   error: 0x100e09
 } as const
 
-const playlistsCollection = getPlaylistsCollection()
-const tracksCollection = getTracksCollection()
+const playlistsCol = () => getPlaylistsCollection()
+const tracksCol = () => getTracksCollection()
 
 type PlaylistViewTextLike = {
   notFound?: string
@@ -39,7 +39,7 @@ const options = {
     description: 'Playlist name',
     required: true,
     autocomplete: async (interaction) =>
-      handlePlaylistAutocomplete(interaction, playlistsCollection)
+      handlePlaylistAutocomplete(interaction, playlistsCol())
   })
 }
 
@@ -97,7 +97,7 @@ export class ExportCommand extends SubCommand {
       }
     ).playlist?.view
 
-    const playlist = playlistsCollection.findOne({
+    const playlist = playlistsCol().findOne({
       userId,
       name: playlistName
     })
@@ -118,7 +118,7 @@ export class ExportCommand extends SubCommand {
       })
     }
 
-    const tracks = tracksCollection.find(
+    const tracks = tracksCol().find(
       { playlistId: playlist._id },
       { sort: { addedAt: 1 } }
     )

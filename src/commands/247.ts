@@ -6,6 +6,7 @@ import {
   Embed,
   Middlewares
 } from 'seyfert'
+import { resetRejoinBreaker } from '../events/voiceStateUpdate'
 import { EMBED_COLOR } from '../shared/constants'
 import { createPlayerConnection } from '../shared/player'
 import { getGuildSettings, updateGuildSettingsSync } from '../utils/db_helper'
@@ -66,6 +67,7 @@ export default class TwentyFourSevenCommand extends Command {
         voiceChannelId: newEnabled ? voiceChannelId : null,
         textChannelId: newEnabled ? ctx.channelId : null
       })
+      if (newEnabled) resetRejoinBreaker(guildId)
 
       void (async () => {
         try {

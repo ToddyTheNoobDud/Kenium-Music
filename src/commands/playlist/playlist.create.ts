@@ -14,7 +14,7 @@ import { getPlaylistsCollection } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
 import { generateSortableId } from '../../utils/simpleDB'
 
-const playlistsCollection = getPlaylistsCollection()
+const playlistsCol = () => getPlaylistsCollection()
 
 type PlaylistCreateTextLike = {
   invalidName?: string
@@ -66,7 +66,7 @@ export class CreateCommand extends SubCommand {
       })
     }
 
-    const existing = playlistsCollection.findOne(
+    const existing = playlistsCol().findOne(
       {
         userId,
         name
@@ -89,7 +89,7 @@ export class CreateCommand extends SubCommand {
       })
     }
 
-    const userPlaylistCount = playlistsCollection.count({ userId })
+    const userPlaylistCount = playlistsCol().count({ userId })
 
     if (userPlaylistCount >= LIMITS.MAX_PLAYLISTS) {
       return ctx.write({
@@ -119,7 +119,7 @@ export class CreateCommand extends SubCommand {
       trackCount: 0
     }
 
-    playlistsCollection.insert(playlist)
+    playlistsCol().insert(playlist)
 
     const embed = createEmbed(
       'success',

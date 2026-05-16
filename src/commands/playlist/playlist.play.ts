@@ -28,8 +28,8 @@ import { getPlaylistsCollection, getTracksCollection } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
 import { safeDefer } from '../../utils/interactions'
 
-const playlistsCollection = getPlaylistsCollection()
-const tracksCollection = getTracksCollection()
+const playlistsCol = () => getPlaylistsCollection()
+const tracksCol = () => getTracksCollection()
 const MAX_RESOLVE_CONCURRENCY = 6
 
 type PlaylistTrackDoc = Pick<Track, 'uri' | 'source' | 'identifier'>
@@ -72,7 +72,7 @@ const options = {
     description: 'Playlist name to play',
     required: true,
     autocomplete: async (interaction) =>
-      handlePlaylistAutocomplete(interaction, playlistsCollection)
+      handlePlaylistAutocomplete(interaction, playlistsCol())
   }),
   shuffle: createBooleanOption({
     description: 'Whether to shuffle tracks before playing',
@@ -188,7 +188,7 @@ export class PlayCommand extends SubCommand {
     }
     const tp = translations.playlist?.play
 
-    const playlistDb = playlistsCollection.findOne(
+    const playlistDb = playlistsCol().findOne(
       {
         userId: ctx.author.id,
         name: playlistName
@@ -209,7 +209,7 @@ export class PlayCommand extends SubCommand {
       )
     }
 
-    const dbTracks = tracksCollection.find(
+    const dbTracks = tracksCol().find(
       { playlistId: playlistDb._id },
       {
         sort: { addedAt: 1, _id: 1 },
@@ -275,7 +275,7 @@ export class PlayCommand extends SubCommand {
       }
 
       try {
-        playlistsCollection.update(
+        playlistsCol().update(
           { _id: playlistDb._id },
           {
             playCount: (playlistDb.playCount || 0) + 1,

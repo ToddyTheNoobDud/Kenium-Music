@@ -1,5 +1,5 @@
 import { lru } from 'tiny-lru'
-import { getSettingsCollection as getSettingsDbCollection } from './db'
+import { getSettingsCollection as getSettingsDbCollection } from './collections'
 
 type SettingsCollection = ReturnType<typeof getSettingsDbCollection>
 
@@ -143,11 +143,10 @@ class DatabaseManager {
     const batch = this.updateQueue
     this.updateQueue = new Map<string, Partial<GuildSettings>>()
 
-    // Use mutex to ensure only one batch processes at a time
     this.processingMutex = this.processingMutex
-      .then(() => {
-        return this._executeBatchUpdates(batch)
-      })
+      .then(() =>
+        Promise.resolve().then(() => this._executeBatchUpdates(batch))
+      )
       .catch((err) => {
         console.error('Batch mutex error:', err)
         // Re-queue failed items
@@ -331,9 +330,9 @@ export const updateGuildSettings = (
 
   const cached = dbManager.cache.get(guildId)
   if (cached) {
-    Object.assign(cached, updates)
-    cached.twentyFourSevenEnabled = toBool(cached.twentyFourSevenEnabled)
-    dbManager.cache.set(guildId, cached)
+    const updated = { ...cached, ...updates, _id: guildId, guildId }
+    updated.twentyFourSevenEnabled = toBool(updated.twentyFourSevenEnabled)
+    dbManager.cache.set(guildId, updated)
   }
 
   dbManager.queueUpdate(guildId, updates)
@@ -379,7 +378,8 @@ export const updateGuildSettingsSync = (
 export const isTwentyFourSevenEnabled = (guildId: string): boolean => {
   try {
     return toBool(getGuildSettings(guildId).twentyFourSevenEnabled)
-  } catch {
+  } catch (error) {
+    console.error('[db_helper] Failed to check 24/7 for', guildId, error)
     return false
   }
 }
@@ -393,7 +393,8 @@ export const get247ChannelIds = (guildId: string) => {
           textChannelId: settings.textChannelId || null
         }
       : null
-  } catch {
+  } catch (error) {
+    console.error('[db_helper] Unexpected error:', error)
     return null
   }
 }
@@ -429,7 +430,8 @@ export const getGuildLang = (guildId: string): string => {
   try {
     const lang = String(getGuildSettings(guildId).lang || 'en')
     return _functions.isValidLang(lang) ? lang : 'en'
-  } catch {
+  } catch (error) {
+    console.error('[db_helper] Failed to get language for', guildId, error)
     return 'en'
   }
 }
@@ -445,7 +447,8 @@ export const setGuildLang = (guildId: string, lang: string): boolean => {
   try {
     updateGuildSettingsSync(guildId, { lang })
     return true
-  } catch {
+  } catch (error) {
+    console.error('[db_helper] Failed to set language for', guildId, error)
     return false
   }
 }

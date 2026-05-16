@@ -156,7 +156,7 @@ const _functions = {
       }
     }
 
-    if (!results || !results.length) return interaction.respond([])
+    if (!results?.length) return interaction.respond([])
 
     const choices: Array<{ name: string; value: string }> = []
     for (

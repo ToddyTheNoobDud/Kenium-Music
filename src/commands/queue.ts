@@ -15,6 +15,7 @@ import type {
   TrackLike
 } from '../shared/helperTypes'
 import { getContextLanguage } from '../utils/i18n'
+import { getErrorCode } from '../utils/interactions'
 
 const TRACKS_PER_PAGE = 5
 const MAX_DURATION_CACHE = 1000
@@ -53,11 +54,6 @@ type QueueTextLike = {
     author: string
   }
 }
-
-const getErrorCode = (error: unknown) =>
-  typeof error === 'object' && error !== null && 'code' in error
-    ? (error as { code?: unknown }).code
-    : undefined
 
 const queueViewState = new Map<string, QueueViewState>()
 
