@@ -9,6 +9,7 @@ import {
   SubCommand
 } from 'seyfert'
 import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
+import { parsePlaylistFile } from '../../shared/playlist_format'
 import type { Playlist, Track } from '../../shared/types'
 import {
   getDatabase,
@@ -34,6 +35,7 @@ const COLORS = {
 
 const playlistsCol = () => getPlaylistsCollection()
 const tracksCol = () => getTracksCollection()
+const DEFAULT_IMPORTED_PLAYLIST_NAME = 'Imported Playlist'
 
 type EmbedVariant = 'default' | 'success' | 'error'
 
@@ -57,6 +59,7 @@ type ImportedTrackLike = {
   duration?: number
   source?: string
   identifier?: string
+  isrc?: string | null
 }
 
 type ImportedPlaylistPayload = {
@@ -139,14 +142,14 @@ function determineSource(uri: string): string {
 function isValidTrack(
   track: ImportedTrackLike
 ): track is Required<
-  Pick<ImportedTrackLike, 'title' | 'uri' | 'author' | 'duration'>
+  Pick<ImportedTrackLike, 'title' | 'author'>
 > &
   ImportedTrackLike {
   return (
     typeof track.title === 'string' &&
-    typeof track.uri === 'string' &&
     typeof track.author === 'string' &&
-    typeof track.duration === 'number'
+    Boolean(track.title.trim()) &&
+    Boolean(track.author.trim())
   )
 }
 
@@ -170,10 +173,14 @@ export class ImportCommand extends SubCommand {
 
     try {
       const response = await fetch(attachment.url)
-      const data = (await response.json()) as ImportedPlaylistPayload
+      const fileContent = await response.text()
+      const data = parsePlaylistFile(
+        fileContent,
+        providedName || DEFAULT_IMPORTED_PLAYLIST_NAME
+      ) as ImportedPlaylistPayload | null
 
       if (
-        !data.name ||
+        !data?.name ||
         typeof data.name !== 'string' ||
         !Array.isArray(data.tracks)
       ) {
@@ -204,7 +211,7 @@ export class ImportCommand extends SubCommand {
         })
       }
 
-      const playlistName = providedName || data.name
+      const playlistName = providedName || DEFAULT_IMPORTED_PLAYLIST_NAME
       const existing = playlistsCol().findOne({
         userId,
         name: playlistName
@@ -251,13 +258,20 @@ export class ImportCommand extends SubCommand {
             _id: generateSortableId(),
             playlistId: insertedPlaylist._id,
             title: track.title,
-            uri: track.uri,
+            uri:
+              track.uri ||
+              track.identifier ||
+              track.isrc ||
+              `${track.title} ${track.author}`,
             author: track.author,
-            duration: track.duration,
+            duration: track.duration || 0,
             addedAt: timestamp,
             addedBy: userId,
-            source: track.source || determineSource(track.uri),
-            identifier: track.identifier || ''
+            source: track.source || determineSource(track.uri || ''),
+            identifier:
+              track.identifier ||
+              (track.isrc ? `isrc:${track.isrc}` : `${track.title} ${track.author}`),
+            isrc: track.isrc || null
           }))
 
           tracksCol().insert(tracksToInsert)

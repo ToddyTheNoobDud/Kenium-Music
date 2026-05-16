@@ -143,6 +143,9 @@ class DatabaseManager {
     const batch = this.updateQueue
     this.updateQueue = new Map<string, Partial<GuildSettings>>()
 
+    // Use mutex to ensure only one batch processes at a time.
+    // Wrap _executeBatchUpdates in Promise.resolve to catch sync throws
+    // that would break the mutex chain.
     this.processingMutex = this.processingMutex
       .then(() =>
         Promise.resolve().then(() => this._executeBatchUpdates(batch))

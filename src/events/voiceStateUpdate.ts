@@ -163,7 +163,7 @@ TRANSITIONS[STATE_PLAYING] = STATE_IDLE | STATE_DESTROYING | STATE_REJOINING
 TRANSITIONS[STATE_REJOINING] = STATE_PLAYING | STATE_IDLE
 TRANSITIONS[STATE_DESTROYING] = STATE_REJOINING
 
-
+// Cache human counts per channel (60s TTL)
 const humanCountCache = lru<number>(CACHE_SIZE, 60000)
 
 const _functions = {
@@ -371,7 +371,9 @@ class VoiceManager {
       if (this.stopped) return
       try {
         this.breaker.cleanup()
-       const MAX_STATES_ENTRIES = 2000
+        // Cap states map: remove IDLE entries when map exceeds 2000 guilds
+        // (prevents unbounded growth for long-lived 24/7 guilds)
+        const MAX_STATES_ENTRIES = 2000
         if (this.states.size > MAX_STATES_ENTRIES) {
           for (const [gid, st] of this.states) {
             if (st === STATE_IDLE) this.states.delete(gid)
@@ -528,6 +530,7 @@ class VoiceManager {
     const { newState, oldState } = event
     const guildId = event.guildId
     if (!guildId || oldState?.channelId === newState?.channelId) return
+    // Invalidate human count cache for affected channels
     if (oldState?.channelId) humanCountCache.delete(oldState.channelId)
     if (newState?.channelId) humanCountCache.delete(newState.channelId)
 

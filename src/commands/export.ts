@@ -8,6 +8,7 @@ import {
   Middlewares
 } from 'seyfert'
 import type { QueueLike, TrackLike } from '../shared/helperTypes'
+import { playlistTracksToKeniumText } from '../shared/playlist_format'
 import { getContextLanguage } from '../utils/i18n'
 import { getErrorCode } from '../utils/interactions'
 
@@ -71,7 +72,7 @@ export default class exportcmds extends Command {
       }
 
       const platforms = new Set<string>()
-      const queueLines: string[] = []
+      const exportTracks = []
 
       for (let i = 0; i < queueTracks.length; i++) {
         const song = queueTracks[i]
@@ -79,8 +80,16 @@ export default class exportcmds extends Command {
         const uri = String(song.info?.uri || song.uri || '')
         const title = String(song.info?.title || song.title || 'Unknown')
         const author = String(song.info?.author || song.author || 'Unknown')
+        const duration = song.info?.length || song.length || song.duration || 0
+        const isrc = song.info?.isrc || null
 
-        queueLines.push(`${uri} | ${title} | ${author} | ${i + 1}`)
+        exportTracks.push({
+          title,
+          author,
+          uri,
+          duration,
+          isrc
+        })
 
         if (platformRegex.youtube.test(uri)) {
           platforms.add('youtube')
@@ -99,9 +108,11 @@ export default class exportcmds extends Command {
       }
 
       const randomId = Math.random().toString(36).substring(2, 10).toUpperCase()
-
-      const warningHeader = `# DO NOT MODIFY THIS FILE / CAN GET CORRUPTED - Kenium 4.10.0 - BY mushroom0162\n# Export ID: ${randomId}\n# Generated: ${new Date().toISOString()}\n\n`
-      const queueString = warningHeader + queueLines.join('\n')
+      const queueString = playlistTracksToKeniumText(
+        'Kenium Queue',
+        exportTracks,
+        randomId
+      )
 
       const platformsString = Array.from(platforms).sort().join('_')
 

@@ -8,6 +8,11 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import {
+  buildTrackResolveQueries,
+  parsePlaylistFile,
+  type PlaylistFileTrack
+} from '../shared/playlist_format'
 import { getContextLanguage } from '../utils/i18n'
 import { getErrorCode } from '../utils/interactions'
 
@@ -55,33 +60,10 @@ export default class importcmds extends Command {
       const player = client.aqua.players.get(ctx.guildId)
       if (!player) return
 
-      const numberRegex = /^\d+\.\s*/
-      const urlRegex =
-        /^https?:\/\/|youtube\.com|youtu\.be|spotify\.com|soundcloud\.com/i
-      const pipeRegex = /\s*\|\s*/
-
-      const tracks = fileContent
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => {
-          const parts = line.split(pipeRegex)
-          if (parts.length === 1) {
-            return { url: line, title: '' }
-          }
-
-          const [first, second] = parts
-
-          if (first && urlRegex.test(first)) {
-            return { url: first, title: second || '' }
-          }
-
-          return {
-            url: second || '',
-            title: first?.replace(numberRegex, '') || ''
-          }
-        })
-        .filter((track) => track.url && urlRegex.test(track.url))
+      const parsed = parsePlaylistFile(fileContent, 'Kenium Queue')
+      const tracks =
+        parsed?.tracks.filter((track) => buildTrackResolveQueries(track).length)
+          .filter(Boolean) || []
 
       if (tracks.length === 0) {
         await ctx.editOrReply({
@@ -116,15 +98,18 @@ export default class importcmds extends Command {
         const batch = tracks.slice(i, i + batchSize)
 
         const results = await Promise.allSettled(
-          batch.map(async (track) => {
-            const result = await client.aqua.resolve({
-              query: track.url || '',
-              requester: ctx.interaction.user
-            })
+          batch.map(async (track: PlaylistFileTrack) => {
+            for (const query of buildTrackResolveQueries(track)) {
+              const result = await client.aqua.resolve({
+                query,
+                requester: ctx.interaction.user,
+                ...(query.startsWith('isrc:') ? { source: 'spsearch' } : {})
+              })
 
-            if (result?.tracks?.[0]) {
-              await player.queue.add(result.tracks[0])
-              return true
+              if (result?.tracks?.[0]) {
+                await player.queue.add(result.tracks[0])
+                return true
+              }
             }
             return false
           })

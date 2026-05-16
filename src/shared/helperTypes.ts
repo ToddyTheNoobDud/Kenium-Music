@@ -31,6 +31,7 @@ export interface TrackInfoLike {
   length?: number
   uri?: string
   artworkUrl?: string | null
+  isrc?: string | null
 }
 
 export interface TrackLike {

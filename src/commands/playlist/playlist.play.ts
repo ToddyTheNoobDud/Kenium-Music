@@ -16,6 +16,7 @@ import type {
   TrackLike,
   UserLike
 } from '../../shared/helperTypes'
+import { buildTrackResolveQueries } from '../../shared/playlist_format'
 import { getOrCreatePlayer } from '../../shared/player'
 import type { Track } from '../../shared/types'
 import {
@@ -32,7 +33,10 @@ const playlistsCol = () => getPlaylistsCollection()
 const tracksCol = () => getTracksCollection()
 const MAX_RESOLVE_CONCURRENCY = 6
 
-type PlaylistTrackDoc = Pick<Track, 'uri' | 'source' | 'identifier'>
+type PlaylistTrackDoc = Pick<
+  Track,
+  'uri' | 'source' | 'identifier' | 'title' | 'author' | 'isrc'
+>
 
 type ResolvedQueueTrack = TrackLike
 
@@ -91,23 +95,29 @@ const _functions = {
 
     try {
       const sourceStr = String(track?.source || '').toLowerCase()
-      const query = track?.identifier || uri
-      const isUrl = /^https?:\/\//.test(query)
-      const res = await aqua.resolve({
-        query,
-        requester,
-        ...(sourceStr.includes('youtube') && !isUrl
-          ? { source: 'ytsearch' }
-          : {})
-      })
+      const queries = buildTrackResolveQueries(track)
+      for (const query of queries) {
+        const isUrl = /^https?:\/\//.test(query)
+        const res = await aqua.resolve({
+          query,
+          requester,
+          ...(query.startsWith('isrc:')
+            ? { source: 'spsearch' }
+            : sourceStr.includes('youtube') && !isUrl
+              ? { source: 'ytsearch' }
+              : {})
+        })
 
-      const loadType = String(res?.loadType || '').toUpperCase()
-      if (!res || loadType === 'LOAD_FAILED' || loadType === 'NO_MATCHES')
-        return null
+        const loadType = String(res?.loadType || '').toUpperCase()
+        if (!res || loadType === 'LOAD_FAILED' || loadType === 'NO_MATCHES') {
+          continue
+        }
 
-      const tracks = res.tracks
-      const firstTrack = Array.isArray(tracks) ? tracks[0] : null
-      return firstTrack ?? null
+        const tracks = res.tracks
+        const firstTrack = Array.isArray(tracks) ? tracks[0] : null
+        if (firstTrack) return firstTrack
+      }
+      return null
     } catch {
       return null
     }
@@ -213,7 +223,7 @@ export class PlayCommand extends SubCommand {
       { playlistId: playlistDb._id },
       {
         sort: { addedAt: 1, _id: 1 },
-        fields: ['uri', 'source', 'identifier']
+        fields: ['uri', 'source', 'identifier', 'title', 'author', 'isrc']
       }
     ) as PlaylistTrackDoc[]
     if (!Array.isArray(dbTracks) || dbTracks.length === 0) {

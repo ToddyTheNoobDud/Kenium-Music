@@ -1011,6 +1011,7 @@ export class Musixmatch {
 
     if (entry.expires <= Date.now()) {
       this.cache.delete(key)
+      // Opportunistically evict other expired entries on read
       const now = Date.now()
       for (const [k, v] of this.cache) {
         if (v.expires <= now) this.cache.delete(k)

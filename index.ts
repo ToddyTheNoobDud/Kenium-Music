@@ -118,6 +118,7 @@ const cleanupPlayer = (player: Player, reason?: 'queueEnd' | 'playerDestroy') =>
     return
   }
 
+  // Full cleanup for non-24/7 or playerDestroy
   const voiceChannel = player.voiceChannel || player._lastVoiceChannel
   if (voiceChannel) client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
   state.voiceStatusUpdates.delete(player.guildId)
@@ -251,7 +252,7 @@ aqua.on(
       return
     }
 
-   const existingInflight = state.nowPlayingInflight.get(player.guildId)
+    const existingInflight = state.nowPlayingInflight.get(player.guildId)
     if (existingInflight) {
       await existingInflight.catch(() => null)
 

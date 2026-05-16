@@ -8,6 +8,7 @@ import {
   SubCommand
 } from 'seyfert'
 import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
+import { playlistTracksToKeniumText } from '../../shared/playlist_format'
 import { handlePlaylistAutocomplete } from '../../shared/utils'
 import { getPlaylistsCollection, getTracksCollection } from '../../utils/db'
 import { getContextTranslations } from '../../utils/i18n'
@@ -122,13 +123,13 @@ export class ExportCommand extends SubCommand {
       { playlistId: playlist._id },
       { sort: { addedAt: 1 } }
     )
-    const exportData = {
-      ...playlist,
-      tracks
-    }
-
-    const content = JSON.stringify(exportData, null, 2)
-    const fileName = `${playlistName}.json`
+    const randomId = Math.random().toString(36).substring(2, 10).toUpperCase()
+    const content = playlistTracksToKeniumText(
+      playlistName,
+      tracks,
+      randomId
+    )
+    const fileName = `${playlistName}.txt`
     const buffer = Buffer.from(content, 'utf-8')
     const attachment = new AttachmentBuilder()
       .setFile('buffer', buffer)
