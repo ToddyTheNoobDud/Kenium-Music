@@ -5,8 +5,8 @@ import {
   Embed,
   Middlewares
 } from 'seyfert'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import { getContextLanguage } from '../utils/i18n'
-import { getErrorCode } from '../utils/interactions'
 
 @Declare({
   name: 'clear',
@@ -49,7 +49,7 @@ export default class clearcmds extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (getErrorCode(error) === 10065) return
+      if (isExpiredInteraction(error)) return
     }
   }
 }

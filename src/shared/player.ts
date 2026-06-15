@@ -11,6 +11,16 @@ type PlayerConnectionOptions = {
   textChannel?: string | null
 }
 
+export const getGuildPlayer = (
+  client: {
+    aqua: { players: { get?: (id: string) => PlayerLike | undefined } }
+  },
+  guildId: string | null | undefined
+): PlayerLike | undefined => {
+  if (!guildId) return undefined
+  return client.aqua.players.get?.(guildId)
+}
+
 export const createPlayerConnection = (
   client: AquaClientLike,
   { guildId, voiceChannel, textChannel }: PlayerConnectionOptions

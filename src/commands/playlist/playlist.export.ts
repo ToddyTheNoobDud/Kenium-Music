@@ -124,11 +124,7 @@ export class ExportCommand extends SubCommand {
       { sort: { addedAt: 1 } }
     )
     const randomId = Math.random().toString(36).substring(2, 10).toUpperCase()
-    const content = playlistTracksToKeniumText(
-      playlistName,
-      tracks,
-      randomId
-    )
+    const content = playlistTracksToKeniumText(playlistName, tracks, randomId)
     const fileName = `${playlistName}.txt`
     const buffer = Buffer.from(content, 'utf-8')
     const attachment = new AttachmentBuilder()

@@ -11,6 +11,7 @@ import {
 import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { parsePlaylistFile } from '../../shared/playlist_format'
 import type { Playlist, Track } from '../../shared/types'
+import { determineSource, formatDuration } from '../../shared/utils'
 import {
   getDatabase,
   getPlaylistsCollection,
@@ -118,32 +119,9 @@ function createEmbed(
   return embed
 }
 
-function formatDuration(ms: number): string {
-  if (!ms || ms === 0) return '00:00'
-  const totalSeconds = Math.floor(ms / 1000)
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-  }
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`
-}
-
-function determineSource(uri: string): string {
-  if (!uri) return 'Unknown'
-  if (uri.includes('youtube.com') || uri.includes('youtu.be')) return 'YouTube'
-  if (uri.includes('spotify.com')) return 'Spotify'
-  if (uri.includes('soundcloud.com')) return 'SoundCloud'
-  return 'Music'
-}
-
 function isValidTrack(
   track: ImportedTrackLike
-): track is Required<
-  Pick<ImportedTrackLike, 'title' | 'author'>
-> &
+): track is Required<Pick<ImportedTrackLike, 'title' | 'author'>> &
   ImportedTrackLike {
   return (
     typeof track.title === 'string' &&
@@ -270,7 +248,9 @@ export class ImportCommand extends SubCommand {
             source: track.source || determineSource(track.uri || ''),
             identifier:
               track.identifier ||
-              (track.isrc ? `isrc:${track.isrc}` : `${track.title} ${track.author}`),
+              (track.isrc
+                ? `isrc:${track.isrc}`
+                : `${track.title} ${track.author}`),
             isrc: track.isrc || null
           }))
 

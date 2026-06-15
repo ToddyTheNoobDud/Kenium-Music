@@ -8,6 +8,7 @@ import {
 } from 'seyfert'
 import { resetRejoinBreaker } from '../events/voiceStateUpdate'
 import { EMBED_COLOR } from '../shared/constants'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import { createPlayerConnection } from '../shared/player'
 import { getGuildSettings, updateGuildSettingsSync } from '../utils/db_helper'
 import { getContextLanguage } from '../utils/i18n'
@@ -109,13 +110,7 @@ export default class TwentyFourSevenCommand extends Command {
 
       await ctx.editOrReply({ embeds: [embed], flags: 64 })
     } catch (err: unknown) {
-      if (
-        err &&
-        typeof err === 'object' &&
-        'code' in err &&
-        (err.code === 10062 || err.code === 10015)
-      )
-        return
+      if (isExpiredInteraction(err)) return
       console.error('247 command error:', err)
     }
   }

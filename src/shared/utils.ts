@@ -306,3 +306,53 @@ export const shuffleArray = <T>(array: T[]) => {
   }
   return shuffled
 }
+
+export const truncate = (text: string | undefined, max: number): string => {
+  if (!text) return ''
+  if (text.length <= max) return text
+  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}\u2026`
+}
+
+export const safeText = (value: unknown): string =>
+  typeof value === 'string' ? value.trim() : ''
+
+export const safeNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
+export const mapPool = async <T>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<void>,
+  shouldStop?: () => boolean
+) => {
+  const l = Math.max(1, limit)
+  let nextIndex = 0
+  const getNextIndex = (): number => {
+    const idx = nextIndex
+    nextIndex += 1
+    return idx
+  }
+  const next = async () => {
+    for (;;) {
+      if (shouldStop?.()) return
+      const idx = getNextIndex()
+      if (idx >= items.length) return
+      try {
+        const item = items[idx]
+        if (item !== undefined) {
+          await fn(item, idx)
+        }
+      } catch (err) {
+        console.error(`mapPool task ${idx} failed:`, err)
+      }
+    }
+  }
+  const runners = Array.from({ length: Math.min(l, items.length) }, next)
+  await Promise.all(runners)
+}

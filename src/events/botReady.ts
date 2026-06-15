@@ -7,6 +7,7 @@ import {
   purgeInvalidSettings,
   updateGuildSettingsSync
 } from '../utils/db_helper'
+import { registerVoiceManager } from './voiceStateUpdate'
 
 const NICKNAME_SUFFIX = ' [24/7]'
 const BATCH_SIZE = 5
@@ -344,6 +345,10 @@ export default createEvent({
     const readyClient = client as unknown as BotReadyClient
     clientInstance = readyClient
     if (!readyClient.botId) readyClient.botId = user.id
+
+    try {
+      registerVoiceManager(readyClient as any)
+    } catch {}
 
     await tryInitAqua(readyClient)
     updatePresence(readyClient)

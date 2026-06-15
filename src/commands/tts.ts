@@ -8,6 +8,7 @@ import {
   Options
 } from 'seyfert'
 import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import {
   ensurePlayerForVoice,
   maybeStartPlayback,
@@ -33,47 +34,57 @@ const options = {
 })
 export default class TTSCommand extends Command {
   public override async run(ctx: CommandContext) {
-    const { tts } = ctx.options as { tts: string }
-    const t = ctx.t.get(getContextLanguage(ctx))
+    try {
+      const { tts } = ctx.options as { tts: string }
+      const t = ctx.t.get(getContextLanguage(ctx))
 
-    if (!(await safeDefer(ctx, true))) return
+      if (!(await safeDefer(ctx, true))) return
 
-    const player = await ensurePlayerForVoice(ctx, ctx.channelId)
-    if (!player) {
+      const player = await ensurePlayerForVoice(ctx, ctx.channelId)
+      if (!player) {
+        await ctx.editOrReply({
+          embeds: [
+            new Embed()
+              .setDescription(
+                t.player?.noVoiceChannel ||
+                  'You must be in a voice channel to use this command.'
+              )
+              .setColor(0xff5252)
+          ],
+          flags: 64
+        })
+        return
+      }
+
+      const { added } = await resolveAndQueue({
+        client: ctx.client,
+        player,
+        query: tts,
+        source: 'speak',
+        requester: ctx.interaction.user
+      })
+
+      if (!added.length) {
+        await ctx.editOrReply({
+          content: t.player?.noTrackFound || 'No track found.',
+          flags: 64
+        })
+        return
+      }
+
+      await maybeStartPlayback(player)
       await ctx.editOrReply({
-        embeds: [
-          new Embed()
-            .setDescription(
-              t.player?.noVoiceChannel ||
-                'You must be in a voice channel to use this command.'
-            )
-            .setColor(0xff5252)
-        ],
+        content: t.player?.trackAdded || 'Added to the queue.',
         flags: 64
       })
-      return
+    } catch (error: unknown) {
+      if (isExpiredInteraction(error)) return
+      console.error(error)
+      try {
+        await ctx.editOrReply({ content: 'An error occurred.' })
+      } catch (innerErr) {
+        if (isExpiredInteraction(innerErr)) return
+      }
     }
-
-    const { added } = await resolveAndQueue({
-      client: ctx.client,
-      player,
-      query: tts,
-      source: 'speak',
-      requester: ctx.interaction.user
-    })
-
-    if (!added.length) {
-      await ctx.editOrReply({
-        content: t.player?.noTrackFound || 'No track found.',
-        flags: 64
-      })
-      return
-    }
-
-    await maybeStartPlayback(player)
-    await ctx.editOrReply({
-      content: t.player?.trackAdded || 'Added to the queue.',
-      flags: 64
-    })
   }
 }

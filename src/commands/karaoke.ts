@@ -17,6 +17,7 @@ import {
   extractLyricsSearchHints
 } from '../shared/lyrics'
 import { musixmatch } from '../shared/musixmatch'
+import { formatDuration } from '../shared/utils'
 import { getContextLanguage } from '../utils/i18n'
 import { safeDefer } from '../utils/interactions'
 
@@ -106,13 +107,6 @@ const _createEndedContainer = (
       _divider(),
       new TextDisplay().setContent(messages[reason])
     )
-}
-
-const _formatTimestamp = (ms: number) => {
-  const totalSeconds = Math.floor(ms / 1000)
-  const mins = Math.floor(totalSeconds / 60)
-  const secs = String(totalSeconds % 60).padStart(2, '0')
-  return `${mins}:${secs}`
 }
 
 const _lineStartMs = (line: LyricLine): number =>
@@ -220,7 +214,7 @@ const _createStatusLine = (
       : `${Math.max(0.1, remainingMs / 1000).toFixed(1)}s`
 
   return [
-    `### ${state} ${_formatTimestamp(currentTimeMs)}  •  NEXT ${nextIn}`,
+    `### ${state} ${formatDuration(currentTimeMs)}  •  NEXT ${nextIn}`,
     `-# ${_createProgressBar(currentTimeMs, startMs, endMs)}`
   ].join('\n')
 }

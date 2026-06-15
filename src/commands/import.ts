@@ -8,13 +8,13 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import {
   buildTrackResolveQueries,
-  parsePlaylistFile,
-  type PlaylistFileTrack
+  type PlaylistFileTrack,
+  parsePlaylistFile
 } from '../shared/playlist_format'
 import { getContextLanguage } from '../utils/i18n'
-import { getErrorCode } from '../utils/interactions'
 
 @Cooldown({
   type: CooldownType.User,
@@ -62,7 +62,8 @@ export default class importcmds extends Command {
 
       const parsed = parsePlaylistFile(fileContent, 'Kenium Queue')
       const tracks =
-        parsed?.tracks.filter((track) => buildTrackResolveQueries(track).length)
+        parsed?.tracks
+          .filter((track) => buildTrackResolveQueries(track).length)
           .filter(Boolean) || []
 
       if (tracks.length === 0) {
@@ -167,7 +168,7 @@ export default class importcmds extends Command {
 
       await ctx.editOrReply({ embeds: [resultEmbed], flags: 64 })
     } catch (error: unknown) {
-      if (getErrorCode(error) === 10065) return
+      if (isExpiredInteraction(error)) return
     }
   }
 }

@@ -7,10 +7,10 @@ import {
   Embed,
   Middlewares
 } from 'seyfert'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import type { QueueLike, TrackLike } from '../shared/helperTypes'
 import { playlistTracksToKeniumText } from '../shared/playlist_format'
 import { getContextLanguage } from '../utils/i18n'
-import { getErrorCode } from '../utils/interactions'
 
 const getQueueTracks = (
   queue: QueueLike<TrackLike> | undefined
@@ -133,7 +133,7 @@ export default class exportcmds extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (getErrorCode(error) === 10065) return
+      if (isExpiredInteraction(error)) return
     }
   }
 }

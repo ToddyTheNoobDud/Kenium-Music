@@ -6,6 +6,7 @@ import {
   LocalesT,
   type UsingClient
 } from 'seyfert'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import { getContextLanguage } from '../utils/i18n'
 
 const _functions = {
@@ -76,14 +77,12 @@ export default class PingCommand extends Command {
 
       await ctx.write({ embeds: [embed] })
     } catch (error) {
-      const err = error as { code?: number }
-      if (err.code !== 10065) {
-        const t = ctx.t.get('en')
-        await ctx.write({
-          content: t.errors?.general || 'An error occurred',
-          flags: 64
-        })
-      }
+      if (isExpiredInteraction(error)) return
+      const t = ctx.t.get('en')
+      await ctx.write({
+        content: t.errors?.general || 'An error occurred',
+        flags: 64
+      })
     }
   }
 }

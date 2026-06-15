@@ -16,7 +16,8 @@ import {
   extractYouTubeId,
   formatDuration,
   handlePlaylistAutocomplete,
-  handleTrackAutocomplete
+  handleTrackAutocomplete,
+  mapPool
 } from '../../shared/utils'
 import {
   getDatabase,
@@ -105,38 +106,7 @@ export const _functions = {
       return uri
     }
   },
-  normalizeLoadType: (t: unknown): string => String(t || '').toUpperCase(),
-  mapPool: async <T>(
-    items: T[],
-    limit: number,
-    fn: (item: T, index: number) => Promise<void>,
-    shouldStop?: () => boolean
-  ) => {
-    const l = Math.max(1, limit)
-    let nextIndex = 0
-    const getNextIndex = (): number => {
-      const idx = nextIndex
-      nextIndex += 1
-      return idx
-    }
-    const next = async () => {
-      for (;;) {
-        if (shouldStop?.()) return
-        const idx = getNextIndex()
-        if (idx >= items.length) return
-        try {
-          const item = items[idx]
-          if (item !== undefined) {
-            await fn(item, idx)
-          }
-        } catch (err) {
-          console.error(`mapPool task ${idx} failed:`, err)
-        }
-      }
-    }
-    const runners = Array.from({ length: Math.min(l, items.length) }, next)
-    await Promise.all(runners)
-  }
+  normalizeLoadType: (t: unknown): string => String(t || '').toUpperCase()
 }
 
 @Declare({
@@ -277,7 +247,7 @@ export class AddCommand extends SubCommand {
       } else {
         const uniqueTokens = Array.from(new Set(tokens))
         const limit = Math.min(CONCURRENCY, availableSlots || 1)
-        await _functions.mapPool(
+        await mapPool(
           uniqueTokens,
           limit,
           async (token) => {

@@ -1,16 +1,8 @@
 import { Cooldown, CooldownType } from '@slipher/cooldown'
-import type { Player } from 'aqualink'
-import {
-  Command,
-  type CommandContext,
-  Container,
-  Declare,
-  Middlewares,
-  type UsingClient
-} from 'seyfert'
-import { formatTime, getPlatform, truncateText } from '../shared/nowPlaying'
+import { Command, type CommandContext, Declare, Middlewares } from 'seyfert'
+import { isExpiredInteraction } from '../shared/errorGuard'
+import { createNowPlayingContainer } from '../shared/nowPlaying'
 import { getContextLanguage } from '../utils/i18n'
-import { getErrorCode } from '../utils/interactions'
 
 @Cooldown({
   type: CooldownType.User,
@@ -23,62 +15,6 @@ import { getErrorCode } from '../utils/interactions'
 })
 @Middlewares(['cooldown', 'checkPlayer'])
 export default class nowplayngcmds extends Command {
-  private createNowPlayingUI(
-    player: Player,
-    track: {
-      title?: string
-      uri?: string
-      length?: number
-      requester?: { username?: string }
-      info?: { artworkUrl?: string | null }
-    },
-    client: UsingClient
-  ) {
-    const { position = 0, volume = 0, loop } = player || {}
-    const { title = 'Unknown', uri = '', length = 0, requester } = track || {}
-    const platform = getPlatform(uri)
-    const volumeIcon = volume === 0 ? '🔇' : volume < 50 ? '🔈' : '🔊'
-    const loopIcon = loop === 'track' ? '🔂' : loop === 'queue' ? '🔁' : '▶️'
-    const truncatedTitle = truncateText(title)
-    const capitalizedTitle = truncatedTitle.replace(/\b\w/g, (l) =>
-      l.toUpperCase()
-    )
-
-    return new Container({
-      components: [
-        {
-          type: 10,
-          content: `**${platform.emoji} Now Playing** | **Queue size**: ${player?.queue?.length || 0}`
-        },
-        { type: 14, divider: true, spacing: 1 },
-        {
-          type: 9,
-          components: [
-            {
-              type: 10,
-              content: `## **[\`${capitalizedTitle}\`](${uri})**\n\`${formatTime(position)}\` / \`${formatTime(length)}\``
-            },
-            {
-              type: 10,
-              content: `${volumeIcon} \`${volume}%\` ${loopIcon} Requester: \`${requester?.username || 'Unknown'}\``
-            }
-          ],
-          accessory: {
-            type: 11,
-            media: {
-              url:
-                track?.info?.artworkUrl ||
-                client?.me?.avatarURL?.({ extension: 'webp' }) ||
-                ''
-            }
-          }
-        },
-        { type: 14, divider: true, spacing: 2 }
-        // Removed the buttons section (type: 1 with button components)
-      ]
-    })
-  }
-
   public override async run(ctx: CommandContext): Promise<void> {
     try {
       const { client } = ctx
@@ -101,10 +37,25 @@ export default class nowplayngcmds extends Command {
         return
       }
 
-      const embed = this.createNowPlayingUI(player, track, client)
+      const artworkUrl =
+        track?.info?.artworkUrl ||
+        client?.me?.avatarURL?.({ extension: 'webp' }) ||
+        ''
+
+      const embed = createNowPlayingContainer({
+        position: player.position,
+        volume: player.volume,
+        loop: player.loop as string,
+        queueLength: player.queue?.length || 0,
+        title: track.title,
+        uri: track.uri,
+        length: track.length,
+        requesterName: track.requester?.username || 'Unknown',
+        artworkUrl
+      })
       await ctx.editOrReply({ components: [embed], flags: 64 | 32768 })
     } catch (error: unknown) {
-      if (getErrorCode(error) === 10065) return
+      if (isExpiredInteraction(error)) return
     }
   }
 }

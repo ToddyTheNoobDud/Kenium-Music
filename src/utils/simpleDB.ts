@@ -970,6 +970,38 @@ class SQLiteCollection<T extends Record<string, unknown>> extends EventEmitter {
     return res.changes
   }
 
+  private updateJsonFields(query: Query, updates: Partial<T>): number | null {
+    const entries = Object.entries(updates).filter(
+      ([, value]) => value !== undefined
+    )
+    if (!entries.length) return 0
+    if (entries.some(([field]) => this.isHotColumn(field))) return null
+
+    const { sql, params } = this.buildWhere(query)
+    const now = _functions.now()
+    const jsonArgs = [`'$.updatedAt'`, 'json(?)']
+    const jsonParams: unknown[] = [_functions.toJsonArgument(now)]
+
+    for (const [field, value] of entries) {
+      jsonArgs.push(`'${this.getDocPath(field)}'`, 'json(?)')
+      jsonParams.push(_functions.toJsonArgument(value))
+    }
+
+    const updateSql = `UPDATE ${this.qtable} SET updatedAt = ?, doc = json_set(doc, ${jsonArgs.join(', ')}) WHERE ${sql}`
+    const cacheKey = `upj:${entries
+      .map(([field]) => field)
+      .sort()
+      .join(',')}:${sql}`
+    const res = this.getStmt(updateSql, cacheKey).run(
+      now,
+      ...jsonParams,
+      ...params
+    )
+
+    if (res.changes > 0) this.emit('change', 'update', { count: res.changes })
+    return res.changes
+  }
+
   private updateAtomicHotColumns(
     query: Query,
     ops: AtomicUpdate
@@ -1041,6 +1073,9 @@ class SQLiteCollection<T extends Record<string, unknown>> extends EventEmitter {
 
     const fast = this.updateHotColumns(query, updates)
     if (fast !== null) return fast
+
+    const json = this.updateJsonFields(query, updates)
+    if (json !== null) return json
 
     return this.updateWhere(query, (doc) => {
       const next: T & Required<Document> = {

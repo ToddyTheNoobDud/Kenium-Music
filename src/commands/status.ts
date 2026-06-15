@@ -7,6 +7,7 @@ import {
   Embed,
   Middlewares
 } from 'seyfert'
+import { state } from '../../index'
 
 const CPU_CACHE = {
   model: cpus()[0]?.model.replace(/®|™/g, '').trim().split('@') || [],
@@ -122,11 +123,7 @@ export default class statusCmds extends Command {
     const { players: totalPlayers = 0, playingPlayers = 0 } = stats
 
     const guildCount = client.cache.guilds?.count() ?? 0
-    // Sum memberCount across all cached guilds (cache.users only tracks directly-seen users)
-    const allGuilds = client.cache.guilds?.values() ?? []
-    const userCount = (allGuilds as Array<{ memberCount?: number }>).reduce(
-      (sum: number, g: { memberCount?: number }) => sum + (g.memberCount ?? 0), 0
-    )
+    const userCount = state.cachedUserCount
 
     // Use cached banner URL
     const bannerURL = await getBannerURL(client as StatusClientLike)

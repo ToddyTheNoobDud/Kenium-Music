@@ -6,7 +6,7 @@ import {
   Declare,
   Middlewares
 } from 'seyfert'
-import { lru } from 'tiny-lru'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import type {
   ComponentCollectorSourceLike,
   InteractionLike,
@@ -14,15 +14,11 @@ import type {
   QueueLike,
   TrackLike
 } from '../shared/helperTypes'
+import { formatDuration, truncate } from '../shared/utils'
 import { getContextLanguage } from '../utils/i18n'
-import { getErrorCode } from '../utils/interactions'
 
 const TRACKS_PER_PAGE = 5
-const MAX_DURATION_CACHE = 1000
 const EPHEMERAL_FLAG = 64 | (32768 as const)
-
-// use tiny-lru for a bounded LRU cache instead of a plain Map
-const durationCache = lru(MAX_DURATION_CACHE)
 
 type QueueViewState = { page: number; maxPages: number }
 type ContainerComponentLike = Record<string, unknown>
@@ -65,33 +61,6 @@ const disposeQueueView = (
   if (typeof message.edit === 'function') {
     message.edit({ components: [] }).catch(() => null)
   }
-}
-
-function pad(n: number) {
-  return n < 10 ? `0${n}` : `${n}`
-}
-
-function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return '0:00'
-  const cached = durationCache.get(ms)
-  if (cached) return cached
-  const totalSeconds = (ms / 1000) | 0
-  const hours = (totalSeconds / 3600) | 0
-  const minutes = ((totalSeconds % 3600) / 60) | 0
-  const seconds = totalSeconds % 60
-  const formatted =
-    hours > 0
-      ? `${hours}:${pad(minutes)}:${pad(seconds)}`
-      : `${minutes}:${pad(seconds)}`
-  // tiny-lru will enforce max size and evict LRU items automatically
-  durationCache.set(ms, formatted)
-  return formatted
-}
-
-function truncate(text: string, max: number): string {
-  if (!text) return ''
-  if (text.length <= max) return text
-  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`
 }
 
 function calcPagination(queueLength: number, page: number) {
@@ -490,7 +459,7 @@ export default class QueueCommand extends Command {
 
       await handleShowQueue(ctx, player, thele)
     } catch (error: unknown) {
-      if (getErrorCode(error) === 10065) return
+      if (isExpiredInteraction(error)) return
       try {
         await ctx.editOrReply({
           content: thele.queue.errorDisplayingQueue,

@@ -16,8 +16,8 @@ import type {
   TrackLike,
   UserLike
 } from '../../shared/helperTypes'
-import { buildTrackResolveQueries } from '../../shared/playlist_format'
 import { getOrCreatePlayer } from '../../shared/player'
+import { buildTrackResolveQueries } from '../../shared/playlist_format'
 import type { Track } from '../../shared/types'
 import {
   createEmbed,

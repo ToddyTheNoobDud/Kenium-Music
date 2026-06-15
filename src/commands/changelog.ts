@@ -11,6 +11,7 @@ import { ButtonStyle } from 'seyfert/lib/types'
 import type { InteractionLike } from '../shared/helperTypes'
 import { getContextLanguage } from '../utils/i18n'
 import { safeDefer } from '../utils/interactions'
+import { APP_VERSION } from '../shared/constants'
 
 const CONFIG = {
   GITHUB: {
@@ -21,62 +22,47 @@ const CONFIG = {
     ISSUES_URL: 'https://github.com/ToddyTheNoobDud/Kenium-Music/issues/new'
   },
   BOT: {
-    VERSION: '4.10.0',
+    VERSION: APP_VERSION,
     DEVELOPER: 'mushroom0162',
     RELEASE_NOTES: {
-      version: '4.10.0',
-      date: '2026-03-16',
+      version: APP_VERSION,
+      date: '2026-06-15',
       summary:
-        'Database internals were reworked for faster hot paths, and playback flows were cleaned up for better control and reliability.',
+        'Integrated TuneMyMusic for seamless playlist migration, overhauled the 24/7 stream retention system with exponential backoffs, and introduced database optimizations alongside consolidated UI components.',
       highlights: [
-        'Normalized hot SQLite columns for playlists, tracks, and guild settings',
-        'Shared playback flow for /play, /play-file, /tts, and /search',
-        'Safer player controls and per-guild voice status throttling'
+        'Added TuneMyMusic CSV/TXT integration for playlist imports/exports',
+        'Overhauled 24/7 reconnects with exponential backoffs and socket error recovery',
+        'Fully refactored the caching system to improve memory footprint and lookup speed',
+        'Optimized SQLite performance with native JSON field path updates',
+        'Consolidated Now Playing UI layouts and centralized Discord interaction error guards'
       ],
       added: [
-        'Schema versioning with `PRAGMA user_version`',
-        'Versioned in-app database migrations',
-        'Real field projection support in the database layer',
-        'Fast hot-column-only update paths',
-        'Shared playback helpers for player creation, queue resolution, queue start, and control checks',
-        'New /sources command to see the avalible sources.',
-        'Micro-optimizations for SQLITE that are built-in'
+        'TuneMyMusic playlist format support (CSV, TXT, and Kenium JSON payloads)',
+        'ISRC lookup support during playlist import to resolve tracks with high fidelity',
+        'Centralized interaction error handling middleware and decorators (errorGuard.ts)',
+        'Async concurrency pool worker (mapPool) for batch actions to limit resource strain',
+        'Automatic 24/7 reconnection trigger on shard ready and shard reconnect events',
+        'SQLite collection unit tests for mixed hot and non-hot column updates'
       ],
       changed: [
-        'Reworked the database around normalized hot columns plus JSON for colder fields',
-        'Moved hot queries to projected SQLite columns instead of always parsing full JSON payloads',
-        'Moved hot filtering and sorting away from `json_extract(...)` where indexed columns exist',
-        'Moved schema and index setup into versioned migrations instead of ad-hoc runtime setup',
-        'Updated guild settings reads and playlist commands to use lighter projected queries',
-        'Reduced /play allocations with simpler string operations',
-        'Reworked karaoke around timestamp-based math and a cleaner UI flow',
-        'Optimized playlist interactions, 24/7 flow, and startup to reduce DB work',
-        'Updated dependencies',
-        'Changed voice status throttling to work per guild instead of globally',
-        'Reworked the changelog command with a new UI and better organization hoppefully.',
-        'Reworked the lyrics command with a new UI, this improved the readability for me.',
-        'Reworked the musixmatch integration, improved the fetching accuary, speed, and caching',
-        'Reworked most of the code into shared functions, this greatly reduces the duplication and more maintable for myself lol.',
-        'Improved some commands descriptions to be more clear what they are doing.',
-        'Basic improvement in the /help command cuz why not'
+        'Fully refactored the caching system to improve caching efficiency and memory management',
+        'Rebuilt the 24/7 reconnect flow to use exponential backoff delays instead of instant reconnects',
+        'Reused active player connections on rejoin instead of destructively recreating the player',
+        'Expanded VoiceManager socket close code handling to handle 1001, 1006, 4015, and 5001 disconnects',
+        'Optimized user count checking on the /status command by reading from a cached state variable',
+        'Modified SimpleDB update operations to perform in-place updates using native SQLite json_set',
+        'Consolidated all duplicate Now Playing UI layout logic into a single shared function',
+        'Replaced repetitive getErrorCode checks with a unified isExpiredInteraction error check'
       ],
       fixed: [
-        'Missing or outdated translations',
-        'Playlist track autocomplete ordering so it matches actual track removal ordering',
-        'Hot query and index mismatches for playlist lookup, playlist listing, track pagination, and 24/7 recovery',
-        'Unnecessary full-document rewrite work on common hot updates where possible',
-        '/tts first-use flow so it now creates or reuses the player, resolves the request, queues it, and starts playback in one invocation',
-        'Playback buttons so users must be in the same voice channel as the active player',
-        'Stale platform-switch logic in /search',
-        'Cross-guild interference from global voice-status throttling',
-        'Cooldown middleware control flow',
-        'Queue and Lyrics commands not responding',
-        'Some memory leaks'
+        'A critical SimpleDB database bug where updates to hot-columns alongside document JSON fields would get desynchronized; it now falls back to full document writes',
+        'Unhandled crashes during /play command autocomplete by wrapping interactions with safe response handlers',
+        'Player text channel resolution bugs during track playback exceptions',
+        'Outdated package dependencies for Biome, Seyfert, Node, and Bun types'
       ],
       removed: [
-        'Legacy JSON shard migration script',
-        'Old migrate-db script entry',
-        'Old ad-hoc expression-index setup from the hot runtime path'
+        'Legacy inline UI layout blocks from /grab, /nowplaying, and related command files',
+        'Duplicate error-catching blocks across more than 25 command handlers'
       ]
     } as ReleaseNotes
   },

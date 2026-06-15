@@ -9,8 +9,8 @@ import {
   Options
 } from 'seyfert'
 import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import { getContextLanguage } from '../utils/i18n'
-import { getErrorCode } from '../utils/interactions'
 
 type QueueItemLike = {
   info?: {
@@ -182,7 +182,7 @@ export default class JumpCommand extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (getErrorCode(error) === 10065) return
+      if (isExpiredInteraction(error)) return
 
       console.error('Jump command error:', error)
       await ctx

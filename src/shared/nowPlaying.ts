@@ -154,3 +154,74 @@ export const updateNowPlayingEmbed = async (
     player.nowPlayingMessage = null
   }
 }
+
+type NowPlayingUIOptions = {
+  position?: number
+  volume?: number
+  loop?: string
+  queueLength?: number
+  title?: string
+  uri?: string
+  length?: number
+  requesterName?: string
+  artworkUrl?: string
+}
+
+export const createNowPlayingContainer = (options: NowPlayingUIOptions) => {
+  const {
+    position = 0,
+    volume = 0,
+    loop,
+    queueLength = 0,
+    title = 'Unknown',
+    uri = '',
+    length = 0,
+    requesterName = 'Unknown',
+    artworkUrl = ''
+  } = options
+
+  const platform = getPlatform(uri)
+  const volumeIcon =
+    volume === 0
+      ? '\uD83D\uDD07'
+      : volume < 50
+        ? '\uD83D\uDD08'
+        : '\uD83D\uDD0A'
+  const loopIcon =
+    loop === 'track'
+      ? '\uD83D\uDD02'
+      : loop === 'queue'
+        ? '\uD83D\uDD01'
+        : '\u25B6\uFE0F'
+  const displayTitle = titleCaseWordBoundaries(truncateText(title))
+
+  return new Container({
+    components: [
+      {
+        type: 10,
+        content: `**${platform.emoji} Now Playing** | **Queue size**: ${queueLength}`
+      },
+      { type: 14, divider: true, spacing: 1 },
+      {
+        type: 9,
+        components: [
+          {
+            type: 10,
+            content: `## **[\`${displayTitle}\`](${uri})**\n\`${formatTime(position)}\` / \`${formatTime(length)}\``
+          },
+          {
+            type: 10,
+            content: `${volumeIcon} \`${volume}%\` ${loopIcon} Requester: \`${requesterName}\``
+          }
+        ],
+        accessory: {
+          type: 11,
+          media: {
+            url: artworkUrl
+          }
+        }
+      },
+      { type: 14, divider: true, spacing: 2 }
+    ]
+  })
+}

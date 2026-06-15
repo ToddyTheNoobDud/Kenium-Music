@@ -8,6 +8,8 @@ import type {
 } from './helperTypes'
 import { getOrCreatePlayer } from './player'
 
+// Cache recent Lavalink resolve results to avoid double-resolving
+// (autocomplete + actual play often resolve the same query)
 const RESOLVE_CACHE = lru<{
   tracks: unknown[]
   loadType: string

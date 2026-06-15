@@ -18,6 +18,7 @@ import {
   pickLyricsArtwork
 } from '../shared/lyrics'
 import { musixmatch } from '../shared/musixmatch'
+import { formatDuration } from '../shared/utils'
 import { getContextLanguage } from '../utils/i18n'
 import { safeDefer } from '../utils/interactions'
 import type { LyricsLine } from '../utils/musiclyrics'
@@ -60,11 +61,6 @@ function createErrorEmbed(message: string, thele: LyricsTextLike) {
     .setDescription(message)
 }
 
-function formatTimestamp(ms: number) {
-  const seconds = Math.floor(ms / 1000)
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
-}
-
 function normalizeLoose(value: string | undefined) {
   return String(value || '')
     .normalize('NFKD')
@@ -85,7 +81,7 @@ function formatSyncedLyrics(lines: LyricsLine[]) {
 
       const stamp = line.range?.start
       const label =
-        stamp !== undefined ? formatTimestamp(stamp).padStart(5, ' ') : '  -- '
+        stamp !== undefined ? formatDuration(stamp).padStart(5, ' ') : '  -- '
 
       return `\`${label}\`  ${lyric}`
     })

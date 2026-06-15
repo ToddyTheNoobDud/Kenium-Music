@@ -493,6 +493,25 @@ export const purgeInvalidSettings = async () => {
   return 0
 }
 
+export const getAll247Settings = () => {
+  try {
+    const collection = dbManager.getSettingsCollection()
+    const docs = collection.find({
+      twentyFourSevenEnabled: 1
+    }) as unknown as GuildSettings[]
+    return docs
+      .filter((doc) => doc.voiceChannelId)
+      .map((doc) => ({
+        guildId: doc.guildId || String(doc._id),
+        voiceChannelId: doc.voiceChannelId!,
+        textChannelId: doc.textChannelId || null
+      }))
+  } catch (error) {
+    console.error('[db_helper] Failed to get all 24/7 settings:', error)
+    return []
+  }
+}
+
 export const cleanupDatabase = () => dbManager.cleanup()
 export const flushDatabaseUpdates = async () => dbManager.flushUpdatesAsync()
 

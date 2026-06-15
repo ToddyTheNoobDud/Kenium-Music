@@ -11,6 +11,7 @@ import { createPlayerConnection } from '../shared/player'
 import {
   disable247Sync,
   get247ChannelIds,
+  getAll247Settings,
   isTwentyFourSevenEnabled
 } from '../utils/db_helper'
 
@@ -150,6 +151,11 @@ type VoiceClientLike = AquaClientLike<TrackLike> & {
   user?: { id?: string }
   bot?: { id?: string }
   _voiceHandlers?: VoiceHandlers
+  logger?: {
+    info: (...args: unknown[]) => void
+    warn: (...args: unknown[]) => void
+    error: (...args: unknown[]) => void
+  }
 }
 
 const STATE_IDLE = 1
@@ -279,21 +285,20 @@ class CircuitBreaker {
   baseResetTime = 30000
   onGiveUp: GiveUpCallback | null = null
 
-  canAttempt(guildId: string) {
+  getDelay(guildId: string): number {
     const entry = this.failures.get(guildId)
-    if (!entry) return true
+    if (!entry) return REJOIN_DELAY
     if (entry.count >= MAX_REJOIN_ATTEMPTS) {
-      this.onGiveUp?.(guildId)
-      this.failures.delete(guildId)
-      return false
+      return -1
+    }
+    if (entry.count < this.maxFailures) {
+      return REJOIN_DELAY
     }
     const backoffLevel = Math.max(0, entry.count - this.maxFailures)
     const resetTime = this.baseResetTime * 2 ** Math.min(backoffLevel, 5)
-    if (Date.now() - entry.lastAttempt > resetTime) {
-      entry.lastAttempt = Date.now()
-      return true
-    }
-    return entry.count < this.maxFailures
+    const elapsed = Date.now() - entry.lastAttempt
+    const remaining = resetTime - elapsed
+    return Math.max(REJOIN_DELAY, remaining)
   }
 
   recordResult(guildId: string, success: boolean) {
@@ -476,8 +481,13 @@ class VoiceManager {
       ) => {
         const guildId = player?.guildId
         const code = payload?.code
-        if (!guildId || code === undefined || ![4014, 4022].includes(code))
+        if (
+          !guildId ||
+          code === undefined ||
+          ![1001, 1006, 4014, 4015, 4022, 5001].includes(code)
+        ) {
           return
+        }
         if (!isTwentyFourSevenEnabled(guildId)) return
         // Don't fight Aqualink's built-in recovery/reconnection
         if ((player as Record<string, unknown>)?.['_reconnecting']) return
@@ -581,7 +591,11 @@ class VoiceManager {
     voiceId?: string,
     textId?: string
   ) {
-    if (!this.breaker.canAttempt(guildId)) return
+    const delay = this.breaker.getDelay(guildId)
+    if (delay < 0) {
+      this.handleRejoinGiveUp(guildId)
+      return
+    }
 
     this.setTimeout(
       guildId,
@@ -608,7 +622,7 @@ class VoiceManager {
           }
         })()
       },
-      REJOIN_DELAY
+      delay
     )
   }
 
@@ -648,12 +662,23 @@ class VoiceManager {
     }
 
     try {
-      createPlayerConnection(client, connectionOptions)
+      if (existing && !existing.destroyed) {
+        existing.connect({
+          guildId,
+          voiceChannel: pair.voiceChannelId,
+          deaf: existing.deaf,
+          mute: existing.mute
+        })
+      } else {
+        const conn = createPlayerConnection(client, connectionOptions)
+        if (!conn || conn.destroyed) return 'retry'
+      }
     } catch {
       if (existing?.destroy) {
         try {
           existing.destroy()
-          createPlayerConnection(client, connectionOptions)
+          const conn = createPlayerConnection(client, connectionOptions)
+          if (!conn || conn.destroyed) return 'retry'
         } catch {
           return 'retry'
         }
@@ -777,6 +802,34 @@ export default createEvent({
 export const resetRejoinBreaker = (guildId: string) => {
   manager.breaker.reset(guildId)
   manager.autoDisabled247.delete(guildId)
+}
+
+/** Reconnect all 24/7 players across all guilds. */
+export const reconnectAllTwentyFourSevenPlayers = (client: VoiceClientLike) => {
+  const settingsList = getAll247Settings()
+  if (!settingsList.length) return
+
+  client.logger?.info(
+    `[VoiceManager] Re-verifying ${settingsList.length} 24/7 players.`
+  )
+
+  for (const settings of settingsList) {
+    const guildId = settings.guildId
+    manager.breaker.reset(guildId)
+    manager.autoDisabled247.delete(guildId)
+
+    manager.scheduleRejoin(
+      client,
+      guildId,
+      settings.voiceChannelId,
+      settings.textChannelId || undefined
+    )
+  }
+}
+
+/** Register VoiceManager event handlers on client. */
+export const registerVoiceManager = (client: VoiceClientLike) => {
+  manager.register(client)
 }
 
 const HOOK_FLAG = '_voiceManagerCleanupHookAdded'

@@ -9,8 +9,9 @@ import {
 } from 'seyfert'
 import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { EMBED_COLOR } from '../shared/constants'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import { getContextLanguage } from '../utils/i18n'
-import { getErrorCode, safeDefer } from '../utils/interactions'
+import { safeDefer } from '../utils/interactions'
 
 const options = {
   filters: createStringOption({
@@ -143,7 +144,7 @@ export default class FiltersCommand extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (getErrorCode(error) === 10065) return
+      if (isExpiredInteraction(error)) return
       console.error('filters command error:', error)
     }
   }

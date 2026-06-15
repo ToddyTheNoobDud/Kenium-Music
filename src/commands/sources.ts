@@ -1,7 +1,8 @@
 import { Command, type CommandContext, Container, Declare } from 'seyfert'
 import { lru } from 'tiny-lru'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import { getContextLanguage } from '../utils/i18n'
-import { getErrorCode, safeDefer } from '../utils/interactions'
+import { safeDefer } from '../utils/interactions'
 
 const SOURCE_CACHE = lru<{
   fingerprint: string
@@ -269,7 +270,7 @@ export default class SourcesCommand extends Command {
         flags: COMPONENTS_V2_FLAG
       })
     } catch (error: unknown) {
-      if (getErrorCode(error) === 10065) return
+      if (isExpiredInteraction(error)) return
     }
   }
 }

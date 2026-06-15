@@ -9,6 +9,7 @@ import {
 } from 'seyfert'
 import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { MUSIC_PLATFORMS } from '../shared/emojis'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import type {
   ComponentCollectorLike,
   ComponentCollectorSourceLike,
@@ -17,8 +18,8 @@ import type {
   TrackLike
 } from '../shared/helperTypes'
 import { ensurePlayerForVoice, maybeStartPlayback } from '../shared/playback'
+import { formatDuration, truncate } from '../shared/utils'
 import { getContextLanguage } from '../utils/i18n'
-import { getErrorCode } from '../utils/interactions'
 
 const CONFIG = Object.freeze({
   INTERACTION_TIMEOUT: 45000,
@@ -41,14 +42,6 @@ const UI_LIMITS = Object.freeze({
   AUTHOR: 28
 })
 
-const formatDuration = (ms: number): string => {
-  if (ms <= 0) return '0:00'
-  const totalSeconds = Math.floor(ms / 1000)
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`
-}
-
 const parseEmoji = (emoji: string): { name: string; id?: string } | null => {
   const match = REGEX_PATTERNS.CUSTOM_EMOJI.exec(emoji)
   return match
@@ -63,9 +56,6 @@ const sanitizeQuery = (query: string): string => {
     .trim()
     .slice(0, CONFIG.MAX_QUERY_LENGTH)
 }
-
-const clampText = (text: string, max: number) =>
-  text.length > max ? `${text.slice(0, max - 3).trimEnd()}...` : text
 
 type MusicPlatform = (typeof MUSIC_PLATFORMS)[keyof typeof MUSIC_PLATFORMS]
 
@@ -217,7 +207,7 @@ export default class SearchCommand extends Command {
       )
     } catch (error: unknown) {
       console.error('Search command error:', error)
-      if (getErrorCode(error) === 10065) return
+      if (isExpiredInteraction(error)) return
       await ctx.write({ content: thele.search.genericError, flags: 64 })
     }
   }
@@ -271,8 +261,8 @@ export default class SearchCommand extends Command {
   ): string {
     const emoji = track.platform?.emoji || platform.emoji
     const titleValue = String(track.info?.title || track.title || 'Unknown')
-    const title = clampText(titleValue, UI_LIMITS.TITLE)
-    const author = clampText(
+    const title = truncate(titleValue, UI_LIMITS.TITLE)
+    const author = truncate(
       String(
         track.info?.author || track.author || thele.common?.unknown || 'Unknown'
       ),

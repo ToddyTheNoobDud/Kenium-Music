@@ -9,8 +9,10 @@ import {
 } from 'seyfert'
 import type { OptionsRecord } from 'seyfert/lib/commands/applications/chat'
 import { LRU } from 'tiny-lru'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import type { PlayerLike, TrackLike, UserLike } from '../shared/helperTypes'
 import { ensurePlayerForVoice, maybeStartPlayback } from '../shared/playback'
+import { truncate } from '../shared/utils'
 import { getContextLanguage } from '../utils/i18n'
 import {
   getErrorCode,
@@ -69,6 +71,20 @@ type PlayTextLike = {
 }
 
 const _functions = {
+  async safeAutocompleteRespond(
+    interaction: PlayAutocompleteInteractionLike,
+    choices: Array<{ name: string; value: string }>
+  ): Promise<unknown> {
+    try {
+      return await interaction.respond(choices)
+    } catch (error) {
+      if (isInteractionExpired(error) || getErrorCode(error) === 40060) {
+        return undefined
+      }
+      throw error
+    }
+  },
+
   isUrl(query: unknown): boolean {
     const s = String(query ?? '')
       .trim()
@@ -76,17 +92,10 @@ const _functions = {
     return s.startsWith('http://') || s.startsWith('https://')
   },
 
-  truncate(text: unknown, maxLength: number): string {
-    const s = String(text ?? '')
-    return s.length <= maxLength ? s : `${s.slice(0, maxLength - 1)}…`
-  },
-
   formatChoice(title: unknown, author?: unknown): string {
-    const t = _functions.truncate(title, MAX_TITLE_LENGTH)
-    const a = author
-      ? ` - ${_functions.truncate(author, MAX_AUTHOR_LENGTH)}`
-      : ''
-    return _functions.truncate(t + a, MAX_CHOICE_LENGTH)
+    const t = truncate(String(title ?? ''), MAX_TITLE_LENGTH)
+    const a = author ? ` - ${truncate(String(author), MAX_AUTHOR_LENGTH)}` : ''
+    return truncate(t + a, MAX_CHOICE_LENGTH)
   },
 
   cacheKey(query: string): string {
@@ -123,16 +132,18 @@ const _functions = {
   ): Promise<unknown> {
     if (!query || query.length < MIN_QUERY_LENGTH) {
       const recent = recentTracks.getRecent(userId, MAX_AUTOCOMPLETE_RESULTS)
-      if (!recent.length) return interaction.respond([])
+      if (!recent.length)
+        return _functions.safeAutocompleteRespond(interaction, [])
 
       const choices = recent.map((track, index) => ({
-        name: `🕘 Recent ${index + 1}: ${_functions.truncate(track.title, MAX_TITLE_LENGTH)}`,
+        name: `🕘 Recent ${index + 1}: ${truncate(String(track.title), MAX_TITLE_LENGTH)}`,
         value: track.uri.slice(0, MAX_URI_LENGTH)
       }))
-      return interaction.respond(choices)
+      return _functions.safeAutocompleteRespond(interaction, choices)
     }
 
-    if (_functions.isUrl(query)) return interaction.respond([])
+    if (_functions.isUrl(query))
+      return _functions.safeAutocompleteRespond(interaction, [])
 
     const key = _functions.cacheKey(query)
     let results = searchCache.get(key)
@@ -156,7 +167,8 @@ const _functions = {
       }
     }
 
-    if (!results?.length) return interaction.respond([])
+    if (!results?.length)
+      return _functions.safeAutocompleteRespond(interaction, [])
 
     const choices: Array<{ name: string; value: string }> = []
     for (
@@ -174,7 +186,7 @@ const _functions = {
       })
     }
 
-    return interaction.respond(choices)
+    return _functions.safeAutocompleteRespond(interaction, choices)
   }
 }
 
@@ -209,10 +221,11 @@ class OptimizedRecentTracks {
     if (!userCache) return []
 
     const max = Math.max(0, Math.min(limit, userCache.size))
-    return [...userCache.entries()]
-      .reverse()
-      .slice(0, max)
-      .map(([, v]) => v)
+    const tracks: TrackInfo[] = []
+    for (const [, track] of [...userCache.entries()].reverse().slice(0, max)) {
+      if (track) tracks.push(track)
+    }
+    return tracks
   }
 }
 
@@ -268,7 +281,8 @@ const _handleAutocomplete = async (
     debounceTimers.delete(userId)
   }
 
-  if (throttleMap.shouldThrottle(userId)) return interaction.respond([])
+  if (throttleMap.shouldThrottle(userId))
+    return _functions.safeAutocompleteRespond(interaction, [])
 
   return new Promise<unknown>((resolve) => {
     const timer = setTimeout(() => {
@@ -276,7 +290,9 @@ const _handleAutocomplete = async (
       _functions
         .processAutocomplete(interaction, userId, query)
         .then(resolve)
-        .catch(() => resolve(interaction.respond([])))
+        .catch(() =>
+          resolve(_functions.safeAutocompleteRespond(interaction, []))
+        )
     }, AUTOCOMPLETE_DEBOUNCE_MS)
 
     _functions.safeUnref(timer)
@@ -372,10 +388,7 @@ export default class Play extends Command {
         _functions.addRecentFromTrack(userId, track)
 
         const info = track?.info
-        const title = _functions.truncate(
-          info?.title || 'Track',
-          MAX_TITLE_LENGTH
-        )
+        const title = truncate(String(info?.title || 'Track'), MAX_TITLE_LENGTH)
         embed.setDescription(
           t?.player?.trackAdded
             ?.replace('{title}', title)
@@ -391,8 +404,8 @@ export default class Play extends Command {
           if (track) _functions.addRecentFromTrack(userId, track)
         }
 
-        const playlistName = _functions.truncate(
-          playlistInfo.name,
+        const playlistName = truncate(
+          String(playlistInfo.name),
           MAX_TITLE_LENGTH
         )
         const firstUri = tracks[0]?.info?.uri || '#'
@@ -415,7 +428,7 @@ export default class Play extends Command {
       await ctx.editResponse({ embeds: [embed] })
       await maybeStartPlayback(player)
     } catch (err: unknown) {
-      if (isInteractionExpired(err) || getErrorCode(err) === 10065) return
+      if (isExpiredInteraction(err)) return
       console.error(err)
       try {
         await ctx.editOrReply({

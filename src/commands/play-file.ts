@@ -8,13 +8,14 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import { isExpiredInteraction } from '../shared/errorGuard'
 import {
   ensurePlayerForVoice,
   maybeStartPlayback,
   resolveAndQueue
 } from '../shared/playback'
 import { getContextLanguage } from '../utils/i18n'
-import { getErrorCode, safeDefer } from '../utils/interactions'
+import { safeDefer } from '../utils/interactions'
 
 @Options({
   file: createAttachmentOption({
@@ -92,7 +93,7 @@ export default class PlayFile extends Command {
           flags: 64
         })
       } catch (error) {
-        console.log(error)
+        console.error(error)
         await ctx.editOrReply({
           embeds: [
             new Embed()
@@ -103,7 +104,7 @@ export default class PlayFile extends Command {
         })
       }
     } catch (error: unknown) {
-      if (getErrorCode(error) === 10065) return
+      if (isExpiredInteraction(error)) return
       await ctx.editOrReply({
         embeds: [
           new Embed()

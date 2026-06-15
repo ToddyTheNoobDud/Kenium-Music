@@ -1,8 +1,7 @@
-﻿import process from 'node:process'
+import process from 'node:process'
 import 'dotenv/config'
 import { CooldownManager } from '@slipher/cooldown'
 import { Aqua, type Player, type Track } from 'aqualink'
-import { lru } from 'tiny-lru'
 import {
   Client,
   type Container,
@@ -12,18 +11,26 @@ import {
   type ParseLocales,
   type ParseMiddlewares
 } from 'seyfert'
+import { lru } from 'tiny-lru'
 import {
   cleanupAllKaraokeSessions,
   cleanupKaraokeSession,
   hasKaraokeSession,
   syncKaraokeSessionTrack
 } from './src/commands/karaoke'
+import {
+  reconnectAllTwentyFourSevenPlayers,
+  registerVoiceManager
+} from './src/events/voiceStateUpdate'
 import type English from './src/languages/en'
 import { middlewares } from './src/middlewares/middlewares'
 import { APP_VERSION } from './src/shared/constants'
 import { createNowPlayingEmbed, truncateText } from './src/shared/nowPlaying'
 import { closeDatabase, initDatabase } from './src/utils/db'
-import { flushDatabaseUpdates, isTwentyFourSevenEnabled } from './src/utils/db_helper'
+import {
+  flushDatabaseUpdates,
+  isTwentyFourSevenEnabled
+} from './src/utils/db_helper'
 
 // Constants
 const PRESENCE_UPDATE_INTERVAL = 60000
@@ -32,6 +39,7 @@ const VOICE_STATUS_THROTTLE = 5000
 const COUNT_CACHE_TTL = 300000
 const RESUMED_NOW_PLAYING_RESTORE_DELAY = 1500
 const NOW_PLAYING_DEDUPE_WINDOW_MS = 2500
+const SOCKET_CLOSE_LOG_WINDOW_MS = 30_000
 
 const {
   NODE_HOST,
@@ -54,6 +62,13 @@ const client = new Client({
   },
   onShardReconnect({ shardId }) {
     client.logger.info(`Shard ${shardId} reconnected`)
+    try {
+      reconnectAllTwentyFourSevenPlayers(client as any)
+    } catch (err) {
+      client.logger.warn(
+        `Failed to reconnect 24/7 players after shard ${shardId} reconnected: ${err}`
+      )
+    }
   }
 })
 
@@ -74,13 +89,14 @@ const aqua = new Aqua(
     shouldDeleteMessage: true,
     infiniteReconnects: true,
     autoResume: true,
+    resumeTimeout: 120,
     autoRegionMigrate: false,
     loadBalancer: 'random',
     useHttp2: false,
     leaveOnEnd: false,
-    debugTrace: false,
+    debugTrace: AQUALINK_TRACE === 'true',
     traceMaxEntries: 5000
-  }
+  } as ConstructorParameters<typeof Aqua>[2] & { resumeTimeout: number }
 )
 
 Object.assign(client, { aqua })
@@ -90,6 +106,7 @@ export const state = {
   voiceStatusUpdates: lru<number>(500, 3_600_000), // 500 guilds, 1hr auto-expiry
   nowPlayingInflight: lru<Promise<void>>(500, 3_600_000), // 500 guilds, 1hr auto-expiry
   nowPlayingLastStart: lru<{ trackKey: string; at: number }>(500, 3_600_000), // 500 guilds, 1hr auto-expiry
+  socketCloseLogs: lru<number>(1000, SOCKET_CLOSE_LOG_WINDOW_MS),
   lastErrorLog: 0,
   cachedGuildCount: 0,
   cachedUserCount: 0,
@@ -107,7 +124,25 @@ const getTrackKey = (track: Track | null | undefined) => {
   return [uri, identifier, title, author].filter(Boolean).join('|')
 }
 
-const cleanupPlayer = (player: Player, reason?: 'queueEnd' | 'playerDestroy') => {
+const getPlayerTextChannelId = (player: Player) =>
+  player.textChannel ||
+  player._lastTextChannel ||
+  player.nowPlayingMessage?.channelId ||
+  null
+
+const shouldLogSocketClose = (guildId: string, code: unknown) => {
+  const key = `${guildId}:${String(code ?? 'unknown')}`
+  const now = Date.now()
+  const lastLog = state.socketCloseLogs.get(key) ?? 0
+  if (now - lastLog < SOCKET_CLOSE_LOG_WINDOW_MS) return false
+  state.socketCloseLogs.set(key, now)
+  return true
+}
+
+const cleanupPlayer = (
+  player: Player,
+  reason?: 'queueEnd' | 'playerDestroy'
+) => {
   const is247 = isTwentyFourSevenEnabled(player.guildId)
   const isQueueEnd = reason === 'queueEnd'
 
@@ -120,7 +155,8 @@ const cleanupPlayer = (player: Player, reason?: 'queueEnd' | 'playerDestroy') =>
 
   // Full cleanup for non-24/7 or playerDestroy
   const voiceChannel = player.voiceChannel || player._lastVoiceChannel
-  if (voiceChannel) client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
+  if (voiceChannel)
+    client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
   state.voiceStatusUpdates.delete(player.guildId)
   state.nowPlayingInflight.delete(player.guildId)
   state.nowPlayingLastStart.delete(player.guildId)
@@ -170,11 +206,18 @@ export const updatePresence = (clientInstance: Client) => {
 
     const now = Date.now()
     if (now - state.lastCountUpdate > COUNT_CACHE_TTL) {
+      // Use cache.count() instead of iterating all guilds.
+      // guildCreate/guildDelete/guildMemberAdd/guildMemberRemove
+      // events maintain running counts incrementally.
       const guildCount = clientInstance.cache.guilds?.count()
       if (typeof guildCount === 'number') state.cachedGuildCount = guildCount
       const allGuilds = clientInstance.cache.guilds?.values() ?? []
-      state.cachedUserCount = (allGuilds as Array<{ memberCount?: number }>).reduce(
-        (sum: number, g: { memberCount?: number }) => sum + (g.memberCount ?? 0), 0
+      state.cachedUserCount = (
+        allGuilds as Array<{ memberCount?: number }>
+      ).reduce(
+        (sum: number, g: { memberCount?: number }) =>
+          sum + (g.memberCount ?? 0),
+        0
       )
       state.lastCountUpdate = now
     }
@@ -252,6 +295,7 @@ aqua.on(
       return
     }
 
+    // Wait for any in-flight handler for this guild, eliminating the has/get race window
     const existingInflight = state.nowPlayingInflight.get(player.guildId)
     if (existingInflight) {
       await existingInflight.catch(() => null)
@@ -355,8 +399,8 @@ aqua.on(
     track: Track | null | undefined,
     payload: { exception?: { message?: string } }
   ) => {
-    const channel = client.cache.channels?.get(player.textChannel)
-    if (!channel) return
+    const textChannelId = getPlayerTextChannelId(player)
+    if (!textChannelId) return
 
     const errorMsg = payload.exception?.message || 'Playback failed'
     const fallbackTrack = (player.current as Track | null | undefined) || track
@@ -364,16 +408,25 @@ aqua.on(
       fallbackTrack?.info?.title || fallbackTrack?.title || 'Unknown track'
     const title = truncateText(rawTitle, 25)
 
-    await channel.client.messages
-      .write(channel.id, {
+    await client.messages
+      .write(textChannelId, {
         content: `❌ **${title}**: ${truncateText(errorMsg, 50)}`
       })
       .catch(() => {})
   }
 )
 
-aqua.on('debug', (source: string, message: string) => {
-  client.logger.debug(`[Aqua Debug:${source}] ${message}`)
+aqua.on('debug', (source: unknown, message?: unknown) => {
+  const detail =
+    message === undefined
+      ? source instanceof Error
+        ? source.message
+        : String(source)
+      : `[${String(source)}] ${
+          message instanceof Error ? message.message : String(message)
+        }`
+
+  client.logger.debug(`[Aqua Debug] ${detail}`)
 })
 
 aqua.on('error', (sourceOrError: unknown, maybeError?: unknown) => {
@@ -416,7 +469,9 @@ if (AQUALINK_TRACE) {
   }
 }
 
-aqua.on('playerDestroy', (player: Player) => cleanupPlayer(player, 'playerDestroy'))
+aqua.on('playerDestroy', (player: Player) =>
+  cleanupPlayer(player, 'playerDestroy')
+)
 aqua.on('queueEnd', (player: Player) => cleanupPlayer(player, 'queueEnd'))
 
 aqua.on('nodeError', (node, error) => {
@@ -424,10 +479,11 @@ aqua.on('nodeError', (node, error) => {
 })
 
 aqua.on('socketClosed', (player, payload) => {
-  dumpTrace?.(`socketClosed code=${payload?.code}`, player.guildId)
-  client.logger.debug(
-    `Socket closed [${player.guildId}], code: ${payload.code}`
-  )
+  const code = payload?.code ?? 'unknown'
+  dumpTrace?.(`socketClosed code=${code}`, player.guildId)
+  if (!shouldLogSocketClose(player.guildId, code)) return
+
+  client.logger.debug(`Socket closed [${player.guildId}], code: ${code}`)
 })
 
 aqua.on('nodeDisconnect', (_, reason) => {
@@ -436,8 +492,6 @@ aqua.on('nodeDisconnect', (_, reason) => {
     typeof reason === 'string' ? reason : JSON.stringify(reason ?? {})
   client.logger.info(`Node disconnected: ${details}`)
 })
-
-
 
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
@@ -449,6 +503,11 @@ initDatabase()
       .uploadCommands({ cachePath: './commands.json' })
       .catch(() => {})
     client.cooldown = new CooldownManager(client as never)
+    try {
+      registerVoiceManager(client as any)
+    } catch (err) {
+      client.logger.warn(`Failed to register voice manager: ${err}`)
+    }
   })
   .catch((error) => {
     console.error('Startup failed:', error)

@@ -1,3 +1,5 @@
+import { APP_VERSION } from '../shared/constants'
+
 export type PlaylistFileTrack = {
   title: string
   author: string
@@ -115,9 +117,7 @@ const parseCsv = (content: string): CsvRow[] => {
   const headerLine = lines[0]
   if (!headerLine?.includes(',')) return []
 
-  const headers = splitCsvLine(headerLine).map((header) =>
-    header.toLowerCase()
-  )
+  const headers = splitCsvLine(headerLine).map((header) => header.toLowerCase())
   return lines.slice(1).map((line) => {
     const values = splitCsvLine(line)
     const row: CsvRow = {}
@@ -290,7 +290,7 @@ export function playlistTracksToKeniumText(
   const csv = playlistTracksToCsv(playlistName, tracks)
   const footer = [
     '',
-    '# DO NOT MODIFY THIS FILE / CAN GET CORRUPTED - Kenium 4.10.0 - BY mushroom0162',
+    `# DO NOT MODIFY THIS FILE / CAN GET CORRUPTED - Kenium ${APP_VERSION} - BY mushroom0162`,
     `# Export ID: ${exportId}`,
     `# Playlist: ${playlistName}`,
     `# Generated: ${generatedAt.toISOString()}`,
