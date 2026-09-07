@@ -10,18 +10,17 @@ import {
 } from 'seyfert'
 import {
   decidePlaylistPlayer,
-  enqueueTracksAndCount
+  enqueueTracksAndCount,
+  MAX_RESOLVE_CONCURRENCY,
+  type PlaylistTrackDoc,
+  registerPendingPlaylistLoads,
+  resolveTrack,
+  resolveTracksConcurrently
 } from '../../events/playlistPlayback.ts'
 import { ICONS } from '../../shared/constants.ts'
-import type {
-  PlayerLike,
-  ResolveResultLike,
-  TrackLike,
-  UserLike
-} from '../../shared/helperTypes.ts'
+import type { PlayerLike } from '../../shared/helperTypes.ts'
+import { maybeStartPlayback } from '../../shared/playback.ts'
 import { getOrCreatePlayer } from '../../shared/player.ts'
-import { buildTrackResolveQueries } from '../../shared/playlist_format.ts'
-import type { Track } from '../../shared/types.ts'
 import {
   createEmbed,
   formatDuration,
@@ -34,22 +33,7 @@ import { safeDefer } from '../../utils/interactions.ts'
 
 const playlistsCol = () => getPlaylistsCollection()
 const tracksCol = () => getTracksCollection()
-const MAX_RESOLVE_CONCURRENCY = 6
-
-type PlaylistTrackDoc = Pick<
-  Track,
-  'uri' | 'source' | 'identifier' | 'title' | 'author' | 'isrc'
->
-
-type ResolvedQueueTrack = TrackLike
-
-type PlaylistResolverLike = {
-  resolve: (opts: {
-    query: string
-    requester: UserLike
-    source?: string
-  }) => Promise<ResolveResultLike<ResolvedQueueTrack> & { loadType?: string }>
-}
+const FIRST_CHUNK_TRACKS = 10
 
 type PlaylistPlayTextLike = {
   notFound?: string
@@ -88,97 +72,25 @@ const options = {
 }
 
 const _functions = {
-  async resolveTrack(
-    aqua: PlaylistResolverLike,
-    track: PlaylistTrackDoc,
-    requester: UserLike
-  ): Promise<ResolvedQueueTrack | null> {
-    const uri = track?.uri
-    if (!uri) return null
-
-    try {
-      const sourceStr = String(track?.source || '').toLowerCase()
-      const queries = buildTrackResolveQueries(track)
-      for (const query of queries) {
-        const isUrl = /^https?:\/\//.test(query)
-        const res = await aqua.resolve({
-          query,
-          requester,
-          ...(query.startsWith('isrc:')
-            ? { source: 'spsearch' }
-            : sourceStr.includes('youtube') && !isUrl
-              ? { source: 'ytsearch' }
-              : {})
-        })
-
-        const loadType = String(res?.loadType || '').toUpperCase()
-        if (!res || loadType === 'LOAD_FAILED' || loadType === 'NO_MATCHES') {
-          continue
-        }
-
-        const tracks = res.tracks
-        const firstTrack = Array.isArray(tracks) ? tracks[0] : null
-        if (firstTrack) return firstTrack
-      }
-      return null
-    } catch {
-      return null
-    }
-  },
-
-  async resolveTracksConcurrently<TItem, TResult>(
-    items: TItem[],
-    limit: number,
-    fn: (item: TItem, index: number) => Promise<TResult | null>
-  ): Promise<TResult[]> {
-    const len = items.length
-    if (!len) return []
-
-    const cap = Math.min(limit > 0 ? limit : 1, len)
-    const results: Array<TResult | null> = new Array(len)
-    let nextIndex = 0
-
-    const getNextIndex = (): number => {
-      const idx = nextIndex
-      nextIndex += 1
-      return idx
-    }
-
-    const workers = Array.from({ length: cap }, async () => {
-      while (true) {
-        const idx = getNextIndex()
-        if (idx >= len) break
-
-        try {
-          const item = items[idx]
-          if (item !== undefined) {
-            results[idx] = await fn(item, idx)
-          }
-        } catch (error) {
-          console.error(`Track resolution failed for index ${idx}:`, error)
-          results[idx] = null
-        }
-      }
-    })
-
-    await Promise.all(workers)
-
-    return results.filter((result): result is TResult => result !== null)
-  },
-
   getChannelName(vc: { channel: { name: string }; channelId: string }) {
     return vc?.channel?.name || vc?.channelId || 'Voice'
   },
 
   writeError(ctx: CommandContext, title: string, desc: string) {
     return ctx.write({
-      embeds: [createEmbed('error', title, desc)],
+      embeds: [
+        createEmbed('error', title, desc, [], ctx.client.me?.avatarURL())
+      ],
       flags: 64
     })
   },
 
   editError(ctx: CommandContext, title: string, desc: string) {
-    return ctx.editOrReply({ embeds: [createEmbed('error', title, desc)] })
+    return ctx.editOrReply({
+      embeds: [
+        createEmbed('error', title, desc, [], ctx.client.me?.avatarURL())
+      ]
+    })
   }
 }
 
@@ -283,26 +195,18 @@ export class PlayCommand extends SubCommand {
       }
 
       const total = dbTracks.length
-      const tracks = shuffle ? shuffleArray(dbTracks.slice()) : dbTracks
+      const ordered = shuffle ? shuffleArray(dbTracks.slice()) : dbTracks
+      const firstChunk = ordered.slice(0, FIRST_CHUNK_TRACKS)
+      const remaining = ordered.slice(firstChunk.length)
 
-      const resolvedTracks = await _functions.resolveTracksConcurrently(
-        tracks,
+      const resolvedFirst = await resolveTracksConcurrently(
+        firstChunk,
         MAX_RESOLVE_CONCURRENCY,
-        (track) =>
-          _functions.resolveTrack(ctx.client.aqua, track, ctx.interaction.user)
+        (track) => resolveTrack(ctx.client.aqua, track, ctx.interaction.user)
       )
 
-      if (!resolvedTracks.length) {
-        return _functions.editError(
-          ctx,
-          tp?.loadFailed || 'Load Failed',
-          tp?.loadFailedDesc ||
-            'Could not load any tracks from this playlist. The tracks may no longer be available.'
-        )
-      }
-
       const loadedCount = await enqueueTracksAndCount(
-        resolvedTracks,
+        resolvedFirst,
         (track) => {
           if (typeof player.queue?.add !== 'function')
             throw new Error('Player queue is unavailable')
@@ -310,7 +214,7 @@ export class PlayCommand extends SubCommand {
         }
       )
 
-      if (loadedCount === 0) {
+      if (loadedCount === 0 && remaining.length === 0) {
         return _functions.editError(
           ctx,
           tp?.loadFailed || 'Load Failed',
@@ -318,6 +222,8 @@ export class PlayCommand extends SubCommand {
             'Could not load any tracks from this playlist. The tracks may no longer be available.'
         )
       }
+
+      registerPendingPlaylistLoads(guildId, remaining, ctx.interaction.user)
 
       try {
         playlistsCol().update(
@@ -331,9 +237,16 @@ export class PlayCommand extends SubCommand {
         console.error('Database error updating playlist stats:', dbError)
       }
 
-      if (!player.playing && !player.paused) player.play?.().catch(() => {})
+      await maybeStartPlayback(player)
 
-      const failedCount = total - loadedCount
+      const failedUpfront = firstChunk.length - loadedCount
+      const notes: string[] = []
+      if (failedUpfront > 0)
+        notes.push(`⚠️ ${failedUpfront} track(s) could not be loaded`)
+      if (remaining.length > 0)
+        notes.push(
+          `⏳ ${remaining.length} more track(s) will load as the queue plays`
+        )
 
       return ctx.editOrReply({
         embeds: [
@@ -342,9 +255,7 @@ export class PlayCommand extends SubCommand {
             shuffle
               ? tp?.shuffling || 'Shuffling Playlist'
               : tp?.playing || 'Playing Playlist',
-            failedCount > 0
-              ? `\n\n⚠️ ${failedCount} track(s) could not be loaded`
-              : null,
+            notes.length > 0 ? `\n\n${notes.join('\n')}` : null,
             [
               {
                 name: `${ICONS.playlist} ${tp?.playlist || 'Playlist'}`,
@@ -380,7 +291,8 @@ export class PlayCommand extends SubCommand {
                 value: `${player.queue?.size ?? loadedCount} track(s)`,
                 inline: true
               }
-            ]
+            ],
+            ctx.client.me?.avatarURL()
           )
         ]
       })

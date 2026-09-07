@@ -17,7 +17,7 @@ import {
   extractLyricsSearchHints,
   pickLyricsArtwork
 } from '../shared/lyrics.ts'
-import { musixmatch } from '../shared/musixmatch.ts'
+import { findLyrics } from '../shared/lyricsservice.ts'
 import { formatDuration } from '../shared/utils.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 import { safeDefer } from '../utils/interactions.ts'
@@ -298,17 +298,14 @@ async function displayLyricsUI(
   })
 }
 
-async function fetchMusixmatchLyrics(
-  query: string | undefined,
-  currentTrack: unknown
-) {
+async function fetchLyrics(query: string | undefined, currentTrack: unknown) {
   const hints = extractLyricsSearchHints(currentTrack as LyricsTrackLike)
   const searchQuery = query?.trim() || buildLyricsQueryFromHints(hints)
 
   if (!searchQuery) return null
 
   try {
-    const result = await musixmatch.findLyrics(searchQuery, hints)
+    const result = await findLyrics(searchQuery, hints)
     if (!result?.text && !result?.lines) return null
 
     return {
@@ -318,7 +315,7 @@ async function fetchMusixmatchLyrics(
       searchQuery
     }
   } catch (error) {
-    console.error('Musixmatch error:', error)
+    console.error('Lyrics provider error:', error)
     return null
   }
 }
@@ -362,7 +359,7 @@ export default class LyricsCommand extends Command {
     }
 
     try {
-      const lyricsResult = await fetchMusixmatchLyrics(search, currentTrack)
+      const lyricsResult = await fetchLyrics(search, currentTrack)
 
       if (!lyricsResult) {
         await ctx.editOrReply({

@@ -1,6 +1,7 @@
 import { ActionRow, Button, ButtonStyle, Embed } from 'seyfert'
 import { getPlaylistTracks } from '../utils/db.ts'
 import { COLORS, ICONS } from './constants.ts'
+import type { AvatarClientLike } from './helperTypes.ts'
 import { createPlaylistNameCache } from './playlistNameCache.ts'
 
 const MAX_AUTOCOMPLETE_OPTIONS = 25
@@ -110,11 +111,23 @@ type AutocompleteInteractionLike<Value extends string | number = string> = {
   }
 }
 
+export const botAvatarUrl = (
+  client: AvatarClientLike | undefined | null
+): string | undefined => {
+  const avatar = client?.me?.avatarURL
+  if (typeof avatar === 'function') {
+    const url: unknown = (avatar as () => unknown)()
+    return typeof url === 'string' && url.length > 0 ? url : undefined
+  }
+  return typeof avatar === 'string' && avatar.length > 0 ? avatar : undefined
+}
+
 export const createEmbed = (
   type: keyof typeof TITLE_ICONS,
   title: string,
   description: string | null,
-  fields: EmbedFieldInput[] = []
+  fields: EmbedFieldInput[] = [],
+  iconUrl?: string | undefined
 ) => {
   const embed = new Embed()
     .setColor(COLORS[type])
@@ -122,8 +135,7 @@ export const createEmbed = (
     .setTimestamp()
     .setFooter({
       text: `${ICONS.music} Kenium Music`,
-      iconUrl:
-        'https://toddythenoobdud.github.io/0a0f3c0476c8b495838fa6a94c7e88c2.png'
+      ...(iconUrl ? { iconUrl } : {})
     })
 
   if (description) embed.setDescription(description)

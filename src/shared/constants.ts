@@ -1,5 +1,5 @@
 export const EMBED_COLOR = 0x100e09
-export const APP_VERSION = '4.13.0'
+export const APP_VERSION = '4.14.0'
 
 export const ICONS = Object.freeze({
   music: '\uD83C\uDFB5',

@@ -16,6 +16,28 @@ const WORD_START_RE = /\b\w/g
 export const getQueueLength = (queue?: QueueLike<TrackLike> | null) =>
   queue?.size ?? queue?.length ?? 0
 
+type QueueSourceLike = { queue?: unknown } | null | undefined
+
+export const getTrackTitle = (track: TrackLike | null | undefined) =>
+  track?.info?.title || track?.title || ''
+
+export const getQueueItems = <TTrack = TrackLike>(
+  player: QueueSourceLike
+): TTrack[] => {
+  const queue = player?.queue
+  if (Array.isArray(queue)) return queue as TTrack[]
+  if (queue && typeof (queue as { toArray?: unknown }).toArray === 'function') {
+    const items = (queue as { toArray: () => unknown }).toArray()
+    return Array.isArray(items) ? (items as TTrack[]) : []
+  }
+  return []
+}
+
+export const getQueueSize = (player: QueueSourceLike): number => {
+  const size = (player?.queue as QueueLike<TrackLike> | undefined)?.size
+  return typeof size === 'number' ? size : getQueueItems(player).length
+}
+
 export const formatTime = (ms: number | undefined) => {
   const s = Math.floor((ms || 0) / 1000)
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -157,6 +179,39 @@ export const updateNowPlayingEmbed = async (
   } catch {
     player.nowPlayingMessage = null
   }
+}
+
+type MessageDeleterLike = {
+  messages?: {
+    delete?: (
+      messageId: string,
+      channelId: string
+    ) => Promise<unknown> | unknown
+  }
+}
+
+export const deleteNowPlayingMessage = async (
+  player: PlayerLike | null | undefined,
+  client?: MessageDeleterLike | null | undefined
+): Promise<void> => {
+  const msg = player?.nowPlayingMessage as
+    | (EditableMessageLike & { delete?: () => Promise<unknown> | unknown })
+    | null
+    | undefined
+  if (player) player.nowPlayingMessage = null
+  if (!msg) return
+
+  try {
+    if (typeof msg.delete === 'function') {
+      await msg.delete()
+    } else if (
+      msg.id &&
+      msg.channelId &&
+      typeof client?.messages?.delete === 'function'
+    ) {
+      await client.messages.delete(msg.id, msg.channelId)
+    }
+  } catch {}
 }
 
 type NowPlayingUIOptions = {

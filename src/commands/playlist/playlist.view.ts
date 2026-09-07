@@ -110,7 +110,8 @@ export class ViewCommand extends SubCommand {
               name: `${ICONS.info} Getting Started`,
               value: 'Use `/playlist create` to make your first playlist!'
             }
-          ]
+          ],
+          ctx.client.me?.avatarURL()
         )
         embed.addFields({
           name: `${ICONS.add} Create One`,
@@ -122,7 +123,9 @@ export class ViewCommand extends SubCommand {
       const embed = createEmbed(
         'primary',
         'Your Playlists',
-        `You have **${playlists.length}** playlist${playlists.length !== 1 ? 's' : ''}`
+        `You have **${playlists.length}** playlist${playlists.length !== 1 ? 's' : ''}`,
+        [],
+        ctx.client.me?.avatarURL()
       )
       playlists.slice(0, 10).forEach((playlist) => {
         const duration = formatDuration(playlist.totalDuration || 0)
@@ -178,7 +181,9 @@ export class ViewCommand extends SubCommand {
           createEmbed(
             'error',
             'Playlist Not Found',
-            `No playlist named "${playlistName}" exists!`
+            `No playlist named "${playlistName}" exists!`,
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64
@@ -200,7 +205,8 @@ export class ViewCommand extends SubCommand {
             name: `${ICONS.info} Description`,
             value: playlist.description || 'No description'
           }
-        ]
+        ],
+        ctx.client.me?.avatarURL()
       )
 
       return ctx.write({ embeds: [embed], flags: 64 })
@@ -242,7 +248,8 @@ export class ViewCommand extends SubCommand {
           value: String(playlist.playCount || 0),
           inline: true
         }
-      ]
+      ],
+      ctx.client.me?.avatarURL()
     )
 
     const trackList = tracks

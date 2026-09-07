@@ -100,7 +100,8 @@ function createEmbed(
   type: EmbedVariant,
   title: string,
   description: string | null = null,
-  fields: Array<{ name: string; value: string; inline?: boolean }> = []
+  fields: Array<{ name: string; value: string; inline?: boolean }> = [],
+  iconUrl?: string | undefined
 ) {
   const colors: Record<EmbedVariant, number> = {
     default: COLORS.primary,
@@ -120,8 +121,7 @@ function createEmbed(
     .setTimestamp()
     .setFooter({
       text: `${ICONS.tracks} Kenium Music - Playlist System`,
-      iconUrl:
-        'https://toddythenoobdud.github.io/0a0f3c0476c8b495838fa6a94c7e88c2.png'
+      ...(iconUrl ? { iconUrl } : {})
     })
 
   if (description) {
@@ -179,13 +179,15 @@ export class ImportCommand extends SubCommand {
         typeof data.name !== 'string' ||
         !Array.isArray(data.tracks)
       ) {
-        return ctx.write({
+        return ctx.editOrReply({
           embeds: [
             createEmbed(
               'error',
               t?.invalidFile || 'Invalid File',
               t?.invalidFileDesc ||
-                'The file must contain a valid playlist with name and tracks array.'
+                'The file must contain a valid playlist with name and tracks array.',
+              [],
+              ctx.client.me?.avatarURL()
             )
           ],
           flags: 64
@@ -194,12 +196,14 @@ export class ImportCommand extends SubCommand {
 
       const validTracks = limitImportedTracks(data.tracks.filter(isValidTrack))
       if (validTracks.length === 0) {
-        return ctx.write({
+        return ctx.editOrReply({
           embeds: [
             createEmbed(
               'error',
               t?.invalidFile || 'Invalid File',
-              'The playlist contains no valid tracks.'
+              'The playlist contains no valid tracks.',
+              [],
+              ctx.client.me?.avatarURL()
             )
           ],
           flags: 64
@@ -208,12 +212,14 @@ export class ImportCommand extends SubCommand {
 
       const playlistName = providedName || DEFAULT_IMPORTED_PLAYLIST_NAME
       if (validatePlaylistCreation(playlistName, 0) === 'name-too-long') {
-        return ctx.write({
+        return ctx.editOrReply({
           embeds: [
             createEmbed(
               'error',
               t?.invalidFile || 'Invalid Playlist Name',
-              `Playlist name must be at most ${LIMITS.MAX_NAME_LENGTH} characters.`
+              `Playlist name must be at most ${LIMITS.MAX_NAME_LENGTH} characters.`,
+              [],
+              ctx.client.me?.avatarURL()
             )
           ],
           flags: 64
@@ -282,7 +288,7 @@ export class ImportCommand extends SubCommand {
       )
 
       if (importResult === 'exists') {
-        return ctx.write({
+        return ctx.editOrReply({
           embeds: [
             createEmbed(
               'error',
@@ -290,14 +296,16 @@ export class ImportCommand extends SubCommand {
               (
                 t?.nameConflictDesc ||
                 'A playlist named "{name}" already exists!'
-              ).replace('{name}', playlistName)
+              ).replace('{name}', playlistName),
+              [],
+              ctx.client.me?.avatarURL()
             )
           ],
           flags: 64
         })
       }
       if (importResult === 'playlist-limit') {
-        return ctx.write({
+        return ctx.editOrReply({
           embeds: [
             createEmbed(
               'error',
@@ -305,7 +313,9 @@ export class ImportCommand extends SubCommand {
               (
                 t?.maxPlaylists ||
                 'You can only have a maximum of {max} playlists.'
-              ).replace('{max}', String(LIMITS.MAX_PLAYLISTS))
+              ).replace('{max}', String(LIMITS.MAX_PLAYLISTS)),
+              [],
+              ctx.client.me?.avatarURL()
             )
           ],
           flags: 64
@@ -333,15 +343,16 @@ export class ImportCommand extends SubCommand {
             value: formatDuration(aggregate.totalDuration),
             inline: true
           }
-        ]
+        ],
+        ctx.client.me?.avatarURL()
       )
 
-      await ctx.write({ embeds: [embed], flags: 64 })
+      await ctx.editOrReply({ embeds: [embed], flags: 64 })
     } catch (error) {
       if (isExpiredInteraction(error)) return
       console.error('Import playlist error:', error)
       try {
-        await ctx.write({
+        await ctx.editOrReply({
           embeds: [
             createEmbed(
               'error',
@@ -353,7 +364,9 @@ export class ImportCommand extends SubCommand {
                   ).replace(
                     '{error}',
                     error instanceof Error ? error.message : 'Unknown error'
-                  )
+                  ),
+              [],
+              ctx.client.me?.avatarURL()
             )
           ],
           flags: 64

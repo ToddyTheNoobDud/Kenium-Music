@@ -68,7 +68,9 @@ export class DeleteCommand extends SubCommand {
             (t?.notFoundDesc || 'No playlist named "{name}" exists!').replace(
               '{name}',
               playlistName
-            )
+            ),
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64
@@ -90,7 +92,9 @@ export class DeleteCommand extends SubCommand {
       (t?.deletedDesc || 'Successfully deleted playlist "{name}"').replace(
         '{name}',
         playlistName
-      )
+      ),
+      [],
+      ctx.client.me?.avatarURL()
     )
     return ctx.write({ embeds: [embed], flags: 64 })
   }

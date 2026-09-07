@@ -98,7 +98,9 @@ export class RemoveCommand extends SubCommand {
             (t?.notFoundDesc || 'No playlist named "{name}" exists!').replace(
               '{name}',
               playlistName
-            )
+            ),
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64
@@ -166,7 +168,9 @@ export class RemoveCommand extends SubCommand {
             (t?.removeFailedDesc || 'Could not remove track: {error}').replace(
               '{error}',
               dbError instanceof Error ? dbError.message : 'Unknown error'
-            )
+            ),
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64
@@ -182,7 +186,9 @@ export class RemoveCommand extends SubCommand {
             (t?.notFoundDesc || 'No playlist named "{name}" exists!').replace(
               '{name}',
               playlistName
-            )
+            ),
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64
@@ -197,7 +203,9 @@ export class RemoveCommand extends SubCommand {
             t?.invalidIndex || 'Invalid Index',
             (
               t?.invalidIndexDesc || 'Track index must be between 1 and {max}'
-            ).replace('{max}', String(totalTracks))
+            ).replace('{max}', String(totalTracks)),
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64
@@ -210,35 +218,43 @@ export class RemoveCommand extends SubCommand {
           createEmbed(
             'error',
             t?.notFound || 'Track Not Found',
-            'Could not find the track at that index.'
+            'Could not find the track at that index.',
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64
       })
     }
 
-    const embed = createEmbed('success', t?.removed || 'Track Removed', null, [
-      {
-        name: `${ICONS.remove} ${t?.removedTrack || 'Removed'}`,
-        value: `**${removedTrack.title}**`,
-        inline: false
-      },
-      {
-        name: `${ICONS.artist} ${t?.artist || 'Artist'}`,
-        value: removedTrack.author || 'Unknown',
-        inline: true
-      },
-      {
-        name: `${ICONS.source} ${t?.source || 'Source'}`,
-        value: removedTrack.source || 'Unknown',
-        inline: true
-      },
-      {
-        name: `${ICONS.tracks} ${t?.remaining || 'Remaining'}`,
-        value: `${totalTracks} tracks`,
-        inline: true
-      }
-    ])
+    const embed = createEmbed(
+      'success',
+      t?.removed || 'Track Removed',
+      null,
+      [
+        {
+          name: `${ICONS.remove} ${t?.removedTrack || 'Removed'}`,
+          value: `**${removedTrack.title}**`,
+          inline: false
+        },
+        {
+          name: `${ICONS.artist} ${t?.artist || 'Artist'}`,
+          value: removedTrack.author || 'Unknown',
+          inline: true
+        },
+        {
+          name: `${ICONS.source} ${t?.source || 'Source'}`,
+          value: removedTrack.source || 'Unknown',
+          inline: true
+        },
+        {
+          name: `${ICONS.tracks} ${t?.remaining || 'Remaining'}`,
+          value: `${totalTracks} tracks`,
+          inline: true
+        }
+      ],
+      ctx.client.me?.avatarURL()
+    )
 
     const videoId = extractYouTubeId(removedTrack.uri)
     if (videoId) {

@@ -4,7 +4,6 @@ import type {
   AquaClientLike,
   InteractionLike,
   PlayerLike,
-  QueueLike,
   ResolveResultLike,
   TrackLike
 } from '../shared/helperTypes.ts'
@@ -15,9 +14,13 @@ import {
   truncateText,
   updateNowPlayingEmbed
 } from '../shared/nowPlaying.ts'
-import { ensureMemberCanControlPlayer } from '../shared/playback.ts'
+import {
+  ensureMemberCanControlPlayer,
+  playPreviousTrack
+} from '../shared/playback.ts'
 import { getOrCreatePlayer } from '../shared/player.ts'
 import {
+  botAvatarUrl,
   createButtons,
   createEmbed,
   formatDuration,
@@ -54,13 +57,6 @@ type PlaylistButtonAction =
   | 'shuffle_playlist'
   | 'playlist_prev'
   | 'playlist_next'
-
-type ParsedPlaylistButtonId = {
-  action: PlaylistButtonAction
-  playlistName: string
-  userId: string
-  page?: number
-}
 
 type StoredPlaylistTrackLike = {
   uri?: string
@@ -154,23 +150,6 @@ export const _functions = {
   setPlayerVolume: (player: PlayerLike, volume: number) =>
     player?.setVolume?.(volume),
 
-  addToQueueFront: (
-    queue: QueueLike<TrackLike> | undefined,
-    item: TrackLike
-  ) => {
-    if (!queue) return
-    if (typeof queue.unshift === 'function') {
-      queue.unshift(item)
-      return
-    }
-
-    if (typeof queue.add !== 'function') return
-    const result = queue.add(item)
-    if (result && typeof result === 'object' && 'catch' in result) {
-      ;(result as Promise<unknown>).catch(() => {})
-    }
-  },
-
   safeReply: async (interaction: InteractionLike, content: string) => {
     try {
       if (typeof interaction.editOrReply === 'function') {
@@ -184,40 +163,6 @@ export const _functions = {
         await interaction.followup({ content })
       }
     } catch {}
-  },
-
-  parsePlaylistButtonId: (
-    customId: string | null | undefined
-  ): ParsedPlaylistButtonId | null => {
-    if (!customId) return null
-    const parts = customId.split('_')
-    if (parts.length < 3) return null
-
-    const userId = parts.at(-1)
-    if (!userId) return null
-
-    const a0 = parts[0]
-    const a1 = parts[1]
-
-    if ((a0 === 'play' || a0 === 'shuffle') && a1 === 'playlist') {
-      return {
-        action: a0 === 'play' ? 'play_playlist' : 'shuffle_playlist',
-        playlistName: parts.slice(2, -1).join('_'),
-        userId
-      }
-    }
-
-    if (a0 === 'playlist' && (a1 === 'prev' || a1 === 'next')) {
-      const page = Number(parts[2])
-      return {
-        action: a1 === 'prev' ? 'playlist_prev' : 'playlist_next',
-        playlistName: parts.slice(3, -1).join('_'),
-        userId,
-        ...(Number.isFinite(page) ? { page } : {})
-      }
-    }
-
-    return null
   },
 
   updateNowPlayingEmbed,
@@ -269,13 +214,14 @@ const actionHandlers: Record<
   volume_down: (player: PlayerLike) => adjustVolume(player, -VOLUME_STEP),
   volume_up: (player: PlayerLike) => adjustVolume(player, VOLUME_STEP),
 
-  previous: (player: PlayerLike) => {
-    if (!player?.previous)
-      return { message: '❌ No previous track available', shouldUpdate: false }
-    if (player.current) _functions.addToQueueFront(player.queue, player.current)
-    _functions.addToQueueFront(player.queue, player.previous)
-    player.stop?.()
-    return { message: '⏮️ Playing the previous track.', shouldUpdate: false }
+  previous: async (player: PlayerLike) => {
+    const playedPrevious = await playPreviousTrack(player)
+    return playedPrevious
+      ? { message: '⏮️ Playing the previous track.', shouldUpdate: false }
+      : {
+          message: '❌ No previous track available',
+          shouldUpdate: false
+        }
   },
 
   resume: (player: PlayerLike) => {
@@ -303,7 +249,8 @@ const buildPlaylistPage = (
   playlist: PlaylistSummaryLike,
   playlistName: string,
   userId: string,
-  page: number | undefined
+  page: number | undefined,
+  iconUrl?: string | undefined
 ) => {
   const total =
     typeof playlist?.trackCount === 'number'
@@ -319,7 +266,13 @@ const buildPlaylistPage = (
     fields: ['title', 'author', 'duration', 'uri']
   })
 
-  const embed = createEmbed('primary', `${ICONS.playlist} ${playlistName}`, '')
+  const embed = createEmbed(
+    'primary',
+    `${ICONS.playlist} ${playlistName}`,
+    '',
+    [],
+    iconUrl
+  )
   embed.addFields(
     {
       name: `${ICONS.info} Info`,
@@ -404,7 +357,8 @@ const PLAYLIST_BATCH_SIZE = 50
 const displayPlaylistById = async (
   interaction: InteractionLike,
   playlistId: string,
-  userId: string
+  userId: string,
+  iconUrl?: string | undefined
 ): Promise<ActionResult> => {
   const playlist = playlistsCol().findOne(
     { _id: playlistId, userId },
@@ -426,7 +380,8 @@ const displayPlaylistById = async (
     playlist,
     String(playlist.name || 'Playlist'),
     userId,
-    1
+    1,
+    iconUrl
   )
   if (typeof interaction.editOrReply === 'function') {
     await interaction.editOrReply({ embeds: [embed], components })
@@ -692,7 +647,7 @@ const playlistActionHandlers: Record<
 
   playlist_prev: async (
     interaction: InteractionLike,
-    _client: AquaClientLike,
+    client: AquaClientLike,
     userId: string,
     playlistName: string,
     page: number | undefined
@@ -718,7 +673,8 @@ const playlistActionHandlers: Record<
       playlist,
       playlistName,
       userId,
-      Math.max(1, (page || 1) - 1)
+      Math.max(1, (page || 1) - 1),
+      botAvatarUrl(client)
     )
     if (typeof interaction.editOrReply === 'function') {
       await interaction.editOrReply({ embeds: [embed], components })
@@ -728,7 +684,7 @@ const playlistActionHandlers: Record<
 
   playlist_next: async (
     interaction: InteractionLike,
-    _client: AquaClientLike,
+    client: AquaClientLike,
     userId: string,
     playlistName: string,
     page: number | undefined
@@ -754,7 +710,8 @@ const playlistActionHandlers: Record<
       playlist,
       playlistName,
       userId,
-      (page || 1) + 1
+      (page || 1) + 1,
+      botAvatarUrl(client)
     )
     if (typeof interaction.editOrReply === 'function') {
       await interaction.editOrReply({ embeds: [embed], components })
@@ -803,14 +760,16 @@ export default createEvent({
             ? await displayPlaylistById(
                 interaction,
                 playlistId,
-                classified.userId
+                classified.userId,
+                botAvatarUrl(client)
               )
             : { message: '❌ No playlist was selected.', shouldUpdate: false }
         } else if (classified.action === 'view') {
           result = await displayPlaylistById(
             interaction,
             classified.playlistId,
-            classified.userId
+            classified.userId,
+            botAvatarUrl(client)
           )
         } else {
           const action =

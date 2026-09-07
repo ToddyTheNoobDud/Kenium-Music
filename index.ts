@@ -11,21 +11,33 @@ import {
   type ParseLocales
 } from 'seyfert'
 import { lru } from 'tiny-lru'
+import seyfertConfig from './seyfert.config.ts'
 import {
   cleanupAllKaraokeSessions,
   cleanupKaraokeSession,
   hasKaraokeSession,
+  resyncKaraokeSession,
   syncKaraokeSessionTrack
 } from './src/commands/karaoke.ts'
 import {
+  dropPendingPlaylistLoads,
+  topUpPlaylistBuffer
+} from './src/events/playlistPlayback.ts'
+import {
   registerVoiceManager,
-  requestTwentyFourSevenRecovery
+  requestTwentyFourSevenRecovery,
+  setVoiceGatewayHealthy
 } from './src/events/voiceStateUpdate.ts'
 import type English from './src/languages/en.ts'
 import { middlewares } from './src/middlewares/middlewares.ts'
 import { APP_VERSION } from './src/shared/constants.ts'
 import type { EditableMessageLike } from './src/shared/helperTypes.ts'
-import { createNowPlayingEmbed, truncateText } from './src/shared/nowPlaying.ts'
+import {
+  createNowPlayingEmbed,
+  deleteNowPlayingMessage,
+  truncateText
+} from './src/shared/nowPlaying.ts'
+import { isPlayerRecovering } from './src/shared/voiceLifecycle.ts'
 import { closeDatabase, initDatabase } from './src/utils/db.ts'
 import {
   flushDatabaseUpdates,
@@ -60,11 +72,18 @@ if (!id) {
 
 const client = new Client({
   plugins,
+  getRC: () => seyfertConfig,
   onShardDisconnect({ shardId, code, reason }) {
     client.logger.warn(`Shard ${shardId} disconnected: ${code} — ${reason}`)
+    try {
+      setVoiceGatewayHealthy(false)
+    } catch {}
   },
   onShardReconnect({ shardId }) {
     client.logger.info(`Shard ${shardId} reconnected`)
+    try {
+      setVoiceGatewayHealthy(true)
+    } catch {}
     try {
       requestTwentyFourSevenRecovery(
         client as unknown as Parameters<
@@ -94,7 +113,10 @@ const aqua = new Aqua(
   {
     defaultSearchPlatform: 'ytsearch',
     restVersion: 'v4',
-    shouldDeleteMessage: true,
+    // We own the now-playing message lifecycle (edit on trackStart, delete
+    // in cleanupPlayer). AquaLink's flag deletes it on every trackEnd and
+    // races the next trackStart edit, leaving a deleted message behind.
+    shouldDeleteMessage: false,
     infiniteReconnects: true,
     autoResume: true,
     resumeTimeout: 120,
@@ -158,6 +180,9 @@ const cleanupPlayer = (
   if (is247 && isQueueEnd) {
     state.nowPlayingInflight.delete(player.guildId)
     if (hasKaraokeSession(player.guildId)) cleanupKaraokeSession(player.guildId)
+    if (!isPlayerRecovering(player)) {
+      void deleteNowPlayingMessage(player, client)
+    }
     return
   }
 
@@ -169,6 +194,9 @@ const cleanupPlayer = (
   state.nowPlayingInflight.delete(player.guildId)
   state.nowPlayingLastStart.delete(player.guildId)
   if (hasKaraokeSession(player.guildId)) cleanupKaraokeSession(player.guildId)
+  if (!isPlayerRecovering(player)) {
+    void deleteNowPlayingMessage(player, client)
+  }
 }
 
 const shutdown = async () => {
@@ -259,7 +287,11 @@ client.setServices({
       stickers: true,
       roles: true,
       presences: true,
-      stageInstances: true
+      stageInstances: true,
+      // Never read: now-playing/collector messages are held live, and no
+      // permission checks run. Disabling skips the write+evict path.
+      messages: true,
+      overwrites: true
     },
     adapter: new LimitedMemoryAdapter({
       message: { expire: 300_000, limit: 10 },
@@ -442,7 +474,8 @@ aqua.on('error', (sourceOrError: unknown, maybeError?: unknown) => {
         ? sourceOrError.message
         : maybeError || sourceOrError || ''
   )
-  // Suppress benign "Unknown Message" 10008 from shouldDeleteMessage
+  // Suppress benign "Unknown Message" 10008 from now-playing edits racing
+  // manual message deletes
   if (errStr.includes('10008')) return
   const err =
     maybeError instanceof Error
@@ -474,13 +507,24 @@ if (AQUALINK_TRACE) {
   }
 }
 
-aqua.on('playerDestroy', (player: Player) =>
+aqua.on('playerDestroy', (player: Player) => {
+  dropPendingPlaylistLoads(player.guildId)
   cleanupPlayer(player, 'playerDestroy')
-)
+})
 aqua.on('queueEnd', (player: Player) => cleanupPlayer(player, 'queueEnd'))
+aqua.on('trackEnd', (player: Player) => {
+  void topUpPlaylistBuffer(aqua, player)
+})
 
 aqua.on('nodeError', (node, error) => {
   console.error(`Node [${node.name}] error: ${error.message}`)
+})
+
+// :p
+aqua.on('seek', (player: unknown, _track: unknown, payload: unknown) => {
+  const guildId = (player as { guildId?: unknown } | null)?.guildId
+  const position = (payload as { position?: unknown } | null)?.position
+  if (typeof guildId === 'string') resyncKaraokeSession(guildId, position)
 })
 
 aqua.on('socketClosed', (player, payload) => {

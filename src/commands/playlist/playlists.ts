@@ -9,7 +9,7 @@ import { RemoveCommand } from './playlist.remove.ts'
 import { ViewCommand } from './playlist.view.ts'
 @Declare({
   name: 'playlists',
-  description: 'Kenium source code on top, im going insane lol'
+  description: 'I can put any description here, inst that cool?'
 })
 @Options([
   CreateCommand,

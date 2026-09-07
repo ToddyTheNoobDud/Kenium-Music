@@ -443,6 +443,15 @@ class VoiceManager {
     this.recoveryJobs.delete(guildId)
   }
 
+  cancelAllRecovery() {
+    for (const job of this.recoveryJobs.values())
+      _functions.clearTimer(job.timer)
+    this.recoveryJobs.clear()
+    for (const pending of this.pending.values())
+      _functions.clearTimer(pending.timer)
+    this.pending.clear()
+  }
+
   register(client: VoiceClientLike) {
     if (this.registered.has(client)) return
 
@@ -623,6 +632,7 @@ class VoiceManager {
     source: RecoverySource = 'retry',
     minimumDelay = 0
   ) {
+    if (!gatewayHealthy) return
     const breakerDelay = this.breaker.getDelay(guildId)
     if (breakerDelay < 0) {
       this.handleRejoinGiveUp(guildId)
@@ -647,6 +657,10 @@ class VoiceManager {
       const job = this.recoveryJobs.get(guildId)
       if (!job || job.timer !== timer) return
       this.recoveryJobs.delete(guildId)
+      if (!gatewayHealthy) {
+        this.setState(guildId, STATE_IDLE)
+        return
+      }
 
       void (async () => {
         if (!this.setState(guildId, STATE_REJOINING)) {
@@ -859,6 +873,14 @@ class VoiceManager {
     if (now - this.lastBulkRecoveryAt < BULK_REJOIN_DEDUPE_WINDOW) return
     this.lastBulkRecoveryAt = now
 
+    if (autoJoinRunning) {
+      client.logger?.info(
+        '[VoiceManager] bulk recovery skipped: 24/7 auto-join running.'
+      )
+      return
+    }
+    if (!gatewayHealthy) return
+
     const settingsList = getAll247Settings()
     if (!settingsList.length) return
 
@@ -922,6 +944,23 @@ class VoiceManager {
 }
 
 const manager = new VoiceManager()
+
+let gatewayHealthy = true
+let autoJoinRunning = false
+
+export const isVoiceGatewayHealthy = () => gatewayHealthy
+
+export const setVoiceGatewayHealthy = (healthy: boolean) => {
+  gatewayHealthy = healthy
+  if (!healthy) manager.cancelAllRecovery()
+}
+
+export const setAutoJoinRunning = (running: boolean) => {
+  autoJoinRunning = running
+  // Auto-join covers every 24/7 guild itself: drop any recovery jobs
+  // queued earlier (e.g. by a reconnect sweep) so guilds aren't joined twice.
+  if (running) manager.cancelAllRecovery()
+}
 
 export default createEvent({
   data: { name: 'voiceStateUpdate', once: false },

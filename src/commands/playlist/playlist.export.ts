@@ -47,7 +47,8 @@ function createEmbed(
   type: EmbedVariant,
   title: string,
   description: string | null = null,
-  fields: Array<{ name: string; value: string; inline?: boolean }> = []
+  fields: Array<{ name: string; value: string; inline?: boolean }> = [],
+  iconUrl?: string | undefined
 ) {
   const colors: Record<EmbedVariant, number> = {
     default: COLORS.primary,
@@ -67,8 +68,7 @@ function createEmbed(
     .setTimestamp()
     .setFooter({
       text: `${ICONS.tracks} Kenium Music - Playlist System`,
-      iconUrl:
-        'https://toddythenoobdud.github.io/0a0f3c0476c8b495838fa6a94c7e88c2.png'
+      ...(iconUrl ? { iconUrl } : {})
     })
 
   if (description) {
@@ -111,7 +111,9 @@ export class ExportCommand extends SubCommand {
             (t?.notFoundDesc || 'No playlist named "{name}" exists!').replace(
               '{name}',
               playlistName
-            )
+            ),
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64

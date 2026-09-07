@@ -1,3 +1,4 @@
+import type { Track } from 'aqualink'
 import {
   Command,
   type CommandContext,
@@ -8,7 +9,12 @@ import {
   Options
 } from 'seyfert'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
-import type { PlayerLike, TrackLike } from '../shared/helperTypes.ts'
+import type { TrackLike } from '../shared/helperTypes.ts'
+import {
+  getQueueItems,
+  getQueueSize,
+  getTrackTitle
+} from '../shared/nowPlaying.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 
 function formatTrackName(name: string) {
@@ -29,9 +35,6 @@ type ChoiceLike = {
   value: number
 }
 
-const getQueueItems = (player: PlayerLike | undefined) =>
-  Array.isArray(player?.queue) ? (player.queue as TrackLike[]) : []
-
 const options = {
   position: createIntegerOption({
     description: 'remove track from playlist',
@@ -40,7 +43,7 @@ const options = {
       const player = interaction.client.aqua.players.get(
         interaction.guildId || ''
       )
-      if (!player?.queue?.length) {
+      if (getQueueSize(player) === 0) {
         return interaction.respond([])
       }
 
@@ -49,7 +52,7 @@ const options = {
       const choices = getQueueItems(player)
         .slice(0, 25)
         .map((track: TrackLike, index: number): ChoiceLike => {
-          const title = String(track.info?.title || track.title || 'Unknown')
+          const title = getTrackTitle(track) || 'Unknown'
           const name = formatTrackName(`${index + 1}: ${title}`)
           return { name, value: index + 1 }
         })
@@ -84,7 +87,20 @@ export default class removecmds extends Command {
       if (!player) return
       const { position } = ctx.options as { position: number }
 
-      player.queue.splice(position - 1, 1)
+      const target = getQueueItems<Track>(player)[position - 1]
+      if (!target) {
+        await ctx.editOrReply({
+          embeds: [
+            new Embed()
+              .setDescription('❌ No track at that position.')
+              .setColor(0x100e09)
+          ],
+          flags: 64
+        })
+        return
+      }
+
+      player.queue.remove(target)
       await ctx.editOrReply({
         embeds: [
           new Embed().setDescription(t.player?.removedSong).setColor(0x100e09)

@@ -66,6 +66,9 @@ function formatMemoryUsage(bytes: number): string {
 }
 
 async function getBannerURL(client: StatusClientLike): Promise<string | null> {
+  if (client.me?.banner) {
+    return client.me.bannerURL?.({ extension: 'webp', size: 4096 }) || null
+  }
   const now = Date.now()
 
   // Check if we have a cached banner and it's still valid
@@ -74,9 +77,10 @@ async function getBannerURL(client: StatusClientLike): Promise<string | null> {
   }
 
   try {
-    // Only fetch if cache is expired or empty
+    // Only fetch if cache is expired, empty or the client above din't work.
     const user = await client.me?.fetch()
-    const bannerURL = user?.bannerURL?.({ size: 4096 }) || null
+    const bannerURL =
+      user?.bannerURL?.({ size: 4096, extension: 'webp' }) || null
 
     // Update cache
     BANNER_CACHE.url = bannerURL
@@ -119,7 +123,20 @@ export default class statusCmds extends Command {
     const { players: totalPlayers = 0, playingPlayers = 0 } = stats
 
     const guildCount = client.cache.guilds?.count() ?? 0
-    const userCount = state.cachedUserCount
+    let userCount = state.cachedUserCount
+    if (!userCount) {
+      const allGuilds = client.cache.guilds?.values() ?? []
+      userCount = (allGuilds as Array<{ memberCount?: number }>).reduce(
+        (sum, guild) => sum + (guild.memberCount ?? 0),
+        0
+      )
+    }
+    const memory = process.memoryUsage()
+    const gatewayLatency = client.gateway.latency
+    const pingText =
+      typeof gatewayLatency === 'number' && Number.isFinite(gatewayLatency)
+        ? `${Math.round(gatewayLatency)}ms`
+        : '…'
 
     // Use cached banner URL
     const bannerURL = await getBannerURL(client as StatusClientLike)
@@ -138,7 +155,7 @@ export default class statusCmds extends Command {
         {
           inline: true,
           name: '`🖥️` System',
-          value: `\`💻\` Memory Usage: ${formatMemoryUsage(process.memoryUsage().rss)}\n\`🕛\`Uptime: ${formatDates(process.uptime())}\n\`🛜\` Ping: ${client.gateway.latency}`
+          value: `\`💻\` Heap: ${formatMemoryUsage(memory.heapUsed)}\n\`📦\` RSS: ${formatMemoryUsage(memory.rss)}\n\`🕛\`Uptime: ${formatDates(process.uptime())}\n\`🛜\` Ping: ${pingText}`
         }
       )
 

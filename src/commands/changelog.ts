@@ -26,43 +26,44 @@ const CONFIG = {
     DEVELOPER: 'mushroom0162',
     RELEASE_NOTES: {
       version: APP_VERSION,
-      date: '2026-06-15',
+      date: '2026-09-07',
       summary:
-        'Integrated TuneMyMusic for seamless playlist migration, overhauled the 24/7 stream retention system with exponential backoffs, and introduced database optimizations alongside consolidated UI components.',
+        'Switched lyrics to LRCLIB with ping-based karaoke timing, made playlist loading chunked so large playlists start faster, cut startup request floods with better batching, and fixed previous, jump, and playlist import replies.',
       highlights: [
-        'Added TuneMyMusic CSV/TXT integration for playlist imports/exports',
-        'Overhauled 24/7 reconnects with exponential backoffs and socket error recovery',
-        'Fully refactored the caching system to improve memory footprint and lookup speed',
-        'Optimized SQLite performance with native JSON field path updates',
-        'Consolidated Now Playing UI layouts and centralized Discord interaction error guards'
+        'Lyrics now resolve through LRCLIB with karaoke edit timing derived from live bot ping and interaction averages',
+        'Playlist playback loads in chunks (10 tracks first, then top-ups) instead of pushing everything into the node at once',
+        'Startup batching rework stops the thousands of requests per second fired during boot',
+        'Previous, jump, and remove fixed to work against the real player queue shape',
+        'The bot now owns the Now Playing message lifecycle, reusing one message per session'
       ],
       added: [
-        'TuneMyMusic playlist format support (CSV, TXT, and Kenium JSON payloads)',
-        'ISRC lookup support during playlist import to resolve tracks with high fidelity',
-        'Centralized interaction error handling middleware and decorators (errorGuard.ts)',
-        'Async concurrency pool worker (mapPool) for batch actions to limit resource strain',
-        'Automatic 24/7 reconnection trigger on shard ready and shard reconnect events',
-        'SQLite collection unit tests for mixed hot and non-hot column updates'
+        'Nodelink seek events for karaoke seeking instead of constant recalculation',
+        'Chunked playlist buffer that tops up tracks as playback moves forward',
+        'Heap and RSS memory readout plus on-demand user count on /status',
+        'Github section to changelog for people that self-host Kenium.'
       ],
       changed: [
-        'Fully refactored the caching system to improve caching efficiency and memory management',
-        'Rebuilt the 24/7 reconnect flow to use exponential backoff delays instead of instant reconnects',
-        'Reused active player connections on rejoin instead of destructively recreating the player',
-        'Expanded VoiceManager socket close code handling to handle 1001, 1006, 4015, and 5001 disconnects',
-        'Optimized user count checking on the /status command by reading from a cached state variable',
-        'Modified SimpleDB update operations to perform in-place updates using native SQLite json_set',
-        'Consolidated all duplicate Now Playing UI layout logic into a single shared function',
-        'Replaced repetitive getErrorCode checks with a unified isExpiredInteraction error check'
+        'Karaoke edit timing uses measured ping and interaction averages instead of a hardcoded guess',
+        'Rebuilt botReady startup to batch loads with extra guards before firing requests',
+        'TrackStart handling moved out of AquaLink: the Now Playing message is edited in place and deleted only on queue end or player destroy',
+        'Reduced banner fetching memory use on /status',
+        'Disabled unused messages and overwrites cache resources to cut per-event CPU and flatten memory',
       ],
       fixed: [
-        'A critical SimpleDB database bug where updates to hot-columns alongside document JSON fields would get desynchronized; it now falls back to full document writes',
-        'Unhandled crashes during /play command autocomplete by wrapping interactions with safe response handlers',
-        'Player text channel resolution bugs during track playback exceptions',
-        'Outdated package dependencies for Biome, Seyfert, Node, and Bun types'
+        'Playlist import finishing without replying to the interaction',
+        'Previous duplicating the queue on every press by re-adding the current and previous tracks',
+        '/jump autocomplete returning no results and name jumps matching the queued track instead of the playing one',
+        '/remove reading the queue as a plain array instead of using the player queue API',
+        'Now Playing message ending up edited-then-deleted when jump or skip raced the old auto-delete'
       ],
       removed: [
-        'Legacy inline UI layout blocks from /grab, /nowplaying, and related command files',
-        'Duplicate error-catching blocks across more than 25 command handlers'
+        'Duplicate playlist button id parser superseded by the shared classifier',
+        'AquaLink per-track Now Playing auto-delete in favor of explicit session-end cleanup'
+      ],
+      github: [
+        'Rewrote the README setup and features sections and reorganized the .env example',
+        'Unused PREFIX_ENABLED and ANTI_DOCKER entries from the .env example',
+        'Bumped the packages'
       ]
     } as ReleaseNotes
   },
@@ -100,6 +101,7 @@ interface ReleaseNotes {
   changed: string[]
   fixed: string[]
   removed: string[]
+  github: string[]
 }
 
 type ChangelogTextLike = {
@@ -272,6 +274,8 @@ function createChangelogPage(
       createReleaseBlock('Fixed', notes.fixed),
       { type: 14, divider: true, spacing: 1 },
       createReleaseBlock('Removed', notes.removed),
+      { type: 14, divider: true, spacing: 1 },
+      createReleaseBlock('GitHub', notes.github),      
       { type: 14, divider: true, spacing: 2 },
       {
         type: 1,

@@ -150,7 +150,9 @@ export class AddCommand extends SubCommand {
             (t?.notFoundDesc || 'No playlist named "{name}" exists!').replace(
               '{name}',
               playlistName
-            )
+            ),
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64
@@ -242,7 +244,9 @@ export class AddCommand extends SubCommand {
               'warning',
               t?.nothingAdded || 'Nothing Added',
               t?.nothingAddedDesc ||
-                'No new tracks were added. They may already exist in the playlist or no matches were found.'
+                'No new tracks were added. They may already exist in the playlist or no matches were found.',
+              [],
+              ctx.client.me?.avatarURL()
             )
           ]
         })
@@ -312,7 +316,9 @@ export class AddCommand extends SubCommand {
                       t?.notFoundDesc || 'No playlist named "{name}" exists!'
                     ).replace('{name}', playlistName)
                   : t?.nothingAddedDesc ||
-                      'No new tracks were added. They may already exist or the playlist may be full.'
+                      'No new tracks were added. They may already exist or the playlist may be full.',
+                [],
+                ctx.client.me?.avatarURL()
               )
             ]
           })
@@ -329,7 +335,9 @@ export class AddCommand extends SubCommand {
               ).replace(
                 '{error}',
                 dbError instanceof Error ? dbError.message : 'Unknown error'
-              )
+              ),
+              [],
+              ctx.client.me?.avatarURL()
             )
           ]
         })
@@ -342,7 +350,9 @@ export class AddCommand extends SubCommand {
             createEmbed(
               'warning',
               t?.nothingAdded || 'Nothing Added',
-              'No new tracks were added.'
+              'No new tracks were added.',
+              [],
+              ctx.client.me?.avatarURL()
             )
           ]
         })
@@ -388,7 +398,8 @@ export class AddCommand extends SubCommand {
             value: formatDuration(aggregate.totalDuration),
             inline: true
           }
-        ]
+        ],
+        ctx.client.me?.avatarURL()
       )
 
       const buttons = createButtons([
@@ -410,7 +421,9 @@ export class AddCommand extends SubCommand {
             (t?.addFailedDesc || 'Could not add tracks: {error}').replace(
               '{error}',
               err instanceof Error ? err.message : 'Unknown error'
-            )
+            ),
+            [],
+            ctx.client.me?.avatarURL()
           )
         ]
       })

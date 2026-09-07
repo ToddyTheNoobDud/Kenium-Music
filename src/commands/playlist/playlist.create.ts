@@ -67,7 +67,9 @@ export class CreateCommand extends SubCommand {
             (
               t?.nameTooLong ||
               'Playlist name must be less than {maxLength} characters.'
-            ).replace('{maxLength}', String(LIMITS.MAX_NAME_LENGTH))
+            ).replace('{maxLength}', String(LIMITS.MAX_NAME_LENGTH)),
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64
@@ -113,7 +115,9 @@ export class CreateCommand extends SubCommand {
             t?.exists || 'Playlist Exists',
             (
               t?.alreadyExists || 'A playlist named "{name}" already exists!'
-            ).replace('{name}', name)
+            ).replace('{name}', name),
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64
@@ -129,7 +133,9 @@ export class CreateCommand extends SubCommand {
             (
               t?.maxPlaylists ||
               'You can only have a maximum of {max} playlists.'
-            ).replace('{max}', String(LIMITS.MAX_PLAYLISTS))
+            ).replace('{max}', String(LIMITS.MAX_PLAYLISTS)),
+            [],
+            ctx.client.me?.avatarURL()
           )
         ],
         flags: 64
@@ -153,7 +159,8 @@ export class CreateCommand extends SubCommand {
           value: t?.readyForTracks || 'Ready for tracks!',
           inline: true
         }
-      ]
+      ],
+      ctx.client.me?.avatarURL()
     )
 
     embed.addFields({

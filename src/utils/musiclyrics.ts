@@ -24,18 +24,18 @@ class MxmApiError extends Error {
   }
 }
 
-const APP_ID = 'web-desktop-app-v1.0'
+const APP_ID = 'android-player-v1.0'
 const TOKEN_TTL = 21_600_000
 const TOKEN_PERSIST_INTERVAL = 300_000
 const MAX_SEARCH_RESULTS = 8
 const MAX_RESOLVED_CANDIDATES = 4
 
 const ENDPOINTS = Object.freeze({
-  TOKEN: 'https://apic-desktop.musixmatch.com/ws/1.1/token.get',
-  SEARCH: 'https://apic-desktop.musixmatch.com/ws/1.1/track.search',
-  SUBTITLE: 'https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get',
-  TRACK_LYRICS: 'https://apic-desktop.musixmatch.com/ws/1.1/track.lyrics.get',
-  MACRO: 'https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get'
+  TOKEN: 'https://apic.musixmatch.com/ws/1.1/token.get',
+  SEARCH: 'https://apic.musixmatch.com/ws/1.1/track.search',
+  SUBTITLE: 'https://apic.musixmatch.com/ws/1.1/track.subtitle.get',
+  TRACK_LYRICS: 'https://apic.musixmatch.com/ws/1.1/track.lyrics.get',
+  MACRO: 'https://apic.musixmatch.com/ws/1.1/macro.subtitles.get'
 })
 
 const TIMESTAMP_REGEX = /\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]/g
@@ -211,6 +211,10 @@ export interface LyricsSearchHints {
   durationMs?: number | undefined
   isrc?: string | undefined
   uri?: string | undefined
+}
+
+export interface LyricsFindOptions {
+  requireSynced?: boolean | undefined
 }
 
 interface MusixmatchOptions {
@@ -1254,7 +1258,8 @@ export class Musixmatch {
 
   async findLyrics(
     query: string,
-    hints?: LyricsSearchHints
+    hints?: LyricsSearchHints,
+    opts?: LyricsFindOptions
   ): Promise<LyricsResult | null> {
     const target = this.buildSearchTarget(query, hints)
     if (!target) return null
@@ -1264,6 +1269,7 @@ export class Musixmatch {
     if (cached !== undefined) return cached
 
     let bestMatch: { result: LyricsResult; score: number } | null = null
+    let bestSynced: { result: LyricsResult; score: number } | null = null
 
     try {
       const rankedCandidates = uniqueBy(
@@ -1290,6 +1296,12 @@ export class Musixmatch {
         if (!bestMatch || candidate.score > bestMatch.score) {
           bestMatch = candidate
         }
+        if (
+          candidate.result.lines?.length &&
+          (!bestSynced || candidate.score > bestSynced.score)
+        ) {
+          bestSynced = candidate
+        }
       }
 
       if (!bestMatch) {
@@ -1305,15 +1317,22 @@ export class Musixmatch {
           if (!bestMatch || score > bestMatch.score) {
             bestMatch = { result: fallback, score }
           }
+          if (
+            fallback.lines?.length &&
+            (!bestSynced || score > bestSynced.score)
+          ) {
+            bestSynced = { result: fallback, score }
+          }
         }
       }
     } catch {
       bestMatch = null
+      bestSynced = null
     }
 
+    const picked = opts?.requireSynced ? bestSynced : bestMatch
     const minimumScore = target.artist ? 36 : 24
-    const result =
-      bestMatch && bestMatch.score >= minimumScore ? bestMatch.result : null
+    const result = picked && picked.score >= minimumScore ? picked.result : null
 
     this.setCached(cacheKey, result)
     return result

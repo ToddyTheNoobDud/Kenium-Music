@@ -14,37 +14,23 @@ import {
   Separator,
   Spacing,
   TextDisplay,
-  Thumbnail
+  Thumbnail,
+  type UsingClient
 } from 'seyfert'
 import {
   buildLyricsQueryFromHints,
   extractLyricsSearchHints
 } from '../shared/lyrics.ts'
-import { musixmatch } from '../shared/musixmatch.ts'
-import { formatDuration } from '../shared/utils.ts'
+import { findLyrics } from '../shared/lyricsservice.ts'
 import { authorizeVoiceControl } from '../shared/voiceAuthorization.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 import { getMemberVoiceState, safeDefer } from '../utils/interactions.ts'
 
 const ACCENT_COLOR = '#100e09'
 const ERROR_COLOR = '#e74c3c'
-
 const SESSION_TIMEOUT_MS = 300000
 const SONG_END_BUFFER_MS = 5000
 const AUTO_DELETE_MS = 10000
-
-const MIN_TICK_DELAY_MS = 75
-const MAX_TICK_DELAY_MS = 5000
-const MIN_EDIT_INTERVAL_MS = 900
-const MIN_LINE_TRANSITION_INTERVAL_MS = 250
-const PROGRESS_EDIT_INTERVAL_MS = 1500
-const PAUSED_POLL_INTERVAL_MS = 750
-const SCHEDULER_JITTER_MS = 25
-const DEFAULT_LINE_DURATION_MS = 4000
-
-const VIEW_PAST_LINES = 1
-const VIEW_NEXT_LINES = 1
-const PROGRESS_BAR_LENGTH = 12
 
 type LyricLine = {
   line: string
@@ -53,89 +39,104 @@ type LyricLine = {
 }
 
 interface KaraokeSession {
-  // biome-ignore lint/suspicious/noExplicitAny: message is a dynamic Discord message object
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic Discord message
   message: any
   lines: LyricLine[]
   player: Player
-
-  updateTimer: NodeJS.Timeout
+  timers: NodeJS.Timeout[]
   timeout: NodeJS.Timeout
-
-  // biome-ignore lint/suspicious/noExplicitAny: collector is a dynamic object
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic collector
   collector: any
-
-  fallbackStartPosition: number
-  fallbackStartTime: number
   artist: string
   artworkUrl?: string | undefined
-  lastEditAt: number
-  lastRenderKey: string
   title: string
   uri?: string | undefined
   trackKey: string
   stoppedByUser: boolean
+  seekTimer?: NodeJS.Timeout | undefined
+  posBase: number
+  posBaseAt: number
+  lastRawPos?: number | undefined
+  editAvgMs?: number | undefined
+  client?: UsingClient | undefined
 }
 
-interface KaraokeStageDetails {
-  artist: string
-  artworkUrl?: string | undefined
-  title: string
-  uri?: string | undefined
-}
+const sessions = new Map<string, KaraokeSession>()
 
-// biome-ignore lint/suspicious/noExplicitAny: msg is a dynamic Discord message object
-const _autoDelete = (msg: any, delay = AUTO_DELETE_MS) => {
+// biome-ignore lint/suspicious/noExplicitAny: dynamic
+const autoDelete = (msg: any, delay = AUTO_DELETE_MS) => {
   if (!msg?.delete) return
-  const timer = setTimeout(() => {
-    msg.delete().catch(() => null)
-  }, delay)
-  if (timer.unref) timer.unref()
+  const t = setTimeout(() => msg.delete().catch(() => null), delay)
+  if (t.unref) t.unref()
 }
 
-const _divider = () =>
-  new Separator().setDivider(true).setSpacing(Spacing.Small)
+const divider = () => new Separator().setDivider(true).setSpacing(Spacing.Small)
 
-const _createErrorContainer = (
-  message: string,
-  lang: string,
-  ctx: CommandContext
-) => {
-  const t = ctx.t.get(lang)
-  return new Container()
-    .setColor(ERROR_COLOR)
-    .addComponents(
-      new TextDisplay().setContent(`## [X] ${t.karaoke.error}`),
-      _divider(),
-      new TextDisplay().setContent(message)
-    )
+const lineStart = (l: LyricLine) => l.range?.start ?? l.timestamp ?? 0
+const clean = (s: string) => s.replace(/\s+/g, ' ').trim()
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value))
+
+const gatewayLatencyOf = (session: KaraokeSession) => {
+  const latency = session.client?.gateway?.latency
+  return typeof latency === 'number' && Number.isFinite(latency) ? latency : 0
 }
 
-const _createEndedContainer = (
-  reason: 'stopped' | 'finished' | 'error' | 'changed'
-) => {
-  const messages = {
-    stopped: 'Session stopped by a user.',
-    finished: 'Track finished. Stage lights down.',
-    error: 'The karaoke display has been closed.',
-    changed: 'Track changed. Karaoke closed to avoid stale lyrics.'
+const playerPingOf = (player: Player) => {
+  const ping = (player as unknown as { ping?: unknown }).ping
+  return typeof ping === 'number' && Number.isFinite(ping) ? ping : 0
+}
+
+// Expected message.edit round-trip. Uses measured edits once available,
+// otherwise live gateway latency instead of a hardcoded guess.
+const editLeadMs = (session: KaraokeSession) => {
+  if (typeof session.editAvgMs === 'number')
+    return clamp(Math.round(session.editAvgMs), 50, 600)
+  const gateway = gatewayLatencyOf(session)
+  if (gateway > 0) return clamp(Math.round(gateway + 120), 100, 500)
+  return 220
+}
+
+const seekCheckMs = (session: KaraokeSession) =>
+  clamp(editLeadMs(session), 250, 600)
+
+const seekThresholdMs = (session: KaraokeSession) =>
+  clamp(editLeadMs(session) + playerPingOf(session.player) + 300, 500, 2500)
+
+const recordEditSample = (session: KaraokeSession, sample: number) => {
+  if (!Number.isFinite(sample)) return
+  const clamped = clamp(sample, 0, 5000)
+  session.editAvgMs =
+    typeof session.editAvgMs === 'number'
+      ? Math.round(session.editAvgMs * 0.7 + clamped * 0.3)
+      : Math.round(clamped)
+}
+
+const rawPlayerPos = (player: Player) => {
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic
+  const pos = (player as any).position
+  return typeof pos === 'number' && Number.isFinite(pos) ? pos : 0
+}
+
+const rebasePos = (session: KaraokeSession, pos: number) => {
+  session.posBase = pos
+  session.posBaseAt = Date.now()
+  session.lastRawPos = pos
+}
+
+const sessionPos = (session: KaraokeSession) => {
+  const raw = rawPlayerPos(session.player)
+  if (session.lastRawPos === undefined || raw !== session.lastRawPos) {
+    rebasePos(session, raw)
+    return raw
   }
-
-  return new Container()
-    .setColor(ERROR_COLOR)
-    .addComponents(
-      new TextDisplay().setContent('## KARAOKE STAGE'),
-      _divider(),
-      new TextDisplay().setContent(messages[reason])
-    )
+  if (isPaused(session.player)) return session.posBase
+  return session.posBase + Math.max(0, Date.now() - session.posBaseAt)
 }
 
-const _lineStartMs = (line: LyricLine): number =>
-  line.range?.start ?? line.timestamp ?? 0
-
-const _cleanLyricText = (text: string) => text.replace(/\s+/g, ' ').trim()
-
-const _getTrackKey = (
-  track:
+const trackKey = (
+  t:
     | {
         uri?: string
         identifier?: string
@@ -151,346 +152,343 @@ const _getTrackKey = (
     | null
     | undefined
 ) => {
-  if (!track) return ''
-
-  const uri = track.info?.uri ?? track.uri
-  const identifier = track.info?.identifier ?? track.identifier
-  const title = track.info?.title ?? track.title
-  const author = track.info?.author ?? track.author
-
-  return [uri, identifier, title, author].filter(Boolean).join('|')
-}
-
-const _findCurrentLineIndex = (lines: LyricLine[], currentTimeMs: number) => {
-  let left = 0
-  let right = lines.length - 1
-  let result = -1
-
-  while (left <= right) {
-    const mid = Math.floor((left + right) / 2)
-    const currentLine = lines[mid]
-    if (!currentLine) break
-    const ts = _lineStartMs(currentLine)
-
-    if (ts <= currentTimeMs) {
-      result = mid
-      left = mid + 1
-    } else {
-      right = mid - 1
-    }
-  }
-  return result
-}
-
-const _createProgressBar = (
-  currentMs: number,
-  startMs: number,
-  endMs: number
-) => {
-  const durationMs = endMs - startMs
-  if (durationMs <= 0) return `●${'─'.repeat(PROGRESS_BAR_LENGTH - 1)}`
-
-  const cursor = _getProgressCursor(currentMs, startMs, endMs)
-  const chars = Array.from({ length: PROGRESS_BAR_LENGTH }, (_, index) => {
-    if (index === cursor) return '●'
-    return index < cursor ? '━' : '─'
-  })
-
-  return chars.join('')
-}
-
-const _getProgressCursor = (
-  currentMs: number,
-  startMs: number,
-  endMs: number
-) => {
-  const durationMs = endMs - startMs
-  if (durationMs <= 0) return 0
-  const progress = Math.max(0, Math.min(1, (currentMs - startMs) / durationMs))
-  return Math.min(
-    PROGRESS_BAR_LENGTH - 1,
-    Math.max(0, Math.round(progress * (PROGRESS_BAR_LENGTH - 1)))
-  )
-}
-
-const _getRenderKey = (
-  lines: LyricLine[],
-  currentTimeMs: number,
-  isPaused: boolean
-) => {
-  const currentIdx = _findCurrentLineIndex(lines, currentTimeMs)
-  if (currentIdx < 0) {
-    const firstLine = lines[0]
-    const countdown = firstLine
-      ? Math.max(0, Math.ceil((_lineStartMs(firstLine) - currentTimeMs) / 1000))
-      : 0
-    return `pre:${countdown}:${isPaused}`
-  }
-
-  const current = lines[currentIdx]
-  if (!current) return `empty:${isPaused}`
-  const next = lines[currentIdx + 1]
-  const startMs = _lineStartMs(current)
-  const endMs = next ? _lineStartMs(next) : startMs + DEFAULT_LINE_DURATION_MS
-  return `${currentIdx}:${_getProgressCursor(currentTimeMs, startMs, endMs)}:${isPaused}`
-}
-
-const _formatViewportLine = (
-  line: LyricLine,
-  kind: 'past' | 'current' | 'next',
-  nextIndex?: number
-) => {
-  const text = _cleanLyricText(line.line) || '...'
-
-  switch (kind) {
-    case 'past':
-      return `-# ${text}`
-    case 'current':
-      return `## ${text}`
-    case 'next':
-      return nextIndex === 0 ? `**${text}**` : `-# ${text}`
-  }
-}
-
-const _createStatusLine = (
-  currentTimeMs: number,
-  startMs: number,
-  endMs: number,
-  isPaused: boolean
-) => {
-  const state = isPaused ? 'PAUSED' : 'LIVE'
-  const remainingMs = Math.max(0, endMs - currentTimeMs)
-  const nextIn =
-    isPaused || remainingMs <= 0
-      ? '--'
-      : `${Math.max(0.1, remainingMs / 1000).toFixed(1)}s`
-
+  if (!t) return ''
   return [
-    `-# ${state}  •  ${formatDuration(currentTimeMs)}  •  next line ${nextIn}`,
-    `\`${_createProgressBar(currentTimeMs, startMs, endMs)}\``
-  ].join('\n')
+    t.info?.uri ?? t.uri,
+    t.info?.identifier ?? t.identifier,
+    t.info?.title ?? t.title,
+    t.info?.author ?? t.author
+  ]
+    .filter(Boolean)
+    .join('|')
 }
 
-const _createKaraokeStageContainer = (
-  details: KaraokeStageDetails,
+const findIdx = (lines: LyricLine[], ms: number) => {
+  let l = 0
+  let r = lines.length - 1
+  let res = -1
+  while (l <= r) {
+    const m = (l + r) >> 1
+    const line = lines[m]
+    if (!line) break
+    const ts = lineStart(line)
+    if (ts <= ms) {
+      res = m
+      l = m + 1
+    } else r = m - 1
+  }
+  return res
+}
+
+const errorContainer = (msg: string, lang: string, ctx: CommandContext) =>
+  new Container()
+    .setColor(ERROR_COLOR)
+    .addComponents(
+      new TextDisplay().setContent(`## [X] ${ctx.t.get(lang).karaoke.error}`),
+      divider(),
+      new TextDisplay().setContent(msg)
+    )
+
+const endedContainer = (reason: 'stopped' | 'finished' | 'error' | 'changed') =>
+  new Container().setColor(ERROR_COLOR).addComponents(
+    new TextDisplay().setContent('## KARAOKE STAGE'),
+    divider(),
+    new TextDisplay().setContent(
+      {
+        stopped: 'Session stopped by a user.',
+        finished: 'Track finished. Stage lights down.',
+        error: 'The karaoke display has been closed.',
+        changed: 'Track changed. Karaoke closed to avoid stale lyrics.'
+      }[reason]
+    )
+  )
+
+const viewportLine = (line: LyricLine, kind: 'past' | 'current' | 'next') => {
+  const t = clean(line.line) || '...'
+  return kind === 'current' ? `## ${t}` : `-# ${t}`
+}
+
+const karaokeContainer = (
+  details: { artist: string; artworkUrl?: string; title: string; uri?: string },
   lines: LyricLine[],
-  currentTimeMs: number,
-  isPaused: boolean
+  idx: number
 ) => {
-  const stopButton = new Button()
+  const stop = new Button()
     .setCustomId('ignore_karaoke-stop')
     .setLabel('Stop')
     .setStyle(ButtonStyle.Secondary)
 
-  const linkedTitle = details.uri
+  const linked = details.uri
     ? `[${details.title}](${details.uri})`
     : details.title
-  const headerContent = [
-    '## KARAOKE',
-    `**${linkedTitle}**`,
-    `-# ${details.artist || 'Unknown artist'}  •  synchronized lyrics`
-  ].join('\n')
+  const headerText = `## KARAOKE\n**${linked}**\n-# ${details.artist || 'Unknown artist'}  •  synchronized lyrics`
   const header = details.artworkUrl
     ? new Section()
-        .addComponents(new TextDisplay().setContent(headerContent))
+        .addComponents(new TextDisplay().setContent(headerText))
         .setAccessory(new Thumbnail().setMedia(details.artworkUrl))
-    : new TextDisplay().setContent(headerContent)
+    : new TextDisplay().setContent(headerText)
 
-  if (!lines.length) {
+  if (!lines.length)
     return new Container()
       .setColor(ACCENT_COLOR)
       .addComponents(
         header,
-        _divider(),
+        divider(),
         new TextDisplay().setContent(
           'No time-synced lyrics available for this track.'
         )
       )
-  }
 
-  const currentIdx = _findCurrentLineIndex(lines, currentTimeMs)
-
-  if (currentIdx < 0) {
-    const firstLine = lines[0]
-    const preview = lines.slice(0, Math.min(VIEW_NEXT_LINES + 1, lines.length))
-    const previewText = preview
-      .map((line, index) => _formatViewportLine(line, 'next', index))
+  if (idx < 0) {
+    const preview = lines
+      .slice(0, 2)
+      .map((l) => viewportLine(l, 'next'))
       .join('\n')
-
-    const timeUntil = firstLine ? _lineStartMs(firstLine) - currentTimeMs : 0
-    const countdown =
-      timeUntil > 0
-        ? `### Mic check\n-# Lyrics begin in ${Math.ceil(timeUntil / 1000)}s`
-        : '### Mic check\n-# Your first line is coming up'
-
     return new Container()
       .setColor(ACCENT_COLOR)
       .addComponents(
         header,
-        _divider(),
+        divider(),
         new TextDisplay().setContent(
-          [countdown, '', '-# FIRST UP', previewText].join('\n')
+          `### Mic check\n-# First line coming up\n\n${preview}`
         ),
-        _divider(),
-        new ActionRow().addComponents(stopButton)
+        divider(),
+        new ActionRow().addComponents(stop)
       )
   }
 
-  const current = lines[currentIdx]
-  if (!current) {
+  const cur = lines[idx]
+  if (!cur)
     return new Container()
       .setColor(ACCENT_COLOR)
       .addComponents(new TextDisplay().setContent('...'))
-  }
 
-  const next = lines[currentIdx + 1]
-  const segStart = _lineStartMs(current)
-  const segEnd = next ? _lineStartMs(next) : segStart + DEFAULT_LINE_DURATION_MS
+  const past = idx > 0 ? lines[idx - 1] : undefined
+  const next = lines[idx + 1]
 
-  const pastStart = Math.max(0, currentIdx - VIEW_PAST_LINES)
-  const past = lines.slice(pastStart, currentIdx)
-  const upcoming = lines.slice(currentIdx + 1, currentIdx + 1 + VIEW_NEXT_LINES)
-
-  const viewportParts: string[] = []
-
-  if (past.length) {
-    viewportParts.push(
-      past.map((line) => _formatViewportLine(line, 'past')).join('\n')
-    )
-    viewportParts.push('')
-  }
-
-  viewportParts.push(_formatViewportLine(current, 'current'))
-  viewportParts.push(
-    _createStatusLine(currentTimeMs, segStart, segEnd, isPaused)
-  )
-
-  if (upcoming.length) {
-    viewportParts.push('')
-    viewportParts.push('-# UP NEXT')
-    viewportParts.push(
-      upcoming
-        .map((line, index) => _formatViewportLine(line, 'next', index))
-        .join('\n')
-    )
-  } else if (currentIdx === lines.length - 1) {
-    viewportParts.push('')
-    viewportParts.push('-# FINAL LINE  •  bring it home')
-  }
+  const parts: string[] = []
+  if (past) parts.push(viewportLine(past, 'past'), '')
+  parts.push(viewportLine(cur, 'current'))
+  if (next) parts.push('', '-# UP NEXT', viewportLine(next, 'next'))
+  else if (idx === lines.length - 1)
+    parts.push('', '-# FINAL LINE  •  bring it home')
 
   return new Container()
     .setColor(ACCENT_COLOR)
     .addComponents(
       header,
-      _divider(),
-      new TextDisplay().setContent(viewportParts.join('\n')),
-      _divider(),
-      new ActionRow().addComponents(stopButton)
+      divider(),
+      new TextDisplay().setContent(parts.join('\n')),
+      divider(),
+      new ActionRow().addComponents(stop)
     )
 }
 
-const _fetchKaraokeLyrics = async (
-  query: string | undefined,
-  // biome-ignore lint/suspicious/noExplicitAny: currentTrack is a dynamic track object
-  currentTrack: any
+const fetchLyrics = async (
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic
+  track: any
 ) => {
-  const hints = extractLyricsSearchHints(currentTrack)
-  const searchQuery = query?.trim() || buildLyricsQueryFromHints(hints)
-
-  if (!searchQuery) return null
-
+  const hints = extractLyricsSearchHints(track)
+  const q = buildLyricsQueryFromHints(hints)
+  if (!q) return null
   try {
-    const result = await musixmatch.findLyrics(searchQuery, hints)
-
-    const rawLines = (result?.lines ?? []) as LyricLine[]
-    const lines = rawLines
-      .map((l) => ({ ...l, line: (l.line ?? '').toString() }))
-      .filter((l) => _cleanLyricText(l.line).length > 0)
-      .sort((a, b) => _lineStartMs(a) - _lineStartMs(b))
-
+    const res = await findLyrics(q, hints, { requireSynced: true })
+    const lines = ((res?.lines ?? []) as LyricLine[])
+      .map((l) => ({ ...l, line: String(l.line ?? '') }))
+      .filter((l) => clean(l.line))
+      .sort((a, b) => lineStart(a) - lineStart(b))
     if (!lines.length) return null
-
-    return { lines, track: result?.track }
+    return { lines, track: res?.track }
   } catch {
     return null
   }
 }
 
-const KaraokeSessionRegistry = {
-  cache: new Map<string, KaraokeSession>(),
-  MAX_SESSIONS: 100,
+const clearTimers = (s: KaraokeSession) => {
+  for (const t of s.timers) clearTimeout(t)
+  s.timers = []
+}
 
-  get(guildId: string) {
-    return KaraokeSessionRegistry.cache.get(guildId)
-  },
+const ensureSeekWatcher = (guildId: string) => {
+  const s = sessions.get(guildId)
+  if (!s) return
+  if (s.seekTimer) clearTimeout(s.seekTimer)
+  const tick = () => {
+    const cur = sessions.get(guildId)
+    if (!cur) return
+    if (cur.stoppedByUser || cur.player.destroyed) return
 
-  has(guildId: string) {
-    const session = KaraokeSessionRegistry.cache.get(guildId)
-    if (!session) return false
-    return session.player?.connected
-  },
-
-  async add(guildId: string, session: KaraokeSession) {
-    await KaraokeSessionRegistry.cleanup(guildId, 'error')
-
-    // Evict oldest entry if at capacity
-    if (
-      KaraokeSessionRegistry.cache.size >= KaraokeSessionRegistry.MAX_SESSIONS
-    ) {
-      const firstKey = KaraokeSessionRegistry.cache.keys().next().value
-      if (firstKey) await KaraokeSessionRegistry.cleanup(firstKey, 'error')
+    if (isPaused(cur.player)) {
+      rebasePos(cur, rawPlayerPos(cur.player))
+    } else {
+      // Raw only changes on playerUpdate or seek: compare fresh state
+      // against our extrapolation BEFORE adopting it, so real jumps
+      // are detected and stale values can never false-trigger.
+      const raw = rawPlayerPos(cur.player)
+      if (cur.lastRawPos === undefined || raw !== cur.lastRawPos) {
+        const expected = cur.posBase + Math.max(0, Date.now() - cur.posBaseAt)
+        const jumped =
+          cur.lastRawPos !== undefined &&
+          Math.abs(raw - expected) > seekThresholdMs(cur)
+        rebasePos(cur, raw)
+        if (jumped) {
+          const idx = findIdx(cur.lines, raw)
+          renderIdx(guildId, idx).catch(() => {})
+          schedule(guildId, idx + 1)
+          return
+        }
+      }
     }
+    const t = setTimeout(tick, seekCheckMs(cur))
+    if (t.unref) t.unref()
+    cur.seekTimer = t
+  }
+  const t = setTimeout(tick, seekCheckMs(s))
+  if (t.unref) t.unref()
+  s.seekTimer = t
+}
 
-    KaraokeSessionRegistry.cache.set(guildId, session)
-  },
-
-  async cleanup(
-    guildId: string,
-    reason: 'stopped' | 'finished' | 'error' | 'changed' = 'error'
-  ) {
-    const session = KaraokeSessionRegistry.cache.get(guildId)
-    if (!session) return
-
-    clearTimeout(session.updateTimer)
-    clearTimeout(session.timeout)
-
-    if (session.collector?.stop) {
-      session.collector.stop('cleanup')
-    }
-
-    if (session.message?.edit) {
-      await session.message
-        .edit({
-          components: [_createEndedContainer(reason)],
-          flags: MessageFlags.IsComponentsV2
-        })
-        .catch(() => null)
-
-      _autoDelete(session.message)
-    }
-
-    KaraokeSessionRegistry.cache.delete(guildId)
-  },
-
-  async cleanupAll() {
-    const keys = [...KaraokeSessionRegistry.cache.keys()]
-    for (const key of keys) {
-      await KaraokeSessionRegistry.cleanup(key, 'error')
-    }
-    KaraokeSessionRegistry.cache.clear()
+const renderIdx = async (guildId: string, idx: number) => {
+  const s = sessions.get(guildId)
+  if (!s) return
+  const c = karaokeContainer(
+    { artist: s.artist, artworkUrl: s.artworkUrl, title: s.title, uri: s.uri },
+    s.lines,
+    idx
+  )
+  const startedAt = Date.now()
+  try {
+    await s.message.edit({
+      components: [c],
+      flags: MessageFlags.IsComponentsV2
+    })
+    recordEditSample(s, Date.now() - startedAt)
+  } catch (e) {
+    const code = (e as { code?: number }).code
+    if (code === 10008 || code === 10065) await cleanup(guildId, 'error')
   }
 }
 
-// Periodic cleanup of orphaned karaoke sessions (disconnected players, destroyed players)
-const KARAOKE_ORPHAN_CLEANUP_INTERVAL = 60_000
-const karaokeOrphanTimer = setInterval(() => {
-  for (const [guildId, session] of KaraokeSessionRegistry.cache) {
-    if (!session.player?.connected || session.player?.destroyed) {
-      KaraokeSessionRegistry.cleanup(guildId, 'error').catch(() => {})
-    }
+const isPaused = (p: Player) =>
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic
+  (p as any)?.paused === true || (p as any)?.playing === false
+
+const nowPos = (p: Player) => {
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic
+  const pos = (p as any).position
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic
+  const ts = (p as any).timestamp
+  if (typeof pos !== 'number' || !Number.isFinite(pos)) return 0
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) return pos
+  return pos + Math.max(0, Date.now() - ts)
+}
+
+const schedule = (guildId: string, nextIdx: number) => {
+  const s = sessions.get(guildId)
+  if (!s) return
+  clearTimers(s)
+  rebasePos(s, rawPlayerPos(s.player))
+  ensureSeekWatcher(guildId)
+
+  if (isPaused(s.player)) {
+    const t = setTimeout(() => {
+      const cur = sessions.get(guildId)
+      if (!cur) return
+      if (cur.stoppedByUser || cur.player.destroyed) {
+        cleanup(guildId, cur.stoppedByUser ? 'stopped' : 'error').catch(
+          () => {}
+        )
+        return
+      }
+      if (isPaused(cur.player)) return schedule(guildId, nextIdx)
+      const pos = sessionPos(cur)
+      const idx = findIdx(cur.lines, pos)
+      renderIdx(guildId, idx).catch(() => {})
+      schedule(guildId, idx + 1)
+    }, seekCheckMs(s))
+    if (t.unref) t.unref()
+    s.timers.push(t)
+    return
   }
-}, KARAOKE_ORPHAN_CLEANUP_INTERVAL)
-if (karaokeOrphanTimer.unref) karaokeOrphanTimer.unref()
+
+  const pos = sessionPos(s)
+  const lead = editLeadMs(s)
+  const overdueLimit = -seekThresholdMs(s)
+
+  if (nextIdx >= s.lines.length) {
+    const last = s.lines[s.lines.length - 1]
+    const delay = last
+      ? Math.max(0, lineStart(last) - pos - lead + SONG_END_BUFFER_MS)
+      : SONG_END_BUFFER_MS
+    const t = setTimeout(
+      () => cleanup(guildId, 'finished').catch(() => {}),
+      delay
+    )
+    if (t.unref) t.unref()
+    s.timers.push(t)
+    return
+  }
+
+  // Batch-schedule from single estimated position so drift doesn't accumulate.
+  // Edits fire one measured round-trip early so visuals land on beat.
+  // Lines only slightly overdue render immediately so we never lag behind.
+  let scheduled = 0
+  for (let i = nextIdx; i < s.lines.length; i++) {
+    const line = s.lines[i]
+    if (!line) continue
+    const rawDelay = lineStart(line) - pos - lead
+    if (rawDelay < overdueLimit) continue
+    const delay = Math.max(0, rawDelay)
+    const idx = i
+    const t = setTimeout(async () => {
+      const cur = sessions.get(guildId)
+      if (!cur || cur.stoppedByUser || cur.player.destroyed) {
+        await cleanup(guildId, cur?.stoppedByUser ? 'stopped' : 'error')
+        return
+      }
+      if (trackKey(cur.player.current) !== cur.trackKey) {
+        await cleanup(guildId, 'changed')
+        return
+      }
+      if (isPaused(cur.player)) return schedule(guildId, idx)
+      await renderIdx(guildId, idx)
+    }, delay)
+    if (t.unref) t.unref()
+    s.timers.push(t)
+    scheduled++
+  }
+
+  if (!scheduled) {
+    const t = setTimeout(
+      () => cleanup(guildId, 'finished').catch(() => {}),
+      SONG_END_BUFFER_MS
+    )
+    if (t.unref) t.unref()
+    s.timers.push(t)
+  }
+}
+
+const cleanup = async (
+  guildId: string,
+  reason: 'stopped' | 'finished' | 'error' | 'changed' = 'error'
+) => {
+  const s = sessions.get(guildId)
+  if (!s) return
+  clearTimers(s)
+  if (s.seekTimer) clearTimeout(s.seekTimer)
+  clearTimeout(s.timeout)
+  s.collector?.stop?.('cleanup')
+  if (s.message?.edit) {
+    await s.message
+      .edit({
+        components: [endedContainer(reason)],
+        flags: MessageFlags.IsComponentsV2
+      })
+      .catch(() => null)
+    autoDelete(s.message)
+  }
+  sessions.delete(guildId)
+}
 
 @Cooldown.user(60000, { uses: 2 })
 @Declare({
@@ -499,292 +497,89 @@ if (karaokeOrphanTimer.unref) karaokeOrphanTimer.unref()
 })
 @Middlewares(['cooldown', 'checkPlayer', 'checkVoice', 'checkTrack'])
 export default class KaraokeCommand extends Command {
-  private _getCurrentTimeMs(
-    session: KaraokeSession,
-    isPaused: boolean
-  ): number {
-    const player = session.player
-    const position = player?.position
-    const timestamp = player?.timestamp
-
-    if (typeof position === 'number' && Number.isFinite(position)) {
-      if (isPaused) return Math.max(0, position)
-
-      if (typeof timestamp === 'number' && Number.isFinite(timestamp)) {
-        const elapsedMs = Math.max(0, Date.now() - timestamp)
-        const estimatedPosition = position + elapsedMs
-        const trackLength = player.current?.info?.length
-        return Math.max(
-          0,
-          typeof trackLength === 'number' && Number.isFinite(trackLength)
-            ? Math.min(estimatedPosition, trackLength)
-            : estimatedPosition
-        )
-      }
-
-      return Math.max(0, position)
-    }
-
-    if (isPaused) return Math.max(0, session.fallbackStartPosition)
-    const elapsedMs = Date.now() - session.fallbackStartTime
-    return Math.max(0, session.fallbackStartPosition + elapsedMs)
-  }
-
-  // biome-ignore lint/suspicious/noExplicitAny: player is a dynamic player object
-  private _isPlayerPaused(player: any): boolean {
-    return player?.paused === true || player?.playing === false
-  }
-
-  private _computeNextEditDelayMs(
-    session: KaraokeSession,
-    currentTimeMs: number,
-    isPaused: boolean
-  ) {
-    if (isPaused) return PAUSED_POLL_INTERVAL_MS
-
-    const lines = session.lines
-    if (!lines.length) return 1000
-
-    const idx = _findCurrentLineIndex(lines, currentTimeMs)
-    if (idx < 0) {
-      const firstLine = lines[0]
-      if (!firstLine) return 1000
-      const timeUntilFirstLine = _lineStartMs(firstLine) - currentTimeMs
-      const countdownBoundary = timeUntilFirstLine % 1000
-      return Math.max(
-        MIN_TICK_DELAY_MS,
-        Math.min(
-          MAX_TICK_DELAY_MS,
-          Math.min(timeUntilFirstLine, countdownBoundary || 1000) +
-            SCHEDULER_JITTER_MS
-        )
-      )
-    }
-
-    const current = lines[idx]
-    if (!current) return 1000
-    const next = lines[idx + 1]
-
-    const segStart = _lineStartMs(current)
-    const segEnd = next
-      ? _lineStartMs(next)
-      : segStart + DEFAULT_LINE_DURATION_MS
-
-    const duration = segEnd - segStart
-    if (duration <= 0) return MIN_TICK_DELAY_MS
-
-    const timeToNextLine = Math.max(0, segEnd - currentTimeMs)
-    const delay =
-      Math.min(timeToNextLine, PROGRESS_EDIT_INTERVAL_MS) + SCHEDULER_JITTER_MS
-    return Math.max(MIN_TICK_DELAY_MS, Math.min(MAX_TICK_DELAY_MS, delay))
-  }
-
-  private _scheduleNextTick(guildId: string, delayMs: number, errorCount = 0) {
-    const session = KaraokeSessionRegistry.get(guildId)
-    if (!session) return
-
-    clearTimeout(session.updateTimer)
-
-    session.updateTimer = setTimeout(() => {
-      this._tick(guildId, errorCount).catch(() =>
-        KaraokeSessionRegistry.cleanup(guildId, 'error')
-      )
-    }, delayMs)
-
-    if (session.updateTimer.unref) session.updateTimer.unref()
-  }
-
-  private async _tick(guildId: string, errorCount = 0): Promise<void> {
-    const session = KaraokeSessionRegistry.get(guildId)
-    if (!session || session.stoppedByUser || session.player.destroyed) {
-      await KaraokeSessionRegistry.cleanup(
-        guildId,
-        session?.stoppedByUser ? 'stopped' : 'error'
-      )
-      return
-    }
-
-    if (!KaraokeSessionRegistry.has(guildId)) {
-      await KaraokeSessionRegistry.cleanup(guildId, 'error')
-      return
-    }
-
-    const isPaused = this._isPlayerPaused(session.player)
-    const currentTimeMs = this._getCurrentTimeMs(session, isPaused)
-    const currentTrackKey = _getTrackKey(session.player.current)
-
-    if (!currentTrackKey || currentTrackKey !== session.trackKey) {
-      await KaraokeSessionRegistry.cleanup(guildId, 'changed')
-      return
-    }
-
-    const lastLine = session.lines[session.lines.length - 1]
-    const lastTimestampMs = lastLine ? _lineStartMs(lastLine) : 0
-
-    if (currentTimeMs > lastTimestampMs + SONG_END_BUFFER_MS) {
-      await KaraokeSessionRegistry.cleanup(guildId, 'finished')
-      return
-    }
-
-    const renderKey = _getRenderKey(session.lines, currentTimeMs, isPaused)
-    const timeSinceLastEdit = Date.now() - session.lastEditAt
-    const isLineTransition =
-      renderKey.split(':', 1)[0] !== session.lastRenderKey.split(':', 1)[0]
-    const minimumEditInterval = isLineTransition
-      ? MIN_LINE_TRANSITION_INTERVAL_MS
-      : MIN_EDIT_INTERVAL_MS
-
-    if (renderKey === session.lastRenderKey) {
-      const delay = this._computeNextEditDelayMs(
-        session,
-        currentTimeMs,
-        isPaused
-      )
-      this._scheduleNextTick(guildId, delay, 0)
-      return
-    }
-
-    if (timeSinceLastEdit < minimumEditInterval) {
-      this._scheduleNextTick(
-        guildId,
-        minimumEditInterval - timeSinceLastEdit + SCHEDULER_JITTER_MS,
-        0
-      )
-      return
-    }
-
-    const container = _createKaraokeStageContainer(
-      {
-        artist: session.artist,
-        artworkUrl: session.artworkUrl,
-        title: session.title,
-        uri: session.uri
-      },
-      session.lines,
-      currentTimeMs,
-      isPaused
-    )
-
-    try {
-      await session.message.edit({
-        components: [container],
-        flags: MessageFlags.IsComponentsV2
-      })
-      session.lastEditAt = Date.now()
-      session.lastRenderKey = renderKey
-    } catch (error) {
-      const err = error as { code?: number }
-      if (err.code === 10065 || err.code === 10008) {
-        await KaraokeSessionRegistry.cleanup(guildId, 'error')
-        return
-      }
-
-      if (errorCount < 3) {
-        this._scheduleNextTick(guildId, 1000, errorCount + 1)
-        return
-      }
-
-      await KaraokeSessionRegistry.cleanup(guildId, 'error')
-      return
-    }
-
-    const delay = this._computeNextEditDelayMs(session, currentTimeMs, isPaused)
-    this._scheduleNextTick(guildId, delay, 0)
-  }
-
-  private async _sendErrorAndAutoDelete(
-    ctx: CommandContext,
-    container: Container
-  ) {
-    const msg = await ctx.editOrReply(
-      {
-        components: [container],
-        flags: MessageFlags.IsComponentsV2
-      },
+  private async sendError(ctx: CommandContext, c: Container) {
+    const m = await ctx.editOrReply(
+      { components: [c], flags: MessageFlags.IsComponentsV2 },
       true
     )
-    _autoDelete(msg)
+    autoDelete(m)
   }
 
   public override async run(ctx: CommandContext): Promise<void> {
     if (!(await safeDefer(ctx))) return
-
     const lang = getContextLanguage(ctx)
     const t = ctx.t.get(lang)
-
     const guildId = ctx.guildId
     if (!guildId) return
 
     const player = ctx.client.aqua.players.get(guildId)
     if (!player) {
-      await this._sendErrorAndAutoDelete(
+      await this.sendError(
         ctx,
-        _createErrorContainer(t.karaoke.noActivePlayer, lang, ctx)
+        errorContainer(t.karaoke.noActivePlayer, lang, ctx)
+      )
+      return
+    }
+    if (sessions.get(guildId)?.player?.connected) {
+      await this.sendError(
+        ctx,
+        errorContainer(t.karaoke.sessionAlreadyActive, lang, ctx)
+      )
+      return
+    }
+    await cleanup(guildId, 'error')
+
+    const res = await fetchLyrics(player.current)
+    // The search yields for seconds: the player may have been destroyed
+    // (or replaced) meanwhile. Never start a session on a dead player. Yeah, i found this out randomly while testing.
+    const freshPlayer = ctx.client.aqua.players.get(guildId)
+    if (!freshPlayer || freshPlayer !== player || freshPlayer.destroyed) {
+      await this.sendError(
+        ctx,
+        errorContainer(t.karaoke.noActivePlayer, lang, ctx)
+      )
+      return
+    }
+    if (!res) {
+      await this.sendError(
+        ctx,
+        errorContainer(t.karaoke.noLyricsAvailable, lang, ctx)
       )
       return
     }
 
-    if (KaraokeSessionRegistry.has(guildId)) {
-      await this._sendErrorAndAutoDelete(
-        ctx,
-        _createErrorContainer(t.karaoke.sessionAlreadyActive, lang, ctx)
-      )
-      return
-    }
-
-    await KaraokeSessionRegistry.cleanup(guildId, 'error')
-
-    const result = await _fetchKaraokeLyrics(undefined, player.current)
-    if (!result) {
-      await this._sendErrorAndAutoDelete(
-        ctx,
-        _createErrorContainer(t.karaoke.noLyricsAvailable, lang, ctx)
-      )
-      return
-    }
-
-    const title = result.track?.title || player.current?.title || 'Karaoke'
+    const title = res.track?.title || player.current?.title || 'Karaoke'
     const artist =
-      result.track?.author || player.current?.author || 'Unknown artist'
+      res.track?.author || player.current?.author || 'Unknown artist'
     const artworkUrl =
-      result.track?.albumArt ||
+      res.track?.albumArt ||
       player.current?.info?.artworkUrl ||
       player.current?.thumbnail ||
       undefined
     const uri = player.current?.info?.uri || player.current?.uri || undefined
-    const initialPosition = player.position ?? 0
-    const isPaused = this._isPlayerPaused(player)
-    const initialRenderKey = _getRenderKey(
-      result.lines,
-      initialPosition,
-      isPaused
-    )
+    const pos = nowPos(player)
+    const idx = findIdx(res.lines, pos)
 
-    const container = _createKaraokeStageContainer(
-      { artist, artworkUrl, title, uri },
-      result.lines,
-      initialPosition,
-      isPaused
-    )
-
-    const message = await ctx.editOrReply(
+    const sendStartedAt = Date.now()
+    const msg = await ctx.editOrReply(
       {
-        components: [container],
+        components: [
+          karaokeContainer({ artist, artworkUrl, title, uri }, res.lines, idx)
+        ],
         flags: MessageFlags.IsComponentsV2
       },
       true
     )
-    if (!message) return
+    if (!msg) return
 
-    const collector = message.createComponentCollector?.({
+    const collector = msg.createComponentCollector?.({
       filter: (i: { isButton: () => boolean; customId: string }) =>
         i.isButton() && i.customId === 'ignore_karaoke-stop',
-      onStop(_reason: string | undefined, _refresh: () => void) {},
+      onStop() {},
       idle: SESSION_TIMEOUT_MS
     })
-
     if (!collector) {
-      _autoDelete(message)
+      autoDelete(msg)
       return
     }
 
@@ -797,34 +592,30 @@ export default class KaraokeCommand extends Command {
         client?: unknown
         write: (opts: { content: string; flags: number }) => Promise<void>
       }) => {
-        const session = KaraokeSessionRegistry.get(guildId)
-        const currentPlayer = ctx.client.aqua.players.get(guildId)
-        const memberVoice = await getMemberVoiceState({
+        const s = sessions.get(guildId)
+        const cur = ctx.client.aqua.players.get(guildId)
+        const voice = await getMemberVoiceState({
           ...i,
           guildId,
           client: ctx.client
         })
-        const authorization = authorizeVoiceControl({
+        const auth = authorizeVoiceControl({
           guildId,
-          memberChannelId: memberVoice?.channelId ?? null,
-          playerChannelId: currentPlayer?.voiceChannel ?? null,
-          hasPlayer: Boolean(currentPlayer),
+          memberChannelId: voice?.channelId ?? null,
+          playerChannelId: cur?.voiceChannel ?? null,
+          hasPlayer: Boolean(cur),
           requirePlayer: true,
-          playerDestroyed: currentPlayer?.destroyed === true
+          playerDestroyed: cur?.destroyed === true
         })
-
-        if (!authorization.ok || !session || session.player !== currentPlayer) {
+        if (!auth.ok || !s || s.player !== cur) {
           await i.write({
             content: 'You must be in the voice channel to stop karaoke.',
             flags: 64
           })
           return
         }
-
-        session.stoppedByUser = true
-
-        await KaraokeSessionRegistry.cleanup(guildId, 'stopped')
-
+        s.stoppedByUser = true
+        await cleanup(guildId, 'stopped')
         await i.write({
           content: `Karaoke session stopped by <@${i.user.id}>.`,
           flags: 64
@@ -832,46 +623,59 @@ export default class KaraokeCommand extends Command {
       }
     )
 
-    const timeout = setTimeout(() => {
-      KaraokeSessionRegistry.cleanup(guildId, 'finished')
-    }, SESSION_TIMEOUT_MS)
+    const timeout = setTimeout(
+      () => cleanup(guildId, 'finished').catch(() => {}),
+      SESSION_TIMEOUT_MS
+    )
     if (timeout.unref) timeout.unref()
 
-    const updateTimer = setTimeout(() => {}, 0)
-    if (updateTimer.unref) updateTimer.unref()
-
-    await KaraokeSessionRegistry.add(guildId, {
-      message,
-      lines: result.lines,
+    if (sessions.size >= 100) {
+      const first = sessions.keys().next().value
+      if (first) await cleanup(first, 'error')
+    }
+    const startRaw = rawPlayerPos(player)
+    sessions.set(guildId, {
+      message: msg,
+      lines: res.lines,
       player,
-      updateTimer,
+      timers: [],
       timeout,
       collector,
-      fallbackStartPosition: initialPosition,
-      fallbackStartTime: Date.now(),
       artist,
       artworkUrl,
-      lastEditAt: Date.now(),
-      lastRenderKey: initialRenderKey,
       title,
       uri,
-      trackKey: _getTrackKey(player.current),
-      stoppedByUser: false
+      trackKey: trackKey(player.current),
+      stoppedByUser: false,
+      posBase: startRaw,
+      posBaseAt: Date.now(),
+      lastRawPos: startRaw,
+      client: ctx.client
     })
 
-    this._scheduleNextTick(guildId, 0, 0)
+    const created = sessions.get(guildId)
+    if (created) recordEditSample(created, Date.now() - sendStartedAt)
+
+    schedule(guildId, idx + 1)
+    if (idx >= res.lines.length - 1) schedule(guildId, res.lines.length)
   }
 }
 
-export const cleanupKaraokeSession = async (
+export const cleanupKaraokeSession = (
   guildId: string,
   reason: 'stopped' | 'finished' | 'error' = 'error'
-) => {
-  await KaraokeSessionRegistry.cleanup(guildId, reason)
-}
+) => cleanup(guildId, reason)
+export const hasKaraokeSession = (guildId: string) =>
+  Boolean(sessions.get(guildId)?.player?.connected)
 
-export const hasKaraokeSession = (guildId: string) => {
-  return KaraokeSessionRegistry.has(guildId)
+export const resyncKaraokeSession = (guildId: string, position: unknown) => {
+  const s = sessions.get(guildId)
+  if (!s || s.stoppedByUser || s.player.destroyed) return
+  if (typeof position !== 'number' || !Number.isFinite(position)) return
+  rebasePos(s, position)
+  const idx = findIdx(s.lines, position)
+  renderIdx(guildId, idx).catch(() => {})
+  schedule(guildId, idx + 1)
 }
 
 export const syncKaraokeSessionTrack = async (
@@ -892,15 +696,11 @@ export const syncKaraokeSessionTrack = async (
     | null
     | undefined
 ) => {
-  const session = KaraokeSessionRegistry.get(guildId)
-  if (!session) return
-
-  const trackKey = _getTrackKey(track)
-  if (!trackKey || trackKey !== session.trackKey) {
-    await KaraokeSessionRegistry.cleanup(guildId, 'changed')
-  }
+  const s = sessions.get(guildId)
+  if (!s) return
+  const k = trackKey(track)
+  if (!k || k !== s.trackKey) await cleanup(guildId, 'changed')
 }
-
 export const cleanupAllKaraokeSessions = async () => {
-  await KaraokeSessionRegistry.cleanupAll()
+  for (const k of [...sessions.keys()]) await cleanup(k, 'error')
 }

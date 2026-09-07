@@ -6,6 +6,7 @@ import {
   Middlewares
 } from 'seyfert'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
+import { playPreviousTrack } from '../shared/playback.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 @Declare({
   name: 'previous',
@@ -24,24 +25,17 @@ export default class previoiusCmds extends Command {
       const player = client.aqua.players.get(guildId)
       if (!player) return
 
-      if (player.current) player.queue.unshift(player.current)
-
-      if (player.previous) {
-        player.queue.unshift(player.previous)
-      }
-      player.stop()
-
-      if (!player.playing && !player.paused && player.queue.size > 0) {
-        player.play().catch(() => {})
-      }
+      const playedPrevious = await playPreviousTrack(player)
 
       await ctx.editOrReply({
         embeds: [
           new Embed()
             .setDescription(
-              player.playing
-                ? t.player.previousPlayed
-                : t.player.previousAdded || 'Playing/added the previous track'
+              !playedPrevious
+                ? '❌ No previous track available'
+                : player.playing
+                  ? t.player.previousPlayed
+                  : t.player.previousAdded || 'Playing/added the previous track'
             )
             .setColor(0x100e09)
         ],

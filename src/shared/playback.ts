@@ -59,14 +59,25 @@ export const maybeStartPlayback = async (
   if (
     !player ||
     player.destroyed ||
-    player.playing ||
     player.paused ||
     !player.queue ||
     (player.queue.size ?? 0) <= 0
   ) {
     return false
   }
+  // Genuinely streaming: leave the queue alone. yeah.
+  if (player.playing && player.connected) return false
   try {
+    if (player.playing) {
+      // Silent state: Aqualink deferred the start while voice wasn't
+      // connected (playing=true, nothing audible). Nudge the voice
+      // connection so the deferred track flushes on connect.
+      const voiceChannel = getPlayerVoiceChannelId(player)
+      if (voiceChannel && player.guildId) {
+        await player.connect?.({ guildId: player.guildId, voiceChannel })
+      }
+      return false
+    }
     await player.play?.()
     return true
   } catch (error) {
@@ -120,6 +131,29 @@ export const resolveAndQueue = async ({
   }
   RESOLVE_CACHE.set(cacheKey, { tracks: added, loadType, result })
   return { result, added, loadType }
+}
+
+export const playPreviousTrack = async (
+  player: PlayerLike
+): Promise<boolean> => {
+  const previous = player?.previous
+  if (!player || !previous) return false
+  const current = player.current
+  // Park the interrupted track at the front so skip() returns to it.
+  // AquaLink archives it into history on replace by itself, so never
+  // enqueue `previous` — that is what duplicated the queue on each press.
+  if (current && current !== previous) {
+    const queue = player.queue
+    if (queue && typeof queue.add === 'function') {
+      queue.add(current)
+      const queueSize = queue.size ?? 0
+      if (queueSize > 1 && typeof queue.move === 'function') {
+        queue.move(queueSize - 1, 0)
+      }
+    }
+  }
+  await player.play?.(previous)
+  return true
 }
 
 export const ensureMemberCanControlPlayer = async (

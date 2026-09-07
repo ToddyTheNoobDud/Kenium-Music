@@ -8,11 +8,19 @@ import {
   purgeInvalidSettings,
   updateGuildSettingsSync
 } from '../utils/db_helper.ts'
-import { refresh247Cache, registerVoiceManager } from './voiceStateUpdate.ts'
+import {
+  isVoiceGatewayHealthy,
+  refresh247Cache,
+  registerVoiceManager,
+  setAutoJoinRunning
+} from './voiceStateUpdate.ts'
 
 const NICKNAME_SUFFIX = ' [24/7]'
-const BATCH_SIZE = 5
-const BATCH_DELAY = 1000
+const BATCH_SIZE = 2
+const BATCH_DELAY = 4000
+const BATCH_JITTER = 2000
+const HEALTH_WAIT_MS = 5000
+const HEALTH_MAX_WAITS = 12
 const STARTUP_DELAY = 12000
 const PURGE_DELAY = 6000
 const AQUA_RETRY_DELAY = 30000
@@ -175,6 +183,7 @@ const clearInvalidTextChannel = async (
 const processGuild = async (client: BotReadyClient, settings: SettingsLike) => {
   const guildId = String(settings._id || settings.guildId || '')
   if (!guildId) return
+  if (!isVoiceGatewayHealthy()) return
 
   const voiceChannelId = settings.voiceChannelId
   const textChannelId = settings.textChannelId || null
@@ -294,19 +303,39 @@ const processAutoJoin = async (client: BotReadyClient) => {
     `[24/7] Found ${enabled.length} guilds. Preparing to rejoin...`
   )
 
-  for (let i = 0; i < enabled.length; i += BATCH_SIZE) {
-    const batch = enabled.slice(i, i + BATCH_SIZE)
-    client.logger.info(
-      `[24/7] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}...`
-    )
+  setAutoJoinRunning(true)
+  try {
+    for (let i = 0; i < enabled.length; i += BATCH_SIZE) {
+      let waits = 0
+      while (!isVoiceGatewayHealthy() && waits < HEALTH_MAX_WAITS) {
+        waits += 1
+        await new Promise((resolve) => setTimeout(resolve, HEALTH_WAIT_MS))
+      }
+      if (!isVoiceGatewayHealthy()) {
+        client.logger.warn(
+          '[24/7] Auto-join aborted: shard unhealthy. Remaining guilds will be covered by reconnect recovery.'
+        )
+        break
+      }
 
-    for (const settings of batch) {
-      await processGuild(client, settings)
-    }
+      const batch = enabled.slice(i, i + BATCH_SIZE)
+      client.logger.info(
+        `[24/7] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}...`
+      )
 
-    if (i + BATCH_SIZE < enabled.length) {
-      await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY))
+      for (const settings of batch) {
+        await processGuild(client, settings)
+      }
+
+      if (i + BATCH_SIZE < enabled.length) {
+        const jitter = Math.floor(Math.random() * BATCH_JITTER)
+        await new Promise((resolve) =>
+          setTimeout(resolve, BATCH_DELAY + jitter)
+        )
+      }
     }
+  } finally {
+    setAutoJoinRunning(false)
   }
 
   client.logger.info('[24/7] Startup auto-join process finished.')
@@ -366,6 +395,8 @@ export default createEvent({
         )
       }
     }, PURGE_DELAY)
+
+    await readyClient.me?.fetch()
 
     if (hasReadyAqua(readyClient)) {
       setTimeout(() => void processAutoJoin(readyClient), STARTUP_DELAY)

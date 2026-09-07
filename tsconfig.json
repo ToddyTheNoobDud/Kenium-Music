@@ -19,10 +19,13 @@
     "moduleDetection": "force",
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noPropertyAccessFromIndexSignature": false,
     "incremental": true,
     "tsBuildInfoFile": ".cache/tsconfig.tsbuildinfo",
     "rootDir": "."
   },
+  "include": ["index.ts", "seyfert.config.ts", "src", "tests", "scripts"],
   "exclude": ["node_modules", "dist"]
 }

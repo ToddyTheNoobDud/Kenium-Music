@@ -21,6 +21,7 @@ export interface QueueLike<T = TrackLike> extends Iterable<T> {
   size?: number
   length?: number
   add?: unknown
+  move?: (from: number, to: number) => unknown
   clear?: () => void
   slice?: (start: number, end: number) => T[]
   toArray?: () => T[]
@@ -86,7 +87,7 @@ export interface PlayerLike<TTrack = TrackLike> {
   previous?: TTrack | null
   queue?: QueueLike<TTrack>
   nowPlayingMessage?: unknown
-  play?: () => Promise<unknown>
+  play?(track?: TTrack | null, options?: unknown): MaybePromise<unknown>
   pause?: (paused: boolean) => MaybePromise<unknown>
   skip?: () => unknown
   stop?: () => unknown

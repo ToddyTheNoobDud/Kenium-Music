@@ -38,7 +38,7 @@ export default class iunvitecmds extends Command {
               style: 5,
               label: 'Website',
               emoji: { id: '1413636728283201566', name: 'DiscordI' },
-              url: 'https://toddythenoobdud.github.io/'
+              url: 'https://kenium-wtf.vercel.app/'
             }
           ]
         },

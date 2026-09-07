@@ -9,12 +9,18 @@ import {
   Options
 } from 'seyfert'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
+import {
+  getQueueItems,
+  getQueueSize,
+  getTrackTitle
+} from '../shared/nowPlaying.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 
 type QueueItemLike = {
   info?: {
     title?: string
   }
+  title?: string
 }
 
 type JumpTextLike = {
@@ -34,11 +40,14 @@ type JumpTextLike = {
   }
 }
 
+type JumpQueueLike = {
+  size?: number
+  toArray?: () => QueueItemLike[]
+  dequeue?: () => unknown
+}
+
 type JumpPlayerLike = Player & {
-  queue: QueueItemLike[] & {
-    findIndex: (predicate: (song: QueueItemLike) => boolean) => number
-    shift: () => QueueItemLike | undefined
-  }
+  queue: JumpQueueLike
 }
 
 function createAutocompleteResults(
@@ -64,7 +73,7 @@ function createAutocompleteResults(
 
   for (let i = 0; i < queue.length && results.length < maxResults; i++) {
     const item = queue[i]
-    const title = item?.info?.title
+    const title = getTrackTitle(item)
     if (!title) continue
     const titleLower = title.toLowerCase()
 
@@ -88,11 +97,6 @@ function createAutocompleteResults(
   }
 
   return results
-}
-
-const getQueueItems = (player: { queue?: unknown } | null | undefined) => {
-  const queue = player?.queue
-  return Array.isArray(queue) ? (queue as QueueItemLike[]) : []
 }
 
 const options = {
@@ -152,7 +156,7 @@ export default class JumpCommand extends Command {
       | JumpPlayerLike
       | undefined
 
-    if (!player?.queue?.length) {
+    if (getQueueSize(player) === 0) {
       await ctx.editOrReply({
         content: t.jump?.noSongsInQueue || 'No songs in queue',
         flags: 64
@@ -200,7 +204,7 @@ export default class JumpCommand extends Command {
     position: number,
     t: JumpTextLike
   ): Promise<void> {
-    const queueLength = player.queue.length
+    const queueLength = getQueueSize(player)
 
     if (position < 1 || position > queueLength) {
       const errorMsg =
@@ -228,7 +232,7 @@ export default class JumpCommand extends Command {
 
     const itemsToRemove = position - 1
     for (let i = 0; i < itemsToRemove; i++) {
-      player.queue.shift()
+      player.queue.dequeue?.()
     }
 
     player.stop()
@@ -246,8 +250,8 @@ export default class JumpCommand extends Command {
     name: string,
     t: JumpTextLike
   ): Promise<void> {
-    const songIndex = player.queue.findIndex(
-      (song) => song.info?.title === name
+    const songIndex = getQueueItems(player).findIndex(
+      (song) => getTrackTitle(song) === name
     )
 
     if (songIndex === -1) {
@@ -262,7 +266,7 @@ export default class JumpCommand extends Command {
       return
     }
 
-    if (songIndex === 0) {
+    if (getTrackTitle(player.current) === name) {
       const alreadyPlayingMsg =
         t.commands?.jump?.alreadyPlaying?.replace('{name}', name) ||
         `"${name}" is already playing`
@@ -275,7 +279,7 @@ export default class JumpCommand extends Command {
     }
 
     for (let i = 0; i < songIndex; i++) {
-      player.queue.shift()
+      player.queue.dequeue?.()
     }
 
     player.stop()
