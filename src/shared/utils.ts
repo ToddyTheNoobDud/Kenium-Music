@@ -114,12 +114,15 @@ type AutocompleteInteractionLike<Value extends string | number = string> = {
 export const botAvatarUrl = (
   client: AvatarClientLike | undefined | null
 ): string | undefined => {
-  const avatar = client?.me?.avatarURL
-  if (typeof avatar === 'function') {
-    const url: unknown = (avatar as () => unknown)()
+  try {
+    const me = client?.me
+    // Call as a method: detaching avatarURL loses `this` and throws inside Seyfert. lovely.
+    const url =
+      typeof me?.avatarURL === 'function' ? me.avatarURL() : me?.avatarURL
     return typeof url === 'string' && url.length > 0 ? url : undefined
+  } catch {
+    return undefined
   }
-  return typeof avatar === 'string' && avatar.length > 0 ? avatar : undefined
 }
 
 export const createEmbed = (
