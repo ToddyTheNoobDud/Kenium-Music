@@ -27,11 +27,6 @@ const COLORS = {
 const playlistsCol = () => getPlaylistsCollection()
 const tracksCol = () => getTracksCollection()
 
-type PlaylistViewTextLike = {
-  notFound?: string
-  notFoundDesc?: string
-}
-
 type EmbedVariant = 'default' | 'success' | 'error'
 
 const options = {
@@ -88,14 +83,10 @@ function createEmbed(
 })
 @Options(options)
 export class ExportCommand extends SubCommand {
-  async run(ctx: CommandContext) {
-    const { name: playlistName } = ctx.options as { name: string }
+  async run(ctx: CommandContext<typeof options>) {
+    const { name: playlistName } = ctx.options
     const userId = ctx.author.id
-    const t = (
-      getContextTranslations(ctx) as {
-        playlist?: { view?: PlaylistViewTextLike }
-      }
-    ).playlist?.view
+    const t = getContextTranslations(ctx).playlist.view
 
     const playlist = playlistsCol().findOne({
       userId,

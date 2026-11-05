@@ -20,7 +20,9 @@ class MxmApiError extends Error {
     super(hint || `Musixmatch API error ${code}`)
     this.name = 'MxmApiError'
     this.code = code
-    if (hint !== undefined) this.hint = hint
+    if (hint !== undefined) {
+      this.hint = hint
+    }
   }
 }
 
@@ -77,7 +79,9 @@ const stripDiacritics = (value: string) =>
   value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
 
 const normalizeArtwork = (value: string | undefined) => {
-  if (!value) return ''
+  if (!value) {
+    return ''
+  }
 
   try {
     const url = new URL(value)
@@ -99,10 +103,14 @@ const safeText = (value: unknown) =>
   typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''
 
 const safeNumber = (value: unknown) => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
   if (typeof value === 'string' && value.trim() !== '') {
     const parsed = Number(value)
-    if (Number.isFinite(parsed)) return parsed
+    if (Number.isFinite(parsed)) {
+      return parsed
+    }
   }
   return undefined
 }
@@ -117,7 +125,9 @@ const uniqueBy = <T>(items: T[], mapper: (item: T) => string) => {
 
   for (const item of items) {
     const key = mapper(item)
-    if (seen.has(key)) continue
+    if (seen.has(key)) {
+      continue
+    }
     seen.add(key)
     output.push(item)
   }
@@ -306,7 +316,9 @@ export class Musixmatch {
     const url = new URL(base)
 
     for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined) url.searchParams.set(key, value)
+      if (value !== undefined) {
+        url.searchParams.set(key, value)
+      }
     }
 
     return url.toString()
@@ -314,7 +326,9 @@ export class Musixmatch {
 
   async readManualToken(): Promise<string | null> {
     const envToken = env.MUSIXMATCH_TOKEN?.trim()
-    if (envToken) return envToken
+    if (envToken) {
+      return envToken
+    }
 
     try {
       const value = (await readFile(this.manualTokenFile, 'utf-8')).trim()
@@ -373,7 +387,9 @@ export class Musixmatch {
         signal: controller.signal
       })
 
-      if (!response.ok) throw new HttpError(response.status)
+      if (!response.ok) {
+        throw new HttpError(response.status)
+      }
 
       const data = (await response.json()) as ApiEnvelope<TBody>
       const header = data.message?.header
@@ -391,12 +407,16 @@ export class Musixmatch {
 
   async fetchToken(): Promise<string> {
     const manualToken = await this.readManualToken()
-    if (manualToken) return manualToken
+    if (manualToken) {
+      return manualToken
+    }
 
     const url = this.buildUrl(ENDPOINTS.TOKEN, { app_id: APP_ID })
     const body = await this.apiGet<TokenResponseBody>(url)
     const token = safeText(body.user_token)
-    if (!token) throw new MxmApiError(0, 'Missing user token')
+    if (!token) {
+      throw new MxmApiError(0, 'Missing user token')
+    }
     return token
   }
 
@@ -404,7 +424,9 @@ export class Musixmatch {
     this.tokenData = null
     this.tokenPromise = null
 
-    if (!hard) return
+    if (!hard) {
+      return
+    }
 
     try {
       await unlink(this.tokenFile)
@@ -442,7 +464,9 @@ export class Musixmatch {
       }
     }
 
-    if (this.tokenPromise) return this.tokenPromise
+    if (this.tokenPromise) {
+      return this.tokenPromise
+    }
 
     this.tokenPromise = this.acquireNewToken()
     try {
@@ -479,8 +503,12 @@ export class Musixmatch {
 
       return await this.apiGet(url, signal)
     } catch (error) {
-      if (!isAuthError(error)) throw error
-      if (signal?.aborted) throw error
+      if (!isAuthError(error)) {
+        throw error
+      }
+      if (signal?.aborted) {
+        throw error
+      }
 
       await this.resetToken(error.hint?.toLowerCase().includes('captcha'))
       const newToken = await this.getToken(true)
@@ -516,7 +544,9 @@ export class Musixmatch {
 
     for (const marker of [' feat.', ' ft.', ' featuring ', ' feat ', ' ft ']) {
       const index = lower.indexOf(marker)
-      if (index !== -1 && (cut === -1 || index < cut)) cut = index
+      if (index !== -1 && (cut === -1 || index < cut)) {
+        cut = index
+      }
     }
 
     return (cut === -1 ? value : value.slice(0, cut)).trim()
@@ -531,7 +561,9 @@ export class Musixmatch {
 
     while (output.endsWith(')')) {
       const openIndex = output.lastIndexOf('(')
-      if (openIndex === -1) break
+      if (openIndex === -1) {
+        break
+      }
 
       const inside = output.slice(openIndex + 1, -1).toLowerCase()
       if (
@@ -610,10 +642,16 @@ export class Musixmatch {
     const aTokens = new Set(this.tokenize(a))
     const bTokens = new Set(this.tokenize(b))
 
-    if (!aTokens.size || !bTokens.size) return 0
+    if (!aTokens.size || !bTokens.size) {
+      return 0
+    }
 
     let common = 0
-    for (const token of aTokens) if (bTokens.has(token)) common++
+    for (const token of aTokens) {
+      if (bTokens.has(token)) {
+        common++
+      }
+    }
 
     return (2 * common) / (aTokens.size + bTokens.size)
   }
@@ -622,9 +660,15 @@ export class Musixmatch {
     const left = this.normalizeComparable(a)
     const right = this.normalizeComparable(b)
 
-    if (!left || !right) return 0
-    if (left === right) return 1
-    if (left.length < 2 || right.length < 2) return 0
+    if (!left || !right) {
+      return 0
+    }
+    if (left === right) {
+      return 1
+    }
+    if (left.length < 2 || right.length < 2) {
+      return 0
+    }
 
     const counts = new Map<string, number>()
     for (let index = 0; index < left.length - 1; index++) {
@@ -649,9 +693,15 @@ export class Musixmatch {
     const left = this.normalizeComparable(a)
     const right = this.normalizeComparable(b)
 
-    if (!left || !right) return 0
-    if (left === right) return 1
-    if (left.includes(right) || right.includes(left)) return 0.92
+    if (!left || !right) {
+      return 0
+    }
+    if (left === right) {
+      return 1
+    }
+    if (left.includes(right) || right.includes(left)) {
+      return 0.92
+    }
 
     return Math.max(
       this.tokenOverlap(left, right),
@@ -668,7 +718,9 @@ export class Musixmatch {
     const targetHasMarker = this.hasVersionMarker(targetTitle)
     const candidateHasMarker = this.hasVersionMarker(candidateTitle)
 
-    if (targetHasMarker === candidateHasMarker) return 0
+    if (targetHasMarker === candidateHasMarker) {
+      return 0
+    }
     return candidateHasMarker ? 12 : 4
   }
 
@@ -676,12 +728,18 @@ export class Musixmatch {
     targetArtwork: string | undefined,
     candidateArtwork: string | undefined
   ) {
-    if (!targetArtwork || !candidateArtwork) return 0
+    if (!targetArtwork || !candidateArtwork) {
+      return 0
+    }
 
     const target = normalizeArtwork(targetArtwork)
     const candidate = normalizeArtwork(candidateArtwork)
-    if (!target || !candidate) return 0
-    if (target === candidate) return 1
+    if (!target || !candidate) {
+      return 0
+    }
+    if (target === candidate) {
+      return 1
+    }
 
     const targetTail = takeLastPathBits(target)
     const candidateTail = takeLastPathBits(candidate)
@@ -695,13 +753,23 @@ export class Musixmatch {
     targetDurationMs: number | undefined,
     candidateDurationMs: number | undefined
   ) {
-    if (!targetDurationMs || !candidateDurationMs) return 0
+    if (!targetDurationMs || !candidateDurationMs) {
+      return 0
+    }
 
     const diff = Math.abs(targetDurationMs - candidateDurationMs)
-    if (diff <= 1500) return 1
-    if (diff <= 5000) return 0.8
-    if (diff <= 12_000) return 0.45
-    if (diff <= 25_000) return 0.2
+    if (diff <= 1500) {
+      return 1
+    }
+    if (diff <= 5000) {
+      return 0.8
+    }
+    if (diff <= 12_000) {
+      return 0.45
+    }
+    if (diff <= 25_000) {
+      return 0.2
+    }
     return 0
   }
 
@@ -709,7 +777,9 @@ export class Musixmatch {
     targetIsrc: string | undefined,
     candidateIsrc: string | undefined
   ) {
-    if (!targetIsrc || !candidateIsrc) return 0
+    if (!targetIsrc || !candidateIsrc) {
+      return 0
+    }
     return this.normalizeComparable(targetIsrc) ===
       this.normalizeComparable(candidateIsrc)
       ? 1
@@ -719,9 +789,13 @@ export class Musixmatch {
   private trackAlbumArt(
     track: SearchTrack | LyricsTrack | undefined
   ): string | undefined {
-    if (!track) return undefined
+    if (!track) {
+      return undefined
+    }
 
-    if ('albumArt' in track && track.albumArt) return track.albumArt
+    if ('albumArt' in track && track.albumArt) {
+      return track.albumArt
+    }
 
     const searchTrack = track as SearchTrack
     return (
@@ -759,12 +833,20 @@ export class Musixmatch {
 
     if (target.artist) {
       score += artistScore * 28
-      if (artistScore < 0.25) score -= 12
+      if (artistScore < 0.25) {
+        score -= 12
+      }
     }
 
-    if (titleScore < 0.35) score -= 18
-    if (titleScore === 1) score += 12
-    if (target.artist && artistScore === 1) score += 6
+    if (titleScore < 0.35) {
+      score -= 18
+    }
+    if (titleScore === 1) {
+      score += 12
+    }
+    if (target.artist && artistScore === 1) {
+      score += 6
+    }
 
     score += this.artworkScore(target.albumArt, track.albumArt) * 16
     score += this.durationScore(target.durationMs, track.durationMs) * 10
@@ -812,13 +894,19 @@ export class Musixmatch {
       const line = rawLine.trim()
 
       if (!line) {
-        if (cleanedLines.length) sawGap = true
+        if (cleanedLines.length) {
+          sawGap = true
+        }
         continue
       }
 
-      if (FOOTER_LINE_PATTERNS.some((pattern) => pattern.test(line))) continue
+      if (FOOTER_LINE_PATTERNS.some((pattern) => pattern.test(line))) {
+        continue
+      }
 
-      if (sawGap && cleanedLines.length) cleanedLines.push('')
+      if (sawGap && cleanedLines.length) {
+        cleanedLines.push('')
+      }
       cleanedLines.push(line)
       sawGap = false
     }
@@ -867,7 +955,9 @@ export class Musixmatch {
               safeText(entry.line)
           )
 
-          if (!line) return null
+          if (!line) {
+            return null
+          }
 
           const rawMs =
             seconds === undefined
@@ -884,7 +974,9 @@ export class Musixmatch {
         .filter((line): line is LyricsLine => Boolean(line))
         .sort((left, right) => left.range.start - right.range.start)
 
-      if (!lines.length) return null
+      if (!lines.length) {
+        return null
+      }
 
       const deduped: LyricsLine[] = []
       for (const line of lines) {
@@ -919,7 +1011,9 @@ export class Musixmatch {
 
     const splitBy = (separator: string) => {
       const index = cleaned.indexOf(separator)
-      if (index <= 0 || index >= cleaned.length - separator.length) return null
+      if (index <= 0 || index >= cleaned.length - separator.length) {
+        return null
+      }
 
       const artist = cleaned.slice(0, index).trim()
       const title = cleaned.slice(index + separator.length).trim()
@@ -948,8 +1042,12 @@ export class Musixmatch {
   }
 
   private shouldUseHints(query: string, hints?: LyricsSearchHints): boolean {
-    if (!hints?.title) return false
-    if (!query) return true
+    if (!hints?.title) {
+      return false
+    }
+    if (!query) {
+      return true
+    }
 
     const hintedTitle = this.normalizeTitle(hints.title)
     const hintedArtist = hints.artist ? this.normalizeArtist(hints.artist) : ''
@@ -983,7 +1081,9 @@ export class Musixmatch {
     }
 
     const title = parsed.title || hintTitle
-    if (!title) return null
+    if (!title) {
+      return null
+    }
 
     let artist = parsed.artist
     if (!artist && hintArtist) {
@@ -1011,14 +1111,18 @@ export class Musixmatch {
 
   getCached(key: string): LyricsResult | null | undefined {
     const entry = this.cache.get(key)
-    if (!entry) return undefined
+    if (!entry) {
+      return undefined
+    }
 
     if (entry.expires <= Date.now()) {
       this.cache.delete(key)
       // Opportunistically evict other expired entries on read
       const now = Date.now()
       for (const [k, v] of this.cache) {
-        if (v.expires <= now) this.cache.delete(k)
+        if (v.expires <= now) {
+          this.cache.delete(k)
+        }
       }
       return undefined
     }
@@ -1031,12 +1135,16 @@ export class Musixmatch {
   setCached(key: string, value: LyricsResult | null): void {
     const now = Date.now()
     for (const [cacheKey, entry] of this.cache) {
-      if (entry.expires <= now) this.cache.delete(cacheKey)
+      if (entry.expires <= now) {
+        this.cache.delete(cacheKey)
+      }
     }
 
     while (this.cache.size >= this.maxCacheEntries) {
       const firstKey = this.cache.keys().next().value as string | undefined
-      if (!firstKey) break
+      if (!firstKey) {
+        break
+      }
       this.cache.delete(firstKey)
     }
 
@@ -1092,7 +1200,9 @@ export class Musixmatch {
     try {
       return await factory()
     } catch (error) {
-      if (signal?.aborted) throw error
+      if (signal?.aborted) {
+        throw error
+      }
       return null
     }
   }
@@ -1117,7 +1227,9 @@ export class Musixmatch {
     )) as SearchResponseBody
 
     const trackList = body.track_list
-    if (!Array.isArray(trackList) || !trackList.length) return []
+    if (!Array.isArray(trackList) || !trackList.length) {
+      return []
+    }
 
     const ranked = trackList
       .map((item) => item?.track as SearchTrack | undefined)
@@ -1181,7 +1293,9 @@ export class Musixmatch {
 
   private formatMacroResult(body: unknown): LyricsResult | null {
     const { lyrics, track, subtitles } = extractMacroCalls(body)
-    if (!track || (!lyrics && !subtitles)) return null
+    if (!track || (!lyrics && !subtitles)) {
+      return null
+    }
     return this.formatResult(subtitles ?? null, lyrics ?? null, track)
   }
 
@@ -1215,7 +1329,9 @@ export class Musixmatch {
     signal?: AbortSignal
   ): Promise<{ result: LyricsResult; score: number } | null> {
     const trackId = candidate.raw.track_id
-    if (!trackId) return null
+    if (!trackId) {
+      return null
+    }
 
     const payload = await this.fetchTrackPayload(trackId, signal)
     if (payload) {
@@ -1233,7 +1349,9 @@ export class Musixmatch {
       signal
     )
 
-    if (!fallback) return null
+    if (!fallback) {
+      return null
+    }
     return {
       result: fallback,
       score: this.scoreResolvedResult(fallback, target)
@@ -1262,11 +1380,15 @@ export class Musixmatch {
     opts?: LyricsFindOptions
   ): Promise<LyricsResult | null> {
     const target = this.buildSearchTarget(query, hints)
-    if (!target) return null
+    if (!target) {
+      return null
+    }
 
     const cacheKey = this.searchCacheKey(target)
     const cached = this.getCached(cacheKey)
-    if (cached !== undefined) return cached
+    if (cached !== undefined) {
+      return cached
+    }
 
     let bestMatch: { result: LyricsResult; score: number } | null = null
     let bestSynced: { result: LyricsResult; score: number } | null = null
@@ -1292,7 +1414,9 @@ export class Musixmatch {
       )
 
       for (const candidate of resolved) {
-        if (!candidate) continue
+        if (!candidate) {
+          continue
+        }
         if (!bestMatch || candidate.score > bestMatch.score) {
           bestMatch = candidate
         }
@@ -1311,7 +1435,9 @@ export class Musixmatch {
             fallbackTarget.artist
           )
 
-          if (!fallback) continue
+          if (!fallback) {
+            continue
+          }
 
           const score = this.scoreResolvedResult(fallback, target)
           if (!bestMatch || score > bestMatch.score) {

@@ -78,16 +78,21 @@ const options = {
   description: 'remove track from the queue'
 })
 export default class removecmds extends Command {
-  public override async run(ctx: CommandContext): Promise<void> {
+  public override async run(
+    ctx: CommandContext<typeof options>
+  ): Promise<void> {
     try {
       const t = ctx.t.get(getContextLanguage(ctx))
       const { client } = ctx
 
       const player = client.aqua.players.get(ctx.guildId as string)
-      if (!player) return
-      const { position } = ctx.options as { position: number }
+      if (!player) {
+        return
+      }
+      const { position } = ctx.options
 
-      const target = getQueueItems<Track>(player)[position - 1]
+      const tracks = getQueueItems<Track>(player)
+      const target = tracks[position - 1]
       if (!target) {
         await ctx.editOrReply({
           embeds: [
@@ -100,7 +105,9 @@ export default class removecmds extends Command {
         return
       }
 
-      player.queue.remove(target)
+      tracks.splice(position - 1, 1)
+      player.queue.clear()
+      player.queue.add(...tracks)
       await ctx.editOrReply({
         embeds: [
           new Embed().setDescription(t.player?.removedSong).setColor(0x100e09)
@@ -108,7 +115,10 @@ export default class removecmds extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

@@ -1,6 +1,18 @@
 import type { Playlist, Track } from '../shared/types.ts'
 import { SimpleDB } from './simpleDB.ts'
 
+export interface GuildSettingsRow extends Record<string, unknown> {
+  _id?: string
+  guildId?: string | null
+  twentyFourSevenEnabled?: boolean | number | string | null
+  voiceChannelId?: string | null
+  textChannelId?: string | null
+  lang?: string | null
+  last247DisableReason?: string | null
+  createdAt?: string
+  updatedAt?: string
+}
+
 const PLAYLIST_COLUMNS = {
   userId: 'TEXT',
   name: 'TEXT',
@@ -35,7 +47,9 @@ const SETTINGS_COLUMNS = {
 let dbInstance: SimpleDB | null = null
 
 export function getDatabase(): SimpleDB {
-  if (!dbInstance) dbInstance = new SimpleDB()
+  if (!dbInstance) {
+    dbInstance = new SimpleDB()
+  }
   return dbInstance
 }
 
@@ -56,7 +70,7 @@ export function getTracksCollection() {
 }
 
 export function getSettingsCollection() {
-  return getDatabase().collection('guildSettings', {
+  return getDatabase().collection<GuildSettingsRow>('guildSettings', {
     columns: SETTINGS_COLUMNS
   })
 }

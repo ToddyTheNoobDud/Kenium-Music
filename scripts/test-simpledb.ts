@@ -1,54 +1,34 @@
 import { SimpleDB } from '../src/utils/simpleDB.ts'
 
-async function main() {
-  try {
-    const db = new SimpleDB({ dbPath: './db/test_sey.sqlite', cacheSize: 10 })
-    const col = db.collection('testcoll')
+const database = new SimpleDB({ dbPath: ':memory:' })
 
-    // Clean up any existing doc with same _id by just creating a fresh one
-    const raw = col.insert({ foo: 'bar', counter: 0, arr: [] })
-    const doc = Array.isArray(raw) ? raw[0] : raw
-    if (!doc) throw new Error('Insert returned no document')
-    console.log('Inserted:', doc)
+try {
+  const collection = database.collection('testcoll')
+  const document = collection.insert({ foo: 'bar', counter: 0 })
+  console.log('Inserted:', document)
 
-    const changes = col.updateAtomic(
-      { _id: doc._id },
-      {
-        $set: { foo: 'baz' },
-        $inc: { counter: 5 },
-        $push: { arr: { added: true } }
-      }
-    )
-    console.log('updateAtomic changes:', changes)
+  const changes = collection.updateAtomic(
+    { _id: document._id },
+    { $set: { foo: 'baz' }, $inc: { counter: 5 } }
+  )
+  console.log('updateAtomic changes:', changes)
+  console.log('Found after update:', collection.findById(document._id))
 
-    const found = col.findById(doc._id)
-    console.log('Found after update:', found)
+  const hotCollection = database.collection('hotmix', {
+    columns: { name: 'TEXT' }
+  })
+  const mixedDocument = hotCollection.insert({ name: 'old', extra: 'before' })
+  hotCollection.update(
+    { _id: mixedDocument._id },
+    { name: 'new', extra: 'after' }
+  )
 
-    const hotCol = db.collection('hotmix', {
-      columns: { name: 'TEXT' }
-    })
-    const suffix = String(Date.now())
-    const oldName = `old-${suffix}`
-    const newName = `new-${suffix}`
-    const mixed = hotCol.insert({ name: oldName, extra: 'before' })
-    const mixedDoc = Array.isArray(mixed) ? mixed[0] : mixed
-    if (!mixedDoc) throw new Error('Hot-column insert returned no document')
-
-    hotCol.update({ _id: mixedDoc._id }, { name: newName, extra: 'after' })
-
-    const foundByNewName = hotCol.findOne({ name: newName })
-    const foundByOldName = hotCol.findOne({ name: oldName })
-    if (foundByNewName?._id !== mixedDoc._id || foundByOldName) {
-      throw new Error('Mixed hot/non-hot update desynchronized indexes')
-    }
-    console.log('Mixed hot/non-hot update: ok')
-
-    db.close()
-    process.exit(0)
-  } catch (err) {
-    console.error('Test failed:', err)
-    process.exit(1)
+  const foundByNewName = hotCollection.findOne({ name: 'new' })
+  const foundByOldName = hotCollection.findOne({ name: 'old' })
+  if (foundByNewName?._id !== mixedDocument._id || foundByOldName) {
+    throw new Error('Mixed hot/non-hot update desynchronized indexes')
   }
+  console.log('Mixed hot/non-hot update: ok')
+} finally {
+  database.close()
 }
-
-main()

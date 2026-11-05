@@ -20,8 +20,6 @@ import {
 import { getContextLanguage } from '../utils/i18n.ts'
 import { safeDefer } from '../utils/interactions.ts'
 
-const toBool = (v: unknown) =>
-  v === true || v === 1 || v === '1' || v === 'true'
 const NICKNAME_SUFFIX = ' [24/7]'
 
 @Declare({
@@ -34,15 +32,19 @@ export default class TwentyFourSevenCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     try {
       const guildId = ctx.guildId
-      if (!guildId) return
+      if (!guildId) {
+        return
+      }
 
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
       const settings = getGuildSettings(guildId)
-      const newEnabled = !toBool(settings.twentyFourSevenEnabled)
+      const newEnabled = !settings.twentyFourSevenEnabled
 
       let voiceChannelId: string | null = null
-      if (!(await safeDefer(ctx, true))) return
+      if (!(await safeDefer(ctx, true))) {
+        return
+      }
 
       if (newEnabled) {
         const voiceState = await ctx.member?.voice()
@@ -61,7 +63,7 @@ export default class TwentyFourSevenCommand extends Command {
       if (newEnabled && voiceChannelId) {
         const player = ctx.client.aqua.players.get(guildId)
         if (!player) {
-          createPlayerConnection(ctx.client, {
+          await createPlayerConnection(ctx.client, {
             guildId,
             voiceChannel: voiceChannelId,
             textChannel: ctx.channelId
@@ -74,13 +76,17 @@ export default class TwentyFourSevenCommand extends Command {
         voiceChannelId: newEnabled ? voiceChannelId : null,
         textChannelId: newEnabled ? ctx.channelId : null
       })
-      if (newEnabled) resetRejoinBreaker(guildId)
+      if (newEnabled) {
+        resetRejoinBreaker(guildId)
+      }
       refresh247Cache()
 
       void (async () => {
         try {
           const botMember = await ctx.me()
-          if (!botMember) return
+          if (!botMember) {
+            return
+          }
           const baseNick = botMember.nick || botMember.user?.username || 'Bot'
 
           const targetNick = newEnabled
@@ -117,7 +123,9 @@ export default class TwentyFourSevenCommand extends Command {
 
       await ctx.editOrReply({ embeds: [embed], flags: 64 })
     } catch (err: unknown) {
-      if (isExpiredInteraction(err)) return
+      if (isExpiredInteraction(err)) {
+        return
+      }
       console.error('247 command error:', err)
     }
   }

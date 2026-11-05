@@ -7,7 +7,9 @@ export const cooldownMiddleware = createMiddleware<
 >(async ({ context, next, stop }) => {
   const result = await context.cooldown.consume()
 
-  if (!result || result.allowed) return next(result)
+  if (!result || result.allowed) {
+    return next(result)
+  }
 
   await context.write({
     content: `You're in cooldown, try again ${Formatter.timestamp(result.retryAfter)}`,

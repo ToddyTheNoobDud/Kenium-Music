@@ -8,7 +8,9 @@ import {
 
 export const checkPlayer = createMiddleware<void>(
   async ({ context, stop, next }) => {
-    if (!context.inGuild()) return next()
+    if (!context.inGuild()) {
+      return next()
+    }
 
     const { client } = context
 
@@ -27,7 +29,9 @@ export const checkPlayer = createMiddleware<void>(
           ]
         })
       } catch (err) {
-        if (!isInteractionExpired(err)) throw err
+        if (!isInteractionExpired(err)) {
+          throw err
+        }
       }
       return stop()
     }
@@ -61,7 +65,9 @@ export const checkVoice = createMiddleware<void>(
           ]
         })
       } catch (err) {
-        if (!isInteractionExpired(err)) throw err
+        if (!isInteractionExpired(err)) {
+          throw err
+        }
       }
       return stop()
     }
@@ -72,7 +78,9 @@ export const checkVoice = createMiddleware<void>(
 
 export const checkTrack = createMiddleware<void>(
   async ({ context, stop, next }) => {
-    if (!context.inGuild()) return next()
+    if (!context.inGuild()) {
+      return next()
+    }
 
     const { client } = context
 
@@ -91,7 +99,9 @@ export const checkTrack = createMiddleware<void>(
           ]
         })
       } catch (err) {
-        if (!isInteractionExpired(err)) throw err
+        if (!isInteractionExpired(err)) {
+          throw err
+        }
       }
       return stop()
     }

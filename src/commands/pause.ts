@@ -21,7 +21,9 @@ export default class pauseCmds extends Command {
       const t = ctx.t.get(lang)
 
       const player = client.aqua.players.get(String(ctx.guildId))
-      if (!player) return
+      if (!player) {
+        return
+      }
 
       if (player.paused) {
         await ctx.editOrReply({
@@ -44,7 +46,10 @@ export default class pauseCmds extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

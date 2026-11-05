@@ -21,10 +21,14 @@ export default class destroycmd extends Command {
       const t = ctx.t.get(lang)
 
       const guildId = ctx.guildId
-      if (!guildId) return
+      if (!guildId) {
+        return
+      }
 
       const player = client.aqua.players.get(guildId)
-      if (!player) return
+      if (!player) {
+        return
+      }
 
       player.destroy()
 
@@ -37,7 +41,10 @@ export default class destroycmd extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

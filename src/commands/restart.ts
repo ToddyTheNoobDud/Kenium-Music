@@ -20,7 +20,9 @@ export default class restartStuff extends Command {
       const { client } = ctx
 
       const player = client.aqua.players.get(String(ctx.guildId))
-      if (!player) return
+      if (!player) {
+        return
+      }
 
       player.replay()
 
@@ -31,7 +33,10 @@ export default class restartStuff extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

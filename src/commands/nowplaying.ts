@@ -2,6 +2,7 @@ import { Cooldown } from '@slipher/cooldown'
 import { Command, type CommandContext, Declare, Middlewares } from 'seyfert'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
 import { createNowPlayingContainer } from '../shared/nowPlaying.ts'
+import { getTrackRequester } from '../shared/trackRequester.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 
 @Cooldown.user(1000 * 60, { uses: 2 })
@@ -18,10 +19,14 @@ export default class nowplayngcmds extends Command {
       const t = ctx.t.get(lang)
 
       const guildId = ctx.guildId
-      if (!guildId) return
+      if (!guildId) {
+        return
+      }
 
       const player = client.aqua.players.get(guildId)
-      if (!player) return
+      if (!player) {
+        return
+      }
 
       const track = player.current
 
@@ -41,19 +46,20 @@ export default class nowplayngcmds extends Command {
       const embed = createNowPlayingContainer({
         position: player.position,
         volume: player.volume,
-        loop: player.loop as string,
-        queueLength: player.queue?.length || 0,
+        loop: player.loop,
+        queueLength: player.hasQueue ? player.queue.size : 0,
         title: track.title,
         uri: track.uri,
         length: track.length,
-        requesterName:
-          (track.requester as { username?: string } | undefined)?.username ||
-          'Unknown',
+        requesterName: getTrackRequester(track.requester).username || 'Unknown',
         artworkUrl
       })
       await ctx.editOrReply({ components: [embed], flags: 64 | 32768 })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

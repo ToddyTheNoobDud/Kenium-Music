@@ -2,19 +2,19 @@
   "type": "module",
   "scripts": {
     "startBun": "bun ./index.ts",
-    "startNode": "tsx ./index.ts"
+    "startNode": "node ./scripts/start-with-bun.ts"
   },
   "dependencies": {
     "@slipher/cooldown": "^1.0.0",
-    "aqualink": "^3.2.1",
-    "dotenv": "^17.4.2",
-    "seyfert": "^5.1.0",
-    "tiny-lru": "^13.0.0"
+    "aqualink": "^4.0.0",
+    "dotenv": "^18.0.9",
+    "seyfert": "^5.2.1",
+    "tiny-lru": "^13.1.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.12",
-    "@types/bun": "^1.4.1",
-    "@types/node": "^26.4.1",
+    "@biomejs/biome": "^2.6.5",
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.6",
     "typescript": "^7.0.2"
   }
 }

@@ -1,20 +1,11 @@
 import { lru } from 'tiny-lru'
-import { getSettingsCollection as getSettingsDbCollection } from './collections.ts'
 import {
-  cloneSettings,
-  isCurrentVersion,
-  mergeQueuedUpdate,
-  type VersionedUpdate
-} from './settingsQueue.ts'
+  type GuildSettingsRow,
+  getSettingsCollection as getSettingsDbCollection
+} from './collections.ts'
 
-type SettingsCollection = ReturnType<typeof getSettingsDbCollection>
-
-type TimerLike = NodeJS.Timeout & {
-  unref?: () => void
-}
-
-const toBool = (v: unknown): v is true | 1 | '1' | 'true' =>
-  v === true || v === 1 || v === '1' || v === 'true'
+const toBool = (value: unknown): boolean =>
+  value === true || value === 1 || value === '1' || value === 'true'
 
 export interface GuildSettings extends Record<string, unknown> {
   _id: string
@@ -22,8 +13,8 @@ export interface GuildSettings extends Record<string, unknown> {
   twentyFourSevenEnabled: boolean
   voiceChannelId: string | null
   textChannelId: string | null
-  lang: string
-  last247DisableReason?: string
+  lang: string | null
+  last247DisableReason?: string | null
   createdAt?: string
   updatedAt?: string
 }
@@ -52,9 +43,6 @@ export class ValidationError extends Error {
 const CACHE_MAX = 5000
 const CACHE_TTL_MS = 600000
 
-const BATCH_INTERVAL_MS = 500
-const MAX_BATCH_SIZE = 50
-
 const GUILD_ID_RE = /^\d{17,20}$/
 const SUPPORTED_LANGS = new Set([
   'en',
@@ -81,334 +69,90 @@ const SETTINGS_FIELDS = [
   'updatedAt'
 ] as const
 
-export const _functions = {
-  isValidGuildId: (guildId: string) => GUILD_ID_RE.test(guildId),
-  isValidLang: (lang: string) => SUPPORTED_LANGS.has(lang),
+const isValidGuildId = (guildId: string) => GUILD_ID_RE.test(guildId)
+const isValidLang = (lang: string) => SUPPORTED_LANGS.has(lang)
 
-  createDefaultSettings: (guildId: string): GuildSettings => ({
-    _id: guildId, // IMPORTANT: _id === guildId
-    guildId,
-    twentyFourSevenEnabled: false,
-    voiceChannelId: null,
-    textChannelId: null,
-    lang: 'en'
-  })
-}
+const createDefaultSettings = (guildId: string): GuildSettings => ({
+  _id: guildId,
+  guildId,
+  twentyFourSevenEnabled: false,
+  voiceChannelId: null,
+  textChannelId: null,
+  lang: 'en'
+})
 
-const asGuildSettings = (value: unknown): GuildSettings =>
-  value as GuildSettings
-
-const asGuildSettingsArray = (value: unknown): GuildSettings[] =>
-  value as GuildSettings[]
-
-class DatabaseManager {
-  static instance: DatabaseManager | null = null
-
-  settingsCollection: SettingsCollection | null = null
-
-  cache = lru<GuildSettings>(CACHE_MAX, CACHE_TTL_MS, true)
-
-  updateQueue = new Map<string, VersionedUpdate<GuildSettings>>()
-  updateVersions = new Map<string, number>()
-  updateTimer: NodeJS.Timeout | null = null
-
-  private processingMutex: Promise<void> = Promise.resolve()
-
-  consecutiveFailures = 0
-  failureWarningThreshold = 5
-
-  static getInstance(): DatabaseManager {
-    if (!DatabaseManager.instance) {
-      DatabaseManager.instance = new DatabaseManager()
-    }
-    return DatabaseManager.instance
-  }
-
-  getSettingsCollection() {
-    if (!this.settingsCollection) {
-      this.settingsCollection = getSettingsDbCollection()
-    }
-    return this.settingsCollection
-  }
-
-  scheduleBatch() {
-    if (this.updateTimer) return
-
-    const timer = setTimeout(() => {
-      this.updateTimer = null
-      this.processBatchUpdates()
-    }, BATCH_INTERVAL_MS)
-
-    ;(timer as TimerLike)?.unref?.()
-    this.updateTimer = timer
-  }
-
-  processBatchUpdates() {
-    if (this.updateQueue.size === 0) return
-
-    // Atomically swap the queue before async processing
-    const batch = this.updateQueue
-    this.updateQueue = new Map<string, VersionedUpdate<GuildSettings>>()
-
-    // Use mutex to ensure only one batch processes at a time.
-    // Wrap _executeBatchUpdates in Promise.resolve to catch sync throws
-    // that would break the mutex chain.
-    this.processingMutex = this.processingMutex
-      .then(() =>
-        Promise.resolve().then(() => this._executeBatchUpdates(batch))
-      )
-      .catch((err) => {
-        console.error('Batch mutex error:', err)
-        // Re-queue failed items
-        this.requeueBatch(batch)
-        this.scheduleBatch()
-      })
-  }
-
-  private requeueBatch(batch: Map<string, VersionedUpdate<GuildSettings>>) {
-    for (const [guildId, failed] of batch) {
-      const newer = this.updateQueue.get(guildId)
-      if (
-        !newer &&
-        !isCurrentVersion(failed.version, this.updateVersions.get(guildId))
-      ) {
-        continue
-      }
-      this.updateQueue.set(guildId, mergeQueuedUpdate(failed, newer))
-    }
-  }
-
-  private _executeBatchUpdates(
-    batch: Map<string, VersionedUpdate<GuildSettings>>
-  ) {
-    if (batch.size === 0) return
-    const collection = this.getSettingsCollection()
-
-    const updates = Array.from(batch.entries())
-
-    const chunks: Array<Array<[string, VersionedUpdate<GuildSettings>]>> = []
-    for (let i = 0; i < updates.length; i += MAX_BATCH_SIZE) {
-      chunks.push(updates.slice(i, i + MAX_BATCH_SIZE))
-    }
-
-    try {
-      for (const chunk of chunks) {
-        const idsToFetch: string[] = []
-        for (const [guildId] of chunk) {
-          if (!this.cache.get(guildId)) idsToFetch.push(guildId)
-        }
-
-        let existingMap = new Map<string, GuildSettings>()
-        if (idsToFetch.length) {
-          const existingDocs = collection.find(
-            {
-              _id: { $in: idsToFetch }
-            },
-            { fields: [...SETTINGS_FIELDS] }
-          ) as unknown as GuildSettings[]
-          for (const doc of existingDocs) {
-            doc.guildId = doc.guildId || String(doc._id)
-          }
-          existingMap = new Map(existingDocs.map((d) => [String(d._id), d]))
-        }
-
-        const nowIso = new Date().toISOString()
-        const docsToUpsert: GuildSettings[] = []
-
-        for (const [guildId, queuedUpdate] of chunk) {
-          if (
-            !isCurrentVersion(
-              queuedUpdate.version,
-              this.updateVersions.get(guildId)
-            )
-          ) {
-            continue
-          }
-
-          const base =
-            this.cache.get(guildId) ??
-            existingMap.get(guildId) ??
-            _functions.createDefaultSettings(guildId)
-
-          const createdAt = base.createdAt ?? nowIso
-
-          const next = {
-            ...base,
-            ...queuedUpdate.updates,
-            _id: guildId,
-            guildId,
-            createdAt,
-            updatedAt: nowIso
-          }
-
-          next.twentyFourSevenEnabled = toBool(next.twentyFourSevenEnabled)
-          docsToUpsert.push(next)
-        }
-
-        if (docsToUpsert.length === 0) continue
-
-        const saved = asGuildSettingsArray(collection.insert(docsToUpsert))
-
-        for (const doc of saved) {
-          const key = String(doc._id ?? doc.guildId)
-          if (key) this.cache.set(key, cloneSettings(doc))
-        }
-      }
-
-      this.consecutiveFailures = 0
-    } catch (error) {
-      console.error('Batch update failed:', error)
-      this.consecutiveFailures++
-
-      this.requeueBatch(batch)
-
-      if (this.updateTimer) {
-        clearTimeout(this.updateTimer)
-        this.updateTimer = null
-      }
-
-      if (this.consecutiveFailures >= this.failureWarningThreshold) {
-        console.error(
-          `Persistent batch update failure (${this.consecutiveFailures} attempts). Retaining ${this.updateQueue.size} pending updates for retry.`
-        )
-      }
-      setTimeout(() => this.scheduleBatch(), BATCH_INTERVAL_MS * 2)
-    }
-  }
-
-  queueUpdate(guildId: string, updates: Partial<GuildSettings>) {
-    const version = (this.updateVersions.get(guildId) ?? 0) + 1
-    this.updateVersions.set(guildId, version)
-    const existing = this.updateQueue.get(guildId)
-    this.updateQueue.set(
-      guildId,
-      mergeQueuedUpdate(existing ?? { updates: {}, version }, {
-        updates,
-        version
-      })
-    )
-    this.scheduleBatch()
-  }
-
-  supersedeQueuedUpdate(guildId: string) {
-    const version = (this.updateVersions.get(guildId) ?? 0) + 1
-    this.updateVersions.set(guildId, version)
-    this.updateQueue.delete(guildId)
-  }
-
-  flushUpdates() {
-    if (this.updateTimer) {
-      clearTimeout(this.updateTimer)
-      this.updateTimer = null
-    }
-    this.processBatchUpdates()
-  }
-
-  async flushUpdatesAsync(maxRounds = 10) {
-    if (this.updateTimer) {
-      clearTimeout(this.updateTimer)
-      this.updateTimer = null
-    }
-
-    for (let round = 0; round < maxRounds; round++) {
-      if (this.updateQueue.size === 0) {
-        await this.processingMutex
-        if (this.updateQueue.size === 0) return
-      }
-
-      this.processBatchUpdates()
-      await this.processingMutex
-    }
-  }
-
-  cleanup() {
-    this.flushUpdates()
-    this.cache.clear()
-    this.settingsCollection = null
-    this.updateVersions.clear()
+function settingsFromRow(
+  guildId: string,
+  row: GuildSettingsRow
+): GuildSettings {
+  return {
+    ...row,
+    _id: row._id || guildId,
+    guildId: row.guildId || guildId,
+    twentyFourSevenEnabled: toBool(row.twentyFourSevenEnabled),
+    voiceChannelId: row.voiceChannelId ?? null,
+    textChannelId: row.textChannelId ?? null,
+    lang: row.lang ?? null
   }
 }
 
-const dbManager = DatabaseManager.getInstance()
+const settingsCache = lru<GuildSettings>(CACHE_MAX, CACHE_TTL_MS, true)
 
 export const getGuildSettings = (guildId: string) => {
-  if (!_functions.isValidGuildId(guildId)) {
+  if (!isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
 
-  const cached = dbManager.cache.get(guildId)
-  if (cached) return cloneSettings(cached)
+  const cached = settingsCache.get(guildId)
+  if (cached) {
+    return { ...cached }
+  }
 
   try {
-    const collection = dbManager.getSettingsCollection()
+    const collection = getSettingsDbCollection()
     const found = collection.findById(guildId, { fields: [...SETTINGS_FIELDS] })
 
     const settings = found
-      ? asGuildSettings(found)
-      : _functions.createDefaultSettings(guildId)
-    settings.guildId = settings.guildId || guildId
-    settings.twentyFourSevenEnabled = toBool(settings.twentyFourSevenEnabled)
+      ? settingsFromRow(guildId, found)
+      : createDefaultSettings(guildId)
 
-    dbManager.cache.set(guildId, cloneSettings(settings))
-    return cloneSettings(settings)
+    settingsCache.set(guildId, { ...settings })
+    return { ...settings }
   } catch (error) {
     throw new DatabaseError('Failed to retrieve guild settings', error)
   }
-}
-
-export const updateGuildSettings = (
-  guildId: string,
-  updates: Partial<GuildSettings>
-) => {
-  if (!_functions.isValidGuildId(guildId)) {
-    throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
-  }
-
-  if (Object.hasOwn(updates, 'twentyFourSevenEnabled')) {
-    updates.twentyFourSevenEnabled = toBool(updates.twentyFourSevenEnabled)
-  }
-
-  const base = getGuildSettings(guildId)
-  const updated = { ...base, ...updates, _id: guildId, guildId }
-  updated.twentyFourSevenEnabled = toBool(updated.twentyFourSevenEnabled)
-  dbManager.cache.set(guildId, cloneSettings(updated))
-
-  dbManager.queueUpdate(guildId, updates)
 }
 
 export const updateGuildSettingsSync = (
   guildId: string,
   updates: Partial<GuildSettings>
 ) => {
-  if (!_functions.isValidGuildId(guildId)) {
+  if (!isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
 
   try {
-    const collection = dbManager.getSettingsCollection()
+    const collection = getSettingsDbCollection()
     const base =
-      dbManager.cache.get(guildId) ??
+      settingsCache.get(guildId) ??
       collection.findById(guildId, { fields: [...SETTINGS_FIELDS] }) ??
-      _functions.createDefaultSettings(guildId)
+      createDefaultSettings(guildId)
 
     const nowIso = new Date().toISOString()
     const createdAt = base.createdAt ?? nowIso
 
-    const next = {
+    const next = settingsFromRow(guildId, {
       ...base,
       ...updates,
       _id: guildId,
       guildId,
       createdAt,
       updatedAt: nowIso
-    }
+    })
 
-    next.twentyFourSevenEnabled = toBool(next.twentyFourSevenEnabled)
-
-    const saved = asGuildSettings(collection.insert(next))
-    dbManager.supersedeQueuedUpdate(guildId)
-    dbManager.cache.set(guildId, cloneSettings(saved))
-    return cloneSettings(saved)
+    collection.insert(next)
+    settingsCache.set(guildId, { ...next })
+    return { ...next }
   } catch (error) {
     throw new DatabaseError('Failed to update guild settings', error)
   }
@@ -416,7 +160,7 @@ export const updateGuildSettingsSync = (
 
 export const isTwentyFourSevenEnabled = (guildId: string): boolean => {
   try {
-    return toBool(getGuildSettings(guildId).twentyFourSevenEnabled)
+    return getGuildSettings(guildId).twentyFourSevenEnabled
   } catch (error) {
     console.error('[db_helper] Failed to check 24/7 for', guildId, error)
     return false
@@ -426,7 +170,7 @@ export const isTwentyFourSevenEnabled = (guildId: string): boolean => {
 export const get247ChannelIds = (guildId: string) => {
   try {
     const settings = getGuildSettings(guildId)
-    return toBool(settings.twentyFourSevenEnabled) && settings.voiceChannelId
+    return settings.twentyFourSevenEnabled && settings.voiceChannelId
       ? {
           voiceChannelId: settings.voiceChannelId,
           textChannelId: settings.textChannelId || null
@@ -438,37 +182,10 @@ export const get247ChannelIds = (guildId: string) => {
   }
 }
 
-export const getChannelIds = (guildId: string) => {
-  const channels = get247ChannelIds(guildId)
-  return channels?.textChannelId
-    ? {
-        voiceChannelId: channels.voiceChannelId,
-        textChannelId: channels.textChannelId
-      }
-    : null
-}
-
-export const setChannelIds = (
-  guildId: string,
-  voiceChannelId: string,
-  textChannelId: string
-) => {
-  if (!_functions.isValidGuildId(guildId)) {
-    throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
-  }
-  if (!voiceChannelId || !textChannelId) {
-    throw new ValidationError('Channel IDs are required', 'channelIds', {
-      voiceChannelId,
-      textChannelId
-    })
-  }
-  updateGuildSettingsSync(guildId, { voiceChannelId, textChannelId })
-}
-
 export const getGuildLang = (guildId: string): string => {
   try {
     const lang = String(getGuildSettings(guildId).lang || 'en')
-    return _functions.isValidLang(lang) ? lang : 'en'
+    return isValidLang(lang) ? lang : 'en'
   } catch (error) {
     console.error('[db_helper] Failed to get language for', guildId, error)
     return 'en'
@@ -476,10 +193,10 @@ export const getGuildLang = (guildId: string): string => {
 }
 
 export const setGuildLang = (guildId: string, lang: string): boolean => {
-  if (!_functions.isValidGuildId(guildId)) {
+  if (!isValidGuildId(guildId)) {
     throw new ValidationError('Invalid guild ID format', 'guildId', guildId)
   }
-  if (!_functions.isValidLang(lang)) {
+  if (!isValidLang(lang)) {
     throw new ValidationError('Invalid language code', 'lang', lang)
   }
 
@@ -492,31 +209,22 @@ export const setGuildLang = (guildId: string, lang: string): boolean => {
   }
 }
 
-export const disable247Sync = (guildId: string, reason?: string) => {
-  return updateGuildSettingsSync(guildId, {
-    twentyFourSevenEnabled: false,
-    voiceChannelId: null,
-    textChannelId: null,
-    ...(reason ? { last247DisableReason: reason } : null)
-  })
-}
-
 export const purgeInvalidSettings = async () => {
   try {
-    const collection = dbManager.getSettingsCollection()
+    const collection = getSettingsDbCollection()
     const all = collection.find({}, { fields: ['_id'] })
     const toDelete: string[] = []
 
     for (const doc of all) {
-      if (typeof doc._id === 'string' && !_functions.isValidGuildId(doc._id)) {
+      if (!isValidGuildId(doc._id)) {
         toDelete.push(doc._id)
       }
     }
 
     if (toDelete.length > 0) {
       let count = 0
-      for (let i = 0; i < toDelete.length; i += 50) {
-        const chunk = toDelete.slice(i, i + 50)
+      for (let offset = 0; offset < toDelete.length; offset += 50) {
+        const chunk = toDelete.slice(offset, offset + 50)
         collection.delete({ _id: { $in: chunk } })
         count += chunk.length
         await new Promise((resolve) => setTimeout(resolve, 0))
@@ -531,12 +239,18 @@ export const purgeInvalidSettings = async () => {
 
 export const getAll247Settings = () => {
   try {
-    const collection = dbManager.getSettingsCollection()
-    const docs = collection.find({
-      twentyFourSevenEnabled: 1
-    }) as unknown as GuildSettings[]
+    const collection = getSettingsDbCollection()
+    const docs = collection.find(
+      {
+        twentyFourSevenEnabled: 1,
+        voiceChannelId: { $ne: null }
+      },
+      { fields: ['guildId', 'voiceChannelId', 'textChannelId'] }
+    )
     return docs.flatMap((doc) => {
-      if (!doc.voiceChannelId) return []
+      if (!doc.voiceChannelId) {
+        return []
+      }
       return {
         guildId: doc.guildId || String(doc._id),
         voiceChannelId: doc.voiceChannelId,
@@ -548,11 +262,3 @@ export const getAll247Settings = () => {
     return []
   }
 }
-
-export const cleanupDatabase = () => dbManager.cleanup()
-export const flushDatabaseUpdates = async () => dbManager.flushUpdatesAsync()
-
-export const getCacheStats = () => ({
-  size: dbManager.cache.size,
-  pendingUpdates: dbManager.updateQueue.size
-})

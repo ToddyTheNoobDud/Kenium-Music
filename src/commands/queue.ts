@@ -1,21 +1,22 @@
 import { Cooldown } from '@slipher/cooldown'
 import {
+  type APIContainerComponent,
   Command,
   type CommandContext,
+  type ComponentInteraction,
   Container,
   Declare,
-  Middlewares
+  type Message,
+  Middlewares,
+  type WebhookMessage
 } from 'seyfert'
+import { dropPendingPlaylistLoads } from '../events/playlistPlayback.ts'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
-import type {
-  ComponentCollectorSourceLike,
-  InteractionLike,
-  PlayerLike,
-  QueueLike,
-  TrackLike
-} from '../shared/helperTypes.ts'
+import type { PlayerLike, QueueLike, TrackLike } from '../shared/helperTypes.ts'
+import { getTrackRequester } from '../shared/trackRequester.ts'
 import { formatDuration, truncate } from '../shared/utils.ts'
 import { authorizeVoiceControl } from '../shared/voiceAuthorization.ts'
+import type { Translations } from '../utils/i18n.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 import { getMemberVoiceState } from '../utils/interactions.ts'
 
@@ -23,46 +24,16 @@ const TRACKS_PER_PAGE = 5
 const EPHEMERAL_FLAG = 64 | (32768 as const)
 
 type QueueViewState = { page: number; maxPages: number }
-type ContainerComponentLike = Record<string, unknown>
-
-type QueueTextLike = {
-  queue: {
-    title: string
-    page: string
-    resume: string
-    pause: string
-    loopOn: string
-    loopOff: string
-    refresh: string
-    clear: string
-    nowPlaying: string
-    comingUp: string
-    noTracksInQueue: string
-    queueEmpty: string
-    tip: string
-    noActivePlayerFound: string
-    errorDisplayingQueue: string
-  }
-  common: {
-    unknown: string
-    of: string
-  }
-  player: {
-    requestedBy: string
-    author: string
-  }
-}
+type ContainerComponentLike = APIContainerComponent['components'][number]
 
 const queueViewState = new Map<string, QueueViewState>()
 
-const disposeQueueView = (
-  message: ComponentCollectorSourceLike<InteractionLike>
-) => {
-  if (!message.id) return
-  queueViewState.delete(message.id)
-  if (typeof message.edit === 'function') {
-    message.edit({ components: [] }).catch(() => null)
+const disposeQueueView = (message: Message | WebhookMessage) => {
+  if (!message.id) {
+    return
   }
+  queueViewState.delete(message.id)
+  message.edit({ components: [] }).catch(() => null)
 }
 
 function calcPagination(queueLength: number, page: number) {
@@ -74,7 +45,9 @@ function calcPagination(queueLength: number, page: number) {
 }
 
 function createProgressBar(current: number, total: number, size = 18): string {
-  if (!total || total <= 0) return '🔴 LIVE'
+  if (!total || total <= 0) {
+    return '🔴 LIVE'
+  }
   const ratio = Math.min(Math.max(current / total, 0), 1)
   const knobPos = Math.round(ratio * (size - 1))
   return `${'─'.repeat(knobPos)}●${'─'.repeat(size - 1 - knobPos)}`
@@ -82,11 +55,11 @@ function createProgressBar(current: number, total: number, size = 18): string {
 
 function formatTrackMeta(
   track: TrackLike,
-  thele: QueueTextLike,
+  thele: Translations,
   opts: { includeRequester?: boolean } = {}
 ): string {
   const artist = truncate(track.info?.author ?? thele.common.unknown, 36)
-  const requesterId = (track.requester as { id?: string } | undefined)?.id
+  const requesterId = getTrackRequester(track.requester).id
   const requester =
     opts.includeRequester && requesterId
       ? ` • ${thele.player.requestedBy} <@${requesterId}>`
@@ -96,43 +69,23 @@ function formatTrackMeta(
   return `${thele.player.author}: ${artist} • ${lengthMs > 0 ? formatDuration(lengthMs) : 'LIVE'}${requester}`
 }
 
-function getQueueLength(q?: QueueLike<TrackLike> | null): number {
-  if (typeof q?.size === 'number') return q.size
-  if (typeof q?.length === 'number') return q.length
-  if (typeof q?.toArray === 'function') return q.toArray().length
-  if (typeof q?.[Symbol.iterator] === 'function') {
-    let count = 0
-    for (const _item of q as Iterable<TrackLike>) count++
-    return count
-  }
-  return 0
+function getQueueLength(queue: QueueLike<TrackLike>): number {
+  return queue.size
 }
 
 function sliceQueue(
-  q: QueueLike<TrackLike> | null | undefined,
+  queue: QueueLike<TrackLike>,
   start: number,
   end: number
 ): TrackLike[] {
-  if (!q || start >= end) return []
-  if (typeof q?.slice === 'function') return q.slice(start, end)
-  if (Array.isArray(q)) return q.slice(start, end)
-  if (typeof q?.toArray === 'function') return q.toArray().slice(start, end)
-
-  const items: TrackLike[] = []
-  let index = 0
-  for (const item of q as Iterable<TrackLike>) {
-    if (index >= end) break
-    if (index >= start) items.push(item)
-    index++
-  }
-  return items
+  return queue.toArray().slice(start, end)
 }
 
 const createButtonRows = (
   page: number,
   maxPages: number,
   opts: { paused: boolean; loop: boolean },
-  thele: QueueTextLike
+  thele: Translations
 ): ContainerComponentLike[] => {
   const isFirst = page <= 1
   const isLast = page >= maxPages
@@ -209,7 +162,7 @@ const createButtonRows = (
 function createQueueContainer(
   player: PlayerLike,
   page: number,
-  thele: QueueTextLike
+  thele: Translations
 ): Container {
   const queueLength = getQueueLength(player?.queue)
   const { validPage, maxPages, startIndex, endIndex } = calcPagination(
@@ -240,19 +193,16 @@ function createQueueContainer(
       `\`${formatDuration(posMs)}\`  ${bar}  \`${lengthMs > 0 ? formatDuration(lengthMs) : 'LIVE'}\`  **${pct}%**`
     ].join('\n')
 
-    components.push({
-      type: 9,
-      components: [{ type: 10, content: nowPlayingContent }],
-      accessory:
-        currentTrack?.info?.artworkUrl || currentTrack?.thumbnail
-          ? {
-              type: 11,
-              media: {
-                url: currentTrack.info?.artworkUrl ?? currentTrack.thumbnail
-              }
-            }
-          : undefined
-    })
+    const artworkUrl = currentTrack.info?.artworkUrl || currentTrack.thumbnail
+    components.push(
+      artworkUrl
+        ? {
+            type: 9,
+            components: [{ type: 10, content: nowPlayingContent }],
+            accessory: { type: 11, media: { url: artworkUrl } }
+          }
+        : { type: 10, content: nowPlayingContent }
+    )
   }
 
   if (queueLength > 0) {
@@ -287,21 +237,23 @@ function createQueueContainer(
   )
 
   components.push({ type: 14, divider: true, spacing: 2 })
-  if (buttonRows[0]) components.push(buttonRows[0])
+  if (buttonRows[0]) {
+    components.push(buttonRows[0])
+  }
   if (buttonRows[1]) {
     components.push({ type: 14, divider: true, spacing: 1 }, buttonRows[1])
   }
-  return new Container({ components: components as never })
+  return new Container({ components })
 }
 
 async function handleQueueNavigation(
-  interaction: InteractionLike,
+  interaction: ComponentInteraction,
   ctx: CommandContext,
   action: string,
-  thele: QueueTextLike
+  thele: Translations
 ): Promise<void> {
   try {
-    await interaction.deferUpdate?.()
+    await interaction.deferUpdate()
     const normalizedAction = action.replace(/^ignore_/, '')
     const guildId = interaction.guildId ?? ctx.guildId
     const player = guildId ? ctx.client.aqua.players.get(guildId) : undefined
@@ -332,11 +284,17 @@ async function handleQueueNavigation(
         return
       }
     }
-    if (!player || player.destroyed) return
+    if (!player || player.destroyed) {
+      return
+    }
     const messageId = interaction?.message?.id
     const state = messageId ? queueViewState.get(messageId) : undefined
-    if (!state) return
-    if (!messageId) return
+    if (!state) {
+      return
+    }
+    if (!messageId) {
+      return
+    }
 
     let newPage = state.page
 
@@ -366,19 +324,21 @@ async function handleQueueNavigation(
       case 'queue_refresh':
         break
       case 'queue_playpause':
-        if (player?.paused) await player.pause?.(false)
-        else await player.pause?.(true)
+        if (player?.paused) {
+          await player.pause(false)
+        } else {
+          await player.pause(true)
+        }
         break
       case 'queue_loop': {
         const currentLoop = player?.loop || 0
         const newLoop = currentLoop === 0 ? 1 : 0
-        if (typeof player?.setLoop === 'function') player.setLoop(newLoop)
-        else player.loop = newLoop
+        player.setLoop(newLoop)
         break
       }
       case 'queue_clear':
-        if (player?.queue?.clear) player.queue.clear()
-        else if (Array.isArray(player?.queue)) player.queue.length = 0
+        dropPendingPlaylistLoads(player)
+        player.queue.clear()
         newPage = 1
         break
       default:
@@ -390,19 +350,21 @@ async function handleQueueNavigation(
     queueViewState.set(messageId, { page: newPage, maxPages })
 
     const container = createQueueContainer(player, newPage, thele)
-    if (typeof interaction.editOrReply === 'function') {
-      await interaction.editOrReply({
-        components: [container],
-        flags: EPHEMERAL_FLAG
-      })
+    await interaction.editOrReply({
+      components: [container],
+      flags: EPHEMERAL_FLAG
+    })
+  } catch (error) {
+    if (!isExpiredInteraction(error)) {
+      throw error
     }
-  } catch {}
+  }
 }
 
 async function handleShowQueue(
   ctx: CommandContext,
   player: PlayerLike,
-  thele: QueueTextLike
+  thele: Translations
 ): Promise<void> {
   const queueLength = getQueueLength(player?.queue)
   if (queueLength === 0 && !player?.current) {
@@ -427,40 +389,36 @@ async function handleShowQueue(
 
   const container = createQueueContainer(player, 1, thele)
   const { maxPages } = calcPagination(queueLength, 1)
-  const message = (await ctx.editOrReply(
+  const message = await ctx.editOrReply(
     { components: [container], flags: EPHEMERAL_FLAG },
     true
-  )) as ComponentCollectorSourceLike<InteractionLike> | null
-  if (!message?.id) return
+  )
+  if (!message?.id) {
+    return
+  }
 
   queueViewState.set(message.id, { page: 1, maxPages })
 
-  const collector = message.createComponentCollector?.({
+  const collector = message.createComponentCollector({
     idle: 180000,
-    filter: (i: InteractionLike) =>
-      i.user.id === ctx.interaction.user.id &&
-      (typeof i.isButton !== 'function' || i.isButton()),
+    filter: (i: ComponentInteraction) =>
+      i.user.id === ctx.interaction.user.id && i.isButton(),
     onStop: () => disposeQueueView(message)
   })
 
-  if (collector) {
-    for (const id of [
-      'ignore_queue_first',
-      'ignore_queue_prev',
-      'ignore_queue_next',
-      'ignore_queue_last',
-      'ignore_queue_refresh',
-      'ignore_queue_playpause',
-      'ignore_queue_loop',
-      'ignore_queue_clear'
-    ]) {
-      collector.run(id, (i: InteractionLike) =>
-        handleQueueNavigation(i, ctx, id, thele)
-      )
-    }
-  } else {
-    const timer = setTimeout(() => disposeQueueView(message), 180000)
-    if (typeof timer.unref === 'function') timer.unref()
+  for (const id of [
+    'ignore_queue_first',
+    'ignore_queue_prev',
+    'ignore_queue_next',
+    'ignore_queue_last',
+    'ignore_queue_refresh',
+    'ignore_queue_playpause',
+    'ignore_queue_loop',
+    'ignore_queue_clear'
+  ]) {
+    collector.run(id, (i: ComponentInteraction) =>
+      handleQueueNavigation(i, ctx, id, thele)
+    )
   }
 }
 
@@ -488,7 +446,9 @@ export default class QueueCommand extends Command {
 
       await handleShowQueue(ctx, player, thele)
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
       try {
         await ctx.editOrReply({
           content: thele.queue.errorDisplayingQueue,

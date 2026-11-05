@@ -17,12 +17,14 @@ import {
 import { getContextLanguage } from '../utils/i18n.ts'
 import { safeDefer } from '../utils/interactions.ts'
 
-@Options({
+const options = {
   file: createAttachmentOption({
     description: 'what u want to play?',
     required: true
   })
-})
+}
+
+@Options(options)
 @Declare({
   name: 'play-file',
   description: 'Play a file from your computer.'
@@ -30,12 +32,14 @@ import { safeDefer } from '../utils/interactions.ts'
 @Cooldown.user(1000 * 60, { uses: 2 })
 @Middlewares(['cooldown', 'checkVoice'])
 export default class PlayFile extends Command {
-  public override async run(ctx: CommandContext) {
+  public override async run(ctx: CommandContext<typeof options>) {
     const lang = getContextLanguage(ctx)
     const thele = ctx.t.get(lang)
 
     try {
-      if (!(await safeDefer(ctx, true))) return
+      if (!(await safeDefer(ctx, true))) {
+        return
+      }
 
       const player = await ensurePlayerForVoice(ctx, ctx.channelId)
       if (!player) {
@@ -53,9 +57,7 @@ export default class PlayFile extends Command {
         return
       }
 
-      const { file } = ctx.options as {
-        file: { url: string; filename: string }
-      }
+      const { file } = ctx.options
 
       try {
         const { added } = await resolveAndQueue({
@@ -98,7 +100,9 @@ export default class PlayFile extends Command {
         })
       }
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
       await ctx.editOrReply({
         embeds: [
           new Embed()

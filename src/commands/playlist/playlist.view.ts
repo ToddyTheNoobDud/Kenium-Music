@@ -53,8 +53,12 @@ function createSelectMenu(
     const option = new StringSelectOption()
       .setLabel(opt.label)
       .setValue(opt.value)
-    if (opt.description) option.setDescription(opt.description)
-    if (opt.emoji) option.setEmoji(opt.emoji)
+    if (opt.description) {
+      option.setDescription(opt.description)
+    }
+    if (opt.emoji) {
+      option.setEmoji(opt.emoji)
+    }
     menu.addOption(option)
   }
 
@@ -62,11 +66,18 @@ function createSelectMenu(
 }
 
 function getSourceIcon(uri: string): string {
-  if (!uri) return ICONS.music
-  if (uri.includes('youtube.com') || uri.includes('youtu.be'))
+  if (!uri) {
+    return ICONS.music
+  }
+  if (uri.includes('youtube.com') || uri.includes('youtu.be')) {
     return ICONS.youtube
-  if (uri.includes('spotify.com')) return ICONS.spotify
-  if (uri.includes('soundcloud.com')) return ICONS.soundcloud
+  }
+  if (uri.includes('spotify.com')) {
+    return ICONS.spotify
+  }
+  if (uri.includes('soundcloud.com')) {
+    return ICONS.soundcloud
+  }
   return ICONS.music
 }
 
@@ -76,8 +87,8 @@ function getSourceIcon(uri: string): string {
 })
 @Options(options)
 export class ViewCommand extends SubCommand {
-  async run(ctx: CommandContext) {
-    const { playlist: playlistName } = ctx.options as { playlist?: string }
+  async run(ctx: CommandContext<typeof options>) {
+    const { playlist: playlistName } = ctx.options
     const userId = ctx.author.id
 
     if (!playlistName) {

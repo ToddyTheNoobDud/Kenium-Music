@@ -1,15 +1,18 @@
 import { Cooldown } from '@slipher/cooldown'
 import {
+  type ButtonInteraction,
   ButtonStyle,
   Command,
   type CommandContext,
   Container,
   Declare,
   Embed,
-  Middlewares
+  type Message,
+  Middlewares,
+  type WebhookMessage
 } from 'seyfert'
 import { APP_VERSION } from '../shared/constants.ts'
-import type { InteractionLike } from '../shared/helperTypes.ts'
+import type { Translations } from '../utils/i18n.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 import { safeDefer } from '../utils/interactions.ts'
 
@@ -26,44 +29,32 @@ const CONFIG = {
     DEVELOPER: 'mushroom0162',
     RELEASE_NOTES: {
       version: APP_VERSION,
-      date: '2026-09-07',
+      date: '2026-11-04',
       summary:
-        'Switched lyrics to LRCLIB with ping-based karaoke timing, made playlist loading chunked so large playlists start faster, cut startup request floods with better batching, and fixed previous, jump, and playlist import replies.',
-      highlights: [
-        'Lyrics now resolve through LRCLIB with karaoke edit timing derived from live bot ping and interaction averages',
-        'Playlist playback loads in chunks (10 tracks first, then top-ups) instead of pushing everything into the node at once',
-        'Startup batching rework stops the thousands of requests per second fired during boot',
-        'Previous, jump, and remove fixed to work against the real player queue shape',
-        'The bot now owns the Now Playing message lifecycle, reusing one message per session'
-      ],
-      added: [
-        'Nodelink seek events for karaoke seeking instead of constant recalculation',
-        'Chunked playlist buffer that tops up tracks as playback moves forward',
-        'Heap and RSS memory readout plus on-demand user count on /status',
-        'Github section to changelog for people that self-host Kenium.'
-      ],
+        'This update focuses on a lot of things.',
       changed: [
-        'Karaoke edit timing uses measured ping and interaction averages instead of a hardcoded guess',
-        'Rebuilt botReady startup to batch loads with extra guards before firing requests',
-        'TrackStart handling moved out of AquaLink: the Now Playing message is edited in place and deleted only on queue end or player destroy',
-        'Reduced banner fetching memory use on /status',
-        'Disabled unused messages and overwrites cache resources to cut per-event CPU and flatten memory',
+        'Queues now have a 1,000-track limit, including playlist tracks still waiting to load. Imports report tracks left out because the queue is full.',
+        'Playlist buttons start playback after loading the first few songs, then load more as you listen. Adding another saved playlist keeps the earlier playlist waiting in order.',
+        'Playlist imports report broken files and invalid YouTube links. CSV files handle commas, quotes and line breaks inside song details.',
       ],
       fixed: [
-        'Playlist import finishing without replying to the interaction',
-        'Previous duplicating the queue on every press by re-adding the current and previous tracks',
-        '/jump autocomplete returning no results and name jumps matching the queued track instead of the playing one',
-        '/remove reading the queue as a plain array instead of using the player queue API',
-        'Now Playing message ending up edited-then-deleted when jump or skip raced the old auto-delete'
-      ],
-      removed: [
-        'Duplicate playlist button id parser superseded by the shared classifier',
-        'AquaLink per-track Now Playing auto-delete in favor of explicit session-end cleanup'
+        'Saved sessions load after a restart. Restored tracks show who requested them, and requester-only controls still recognize that person.',
+        'Normal restarts remove the old now-playing message before exiting, so resumed playback can post a fresh one.',
+        'Clearing the queue or destroying the player cancels pending loads, so songs do not appear again afterward.',
+        '24/7 reconnects wait until Discord and the music server are ready. Temporary errors no longer turn 24/7 off; missing permissions pause retries until you fix access and toggle /247 off and on.',
+        'Jump and roulette start playback after selecting a queued song. Search acknowledges commands before waiting for results, avoiding interaction timeouts.',
+        'Search suggestions no longer attach someone else as the requester. Long searches no longer share results just because their first 60 characters match.',
+        'Voice activity checks no longer treat a failed member lookup as an empty channel. Clear and stop also work when no song is currently playing.',
+        'Now-playing cards show the correct repeat icon. Queue views work when a song has no artwork.',
+        'Fixed the distortion effect setting. Filter commands wait for changes before confirming them.',
+        'Older playlists are copied during a database upgrade even if newer playlists already exist. The upgrade checks the copy before removing old data.',
+        'The changelog still opens when GitHub cannot provide the recent commits.'
       ],
       github: [
-        'Rewrote the README setup and features sections and reorganized the .env example',
-        'Unused PREFIX_ENABLED and ANTI_DOCKER entries from the .env example',
-        'Bumped the packages'
+        'Removed many typeof checks and compatibility fallbacks in favor of the framework and player APIs. Replaced loose types with their actual types and formatted the code with Biome.',
+        'Shared the playlist play/shuffle loader and now-playing layout across commands and buttons. Pending loads belong to each player, so replacing a player does not mix its work with the old one.',
+        'Database access now uses bun:sqlite. Settings save immediately; schema v7 upgrades create a backup and remove unused indexes.',
+        'Updated Seyfert to 5.2.1 and tiny-lru to 13.1.1, and aqualink to v4.'
       ]
     } as ReleaseNotes
   },
@@ -96,60 +87,9 @@ interface ReleaseNotes {
   version: string
   date: string
   summary: string
-  highlights: string[]
-  added: string[]
   changed: string[]
   fixed: string[]
-  removed: string[]
   github: string[]
-}
-
-type ChangelogTextLike = {
-  invite?: {
-    github?: unknown
-    supportServer?: unknown
-  }
-  common?: {
-    next?: unknown
-    unknown?: unknown
-  }
-  errors?: {
-    general?: unknown
-    commandError?: unknown
-  }
-  github?: {
-    title?: unknown
-    label?: unknown
-  }
-  supportServer?: {
-    title?: unknown
-    label?: unknown
-  }
-  changelog?: unknown
-  commits?: unknown
-}
-
-type ChangelogInteractionLike = InteractionLike & {
-  client: CommandContext['client']
-  deferUpdate?: () => Promise<unknown>
-  editOrReply: (payload: {
-    components: Container[]
-    flags: number
-  }) => Promise<unknown>
-}
-
-type ChangelogMessageLike = {
-  edit: (payload: { components: [] }) => Promise<unknown>
-  createComponentCollector: (options: {
-    filter: (i: { user: { id: string } }) => boolean
-    idle: number
-    onStop: () => void
-  }) => {
-    run: (
-      customId: string,
-      handler: (interaction: ChangelogInteractionLike) => Promise<void>
-    ) => void
-  }
 }
 
 type PageContextLike = {
@@ -166,7 +106,7 @@ function asText(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value : fallback
 }
 
-async function fetchCommits(): Promise<Record<string, unknown>[]> {
+async function fetchCommits(): Promise<GithubCommit[]> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 4000) // Reduced timeout
 
@@ -185,7 +125,7 @@ async function fetchCommits(): Promise<Record<string, unknown>[]> {
       throw new Error(`API Error: ${response.status}`)
     }
 
-    return (await response.json()) as Record<string, unknown>[]
+    return (await response.json()) as GithubCommit[]
   } catch (error: unknown) {
     clearTimeout(timeoutId)
     if (isAbortError(error)) {
@@ -196,7 +136,9 @@ async function fetchCommits(): Promise<Record<string, unknown>[]> {
 }
 
 function formatCommitMessage(message: string): string {
-  if (!message?.trim()) return 'No message'
+  if (!message?.trim()) {
+    return 'No message'
+  }
 
   // Single regex operation instead of match + slice
   const cleanMessage = message.replace(COMMIT_MESSAGE_CLEAN_REGEX, '')
@@ -229,18 +171,17 @@ function createReleaseBlock(
 
 function createChangelogPage(
   ctx: PageContextLike,
-  thele: ChangelogTextLike,
+  thele: Translations,
   currentPage: 'changelog' | 'commits' = 'changelog'
 ): Container {
   const notes = CONFIG.BOT.RELEASE_NOTES
-  const navigationButtons = createNavigationButtons(currentPage, thele)
+  const navigationButtons = createNavigationButtons(currentPage)
   const githubLabel = asText(thele?.invite?.github, 'GitHub')
   const supportLabel = asText(thele?.invite?.supportServer, 'Support')
   const heroContent = [
     `## [${notes.version}] - ${notes.date}`,
     notes.summary
   ].join('\n')
-  const highlightsContent = `**Highlights**\n${createBulletList(notes.highlights)}`
 
   return new Container({
     components: [
@@ -255,10 +196,6 @@ function createChangelogPage(
           {
             type: 10,
             content: heroContent
-          },
-          {
-            type: 10,
-            content: highlightsContent
           }
         ],
         accessory: {
@@ -267,15 +204,11 @@ function createChangelogPage(
         }
       },
       { type: 14, divider: true, spacing: 1 },
-      createReleaseBlock('Added', notes.added),
-      { type: 14, divider: true, spacing: 1 },
       createReleaseBlock('Changed', notes.changed),
       { type: 14, divider: true, spacing: 1 },
       createReleaseBlock('Fixed', notes.fixed),
       { type: 14, divider: true, spacing: 1 },
-      createReleaseBlock('Removed', notes.removed),
-      { type: 14, divider: true, spacing: 1 },
-      createReleaseBlock('GitHub', notes.github),      
+      createReleaseBlock('GitHub', notes.github),
       { type: 14, divider: true, spacing: 2 },
       {
         type: 1,
@@ -303,7 +236,7 @@ function createChangelogPage(
 function createCommitsPage(
   ctx: PageContextLike,
   commits: GithubCommit[],
-  thele: ChangelogTextLike,
+  thele: Translations,
   currentPage: 'changelog' | 'commits' = 'commits'
 ): Container {
   const githubLabel = asText(thele?.invite?.github, 'GitHub')
@@ -322,7 +255,7 @@ function createCommitsPage(
     .join('\n')
 
   const description = `## Recent Commits\n${commitsText}`
-  const navigationButtons = createNavigationButtons(currentPage, thele)
+  const navigationButtons = createNavigationButtons(currentPage)
 
   return new Container({
     components: [
@@ -374,12 +307,9 @@ function createCommitsPage(
   })
 }
 
-function createNavigationButtons(
-  currentPage: 'changelog' | 'commits',
-  thele: ChangelogTextLike
-) {
-  const changelog = asText(thele?.changelog, 'Changelog')
-  const commits = asText(thele?.commits, 'Commits')
+function createNavigationButtons(currentPage: 'changelog' | 'commits') {
+  const changelog = 'Changelog'
+  const commits = 'Commits'
 
   return {
     type: 1,
@@ -415,16 +345,26 @@ function createNavigationButtons(
 @Cooldown.user(60000, { uses: 2 })
 @Middlewares(['cooldown'])
 export default class Changelog extends Command {
-  private activeCollectors = new WeakSet<object>()
-
   public override async run(ctx: CommandContext): Promise<void> {
     const lang = getContextLanguage(ctx)
-    const thele = ctx.t.get(lang) as unknown as ChangelogTextLike
+    const thele = ctx.t.get(lang)
 
     try {
-      if (!(await safeDefer(ctx, true))) return
+      if (!(await safeDefer(ctx, true))) {
+        return
+      }
 
-      const commits = await fetchCommits()
+      // The commits page is optional: a GitHub 403 (rate limit) must not
+      // block the changelog page itself. The loader keeps working with an
+      // empty commits list and the Commits button shows an empty page.
+      const commits = await fetchCommits().catch((error: unknown) => {
+        console.warn(
+          `Changelog: commits unavailable, showing changelog only: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+        return [] as GithubCommit[]
+      })
 
       // Start with changelog page
       const changelogContainer = createChangelogPage(ctx, thele, 'changelog')
@@ -438,12 +378,7 @@ export default class Changelog extends Command {
       )
 
       // Set up button interaction handler
-      this.setupNavigationHandler(
-        message as unknown as ChangelogMessageLike,
-        ctx,
-        commits as unknown as GithubCommit[],
-        thele
-      )
+      this.setupNavigationHandler(message, ctx, commits, thele)
     } catch (error) {
       console.error('Changelog error:', error)
 
@@ -455,13 +390,13 @@ export default class Changelog extends Command {
         )
         .addFields([
           {
-            name: asText(thele?.github?.title, 'GitHub'),
-            value: `[${asText(thele?.github?.label, 'Repository')}](${CONFIG.GITHUB.REPO_URL})`,
+            name: 'GitHub',
+            value: `[Repository](${CONFIG.GITHUB.REPO_URL})`,
             inline: true
           },
           {
-            name: asText(thele?.supportServer?.title, 'Support'),
-            value: `[${asText(thele?.supportServer?.label, 'Open Issue')}](${CONFIG.GITHUB.ISSUES_URL})`,
+            name: 'Support',
+            value: `[Open Issue](${CONFIG.GITHUB.ISSUES_URL})`,
             inline: true
           }
         ])
@@ -471,34 +406,31 @@ export default class Changelog extends Command {
         })
 
       await ctx.editOrReply({
-        embeds: [errorEmbed as unknown as Embed]
+        embeds: [errorEmbed]
       })
     }
   }
 
   private setupNavigationHandler(
-    message: ChangelogMessageLike,
+    message: Message | WebhookMessage,
     ctx: CommandContext,
     commits: GithubCommit[],
-    thele: ChangelogTextLike
+    thele: Translations
   ): void {
     const collector = message.createComponentCollector({
       filter: (i: { user: { id: string } }) =>
         i.user.id === ctx.interaction.user.id,
       idle: 300000, // 5 minutes timeout
       onStop: () => {
-        this.activeCollectors.delete(collector)
         message.edit({ components: [] }).catch(() => {})
       }
     })
 
-    this.activeCollectors.add(collector)
-
     collector.run(
       'ignore_changelog_page',
-      async (interaction: ChangelogInteractionLike) => {
+      async (interaction: ButtonInteraction) => {
         try {
-          await interaction.deferUpdate?.()
+          await interaction.deferUpdate()
           const changelogContainer = createChangelogPage(
             interaction,
             thele,
@@ -517,7 +449,7 @@ export default class Changelog extends Command {
 
     collector.run(
       'ignore_commits_page',
-      async (interaction: ChangelogInteractionLike) => {
+      async (interaction: ButtonInteraction) => {
         try {
           await interaction.deferUpdate?.()
           const commitsContainer = createCommitsPage(

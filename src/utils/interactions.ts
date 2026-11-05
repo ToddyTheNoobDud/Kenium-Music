@@ -5,23 +5,25 @@ import type {
 } from '../shared/helperTypes.ts'
 
 type DeferableContext = {
-  deferReply: unknown
-  deferred?: unknown
+  deferReply:
+    | ((ephemeral?: boolean) => Promise<unknown>)
+    | ((flags?: number) => Promise<unknown>)
+  deferred?: boolean
   interaction?: {
-    replied?: unknown
+    replied?: boolean
   }
-  replied?: unknown
+  replied?: boolean
 }
 
 type RawInteractionLike = DeferableContext & {
-  deferReply?: (flags?: number, withResponse?: boolean) => Promise<unknown>
+  deferReply: (flags?: number, withResponse?: boolean) => Promise<unknown>
   interaction?: undefined
 }
 
 type WrappedContextLike = DeferableContext & {
-  deferReply?: (ephemeral?: boolean, withResponse?: boolean) => Promise<unknown>
+  deferReply: (ephemeral?: boolean, withResponse?: boolean) => Promise<unknown>
   interaction?: {
-    replied?: unknown
+    replied?: boolean
   }
 }
 
@@ -34,7 +36,7 @@ type VoiceContext = {
   user?: { id?: string | null | undefined }
   interaction?: {
     user?: { id?: string | null | undefined }
-    replied?: unknown
+    replied?: boolean
   }
   client?: unknown
   [MEMBER_VOICE_STATE]?: VoiceStateLike | null
@@ -45,11 +47,10 @@ export const getErrorCode = (error: unknown) =>
     ? (error as { code?: unknown }).code
     : undefined
 
-export const hasErrorCode = (error: unknown, code: string | number) =>
-  getErrorCode(error) === code
-
 const getErrorDetail = (error: unknown) => {
-  if (typeof error !== 'object' || error === null) return ''
+  if (typeof error !== 'object' || error === null) {
+    return ''
+  }
 
   const metadata =
     'metadata' in error
@@ -90,14 +91,13 @@ export const isInteractionExpired = (error: unknown) => {
 const EPHEMERAL_FLAG = 64
 
 const getDeferFlags = (option: DeferReplyOptionsLike): number | undefined => {
-  if (typeof option === 'boolean') return option ? EPHEMERAL_FLAG : undefined
-  if (typeof option === 'number') return option || undefined
-  if (typeof option === 'object' && option !== null && 'flags' in option) {
-    return typeof option.flags === 'number'
-      ? option.flags || undefined
-      : undefined
+  if (typeof option === 'boolean') {
+    return option ? EPHEMERAL_FLAG : undefined
   }
-  return undefined
+  if (typeof option === 'number') {
+    return option || undefined
+  }
+  return option.flags || undefined
 }
 
 const getDeferEphemeral = (option: DeferReplyOptionsLike): boolean =>
@@ -107,22 +107,30 @@ export const safeDefer = async (
   ctx: DeferableContext,
   option: DeferReplyOptionsLike = false
 ): Promise<boolean> => {
-  if (!ctx.interaction && ctx.deferred) return true
-  if (ctx.replied) return true
-  if (ctx.interaction?.replied) return true
-
-  if (typeof ctx.deferReply !== 'function') return false
+  if (!ctx.interaction && ctx.deferred) {
+    return true
+  }
+  if (ctx.replied) {
+    return true
+  }
+  if (ctx.interaction?.replied) {
+    return true
+  }
 
   try {
     if (ctx.interaction !== undefined) {
-      await (ctx as WrappedContextLike).deferReply?.(getDeferEphemeral(option))
+      await (ctx as WrappedContextLike).deferReply(getDeferEphemeral(option))
     } else {
-      await (ctx as RawInteractionLike).deferReply?.(getDeferFlags(option))
+      await (ctx as RawInteractionLike).deferReply(getDeferFlags(option))
     }
     return true
   } catch (error) {
-    if (isInteractionExpired(error)) return false
-    if (isInteractionAlreadyHandled(error)) return true
+    if (isInteractionAlreadyHandled(error)) {
+      return true
+    }
+    if (isInteractionExpired(error)) {
+      return false
+    }
     throw error
   }
 }
@@ -130,67 +138,17 @@ export const safeDefer = async (
 export const getMemberVoiceState = async (
   ctx: VoiceContext
 ): Promise<VoiceStateLike | null> => {
-  if (MEMBER_VOICE_STATE in ctx) return ctx[MEMBER_VOICE_STATE] ?? null
+  if (MEMBER_VOICE_STATE in ctx) {
+    return ctx[MEMBER_VOICE_STATE] ?? null
+  }
 
   let voiceState: VoiceStateLike | null = null
   try {
-    if (typeof ctx.member?.voice === 'function') {
-      voiceState = (await ctx.member.voice('flow')) ?? null
-    }
+    voiceState = (await ctx.member?.voice('flow')) ?? null
   } catch {
     voiceState = null
   }
 
-  if (!voiceState?.channelId && typeof ctx.member?.voice === 'function') {
-    try {
-      voiceState = (await ctx.member.voice('cache')) ?? null
-    } catch {
-      voiceState = null
-    }
-  }
-
-  if (!voiceState?.channelId) {
-    const userId =
-      ctx.author?.id || ctx.user?.id || ctx.interaction?.user?.id || null
-    const guildId = ctx.guildId || null
-    const voiceStates = (
-      ctx.client as
-        | {
-            cache?: {
-              voiceStates?: {
-                get?: (
-                  userId: string,
-                  guildId: string
-                ) => VoiceStateLike | null | undefined
-              }
-            }
-          }
-        | undefined
-    )?.cache?.voiceStates
-
-    if (userId && guildId && typeof voiceStates?.get === 'function') {
-      try {
-        voiceState = voiceStates.get(userId, guildId) ?? null
-      } catch {
-        voiceState = null
-      }
-    }
-  }
-
   ctx[MEMBER_VOICE_STATE] = voiceState ?? null
   return ctx[MEMBER_VOICE_STATE] ?? null
-}
-
-const SILENT_DISCORD_CODES: (string | number)[] = [10065, 10008, 10062, 10015]
-
-export const withDiscordErrorGuard = <T>(
-  fn: () => Promise<T>,
-  silentCodes: (string | number)[] = SILENT_DISCORD_CODES
-): Promise<T | undefined> => {
-  return fn().catch((error) => {
-    const code = getErrorCode(error)
-    if (code != null && silentCodes.includes(code as string | number))
-      return undefined
-    throw error
-  })
 }

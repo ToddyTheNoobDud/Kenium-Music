@@ -1,11 +1,6 @@
-import {
-  getDatabase,
-  getPlaylistsCollection,
-  getTracksCollection
-} from './collections.ts'
+import { getDatabase, getTracksCollection } from './collections.ts'
 import { migrateDatabase } from './migration.ts'
 
-let _initialized = false
 let initPromise: Promise<void> | null = null
 
 export {
@@ -15,25 +10,19 @@ export {
   getTracksCollection
 } from './collections.ts'
 
-export async function initDatabase(): Promise<void> {
-  if (_initialized) return
-  if (initPromise) return initPromise
-
-  initPromise = (async () => {
-    await migrateDatabase()
-    _initialized = true
-  })().catch((err) => {
-    initPromise = null
-    throw err
-  })
-
+export function initDatabase(): Promise<void> {
+  if (!initPromise) {
+    initPromise = migrateDatabase().catch((error) => {
+      initPromise = null
+      throw error
+    })
+  }
   return initPromise
 }
 
 export function closeDatabase(): void {
   const db = getDatabase()
   db.close()
-  _initialized = false
   initPromise = null
 }
 
@@ -46,12 +35,4 @@ export function getPlaylistTracks(
     { playlistId },
     { ...options, sort: { addedAt: 1, _id: 1 } }
   )
-}
-
-export async function getPlaylistWithTracks(userId: string, name: string) {
-  const playlists = getPlaylistsCollection()
-  const playlist = playlists.findOne({ userId, name })
-  if (!playlist) return null
-  const tracks = getPlaylistTracks(playlist._id as string)
-  return { ...playlist, tracks: tracks || [] }
 }

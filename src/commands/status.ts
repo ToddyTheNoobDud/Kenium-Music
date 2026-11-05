@@ -7,7 +7,7 @@ import {
   Embed,
   Middlewares
 } from 'seyfert'
-import { state } from '../../index.ts'
+import { presenceState as state } from '../events/botReady.ts'
 
 const CPU_CACHE = {
   model: cpus()[0]?.model.replace(/®|™/g, '').trim().split('@') || [],
@@ -20,16 +20,6 @@ const BANNER_CACHE = {
   lastFetch: 0,
   ttl: 7 * 24 * 60 * 60 * 1000 // 7 days
 }
-
-type StatusClientLike = CommandContext['client'] & {
-  me?: {
-    fetch?: () => Promise<{
-      bannerURL?: (options?: { size?: number }) => string | null
-    } | null>
-  }
-}
-
-type NodeStatsLike = { players?: number; playingPlayers?: number }
 
 function formatDates(totalSeconds: number): string {
   const SECONDS_IN_DAY = 86400
@@ -65,7 +55,9 @@ function formatMemoryUsage(bytes: number): string {
   return `${bytes.toFixed(2)} ${units[i]}`
 }
 
-async function getBannerURL(client: StatusClientLike): Promise<string | null> {
+async function getBannerURL(
+  client: CommandContext['client']
+): Promise<string | null> {
   if (client.me?.banner) {
     return client.me.bannerURL?.({ extension: 'webp', size: 4096 }) || null
   }
@@ -103,7 +95,9 @@ async function getBannerURL(client: StatusClientLike): Promise<string | null> {
 export default class statusCmds extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     const { client } = ctx
-    if (!ctx.deferred) await ctx.deferReply()
+    if (!ctx.deferred) {
+      await ctx.deferReply()
+    }
 
     const now = Date.now()
     if (now - CPU_CACHE.lastCheck > 5000) {
@@ -114,12 +108,14 @@ export default class statusCmds extends Command {
     const nodes = [...client.aqua.nodeMap.values()]
 
     const sortedNodes = [...nodes].sort((a, b) => {
-      if (a.connected !== b.connected) return a.connected ? -1 : 1
+      if (a.connected !== b.connected) {
+        return a.connected ? -1 : 1
+      }
       return (a.options?.name || '').localeCompare(b.options?.name || '')
     })
 
     const activeNode = sortedNodes.find((node) => node.connected)
-    const stats = (activeNode?.stats || {}) as NodeStatsLike
+    const stats = activeNode?.stats || {}
     const { players: totalPlayers = 0, playingPlayers = 0 } = stats
 
     const guildCount = client.cache.guilds?.count() ?? 0
@@ -133,13 +129,12 @@ export default class statusCmds extends Command {
     }
     const memory = process.memoryUsage()
     const gatewayLatency = client.gateway.latency
-    const pingText =
-      typeof gatewayLatency === 'number' && Number.isFinite(gatewayLatency)
-        ? `${Math.round(gatewayLatency)}ms`
-        : '…'
+    const pingText = Number.isFinite(gatewayLatency)
+      ? `${Math.round(gatewayLatency)}ms`
+      : '…'
 
     // Use cached banner URL
-    const bannerURL = await getBannerURL(client as StatusClientLike)
+    const bannerURL = await getBannerURL(client)
 
     const embed = new Embed()
       .setColor(0x100e09)

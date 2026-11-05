@@ -20,7 +20,9 @@ export default class shuffleCmds extends Command {
       const { client } = ctx
 
       const player = client.aqua.players.get(ctx.guildId as string)
-      if (!player) return
+      if (!player) {
+        return
+      }
 
       player.shuffle()
 
@@ -31,7 +33,10 @@ export default class shuffleCmds extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

@@ -29,7 +29,7 @@ export default class skipCmds extends Command {
         })
         return
       }
-      player.skip()
+      await player.skip()
 
       await ctx.editOrReply({
         embeds: [
@@ -38,7 +38,10 @@ export default class skipCmds extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

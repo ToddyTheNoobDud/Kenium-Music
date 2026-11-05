@@ -15,7 +15,9 @@ export const findLyrics = async (
 ): Promise<LyricsResult | null> => {
   const primary = await lrclib.findLyrics(query, hints, opts).catch(() => null)
   if (opts?.requireSynced) {
-    if (primary?.lines?.length) return primary
+    if (primary?.lines?.length) {
+      return primary
+    }
   } else if (primary?.text || primary?.lines?.length) {
     return primary
   }

@@ -1,6 +1,12 @@
-import { Command, type CommandContext, Container, Declare } from 'seyfert'
+import {
+  type ButtonInteraction,
+  Command,
+  type CommandContext,
+  Container,
+  Declare
+} from 'seyfert'
 import { EMBED_COLOR } from '../shared/constants.ts'
-import type { InteractionLike } from '../shared/helperTypes.ts'
+import type { Translations } from '../utils/i18n.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 import { safeDefer } from '../utils/interactions.ts'
 
@@ -10,14 +16,6 @@ const EPHEMERAL_FLAG = 64 | 32768
 type CommandLike = {
   name: string
   description?: string
-}
-
-type HelpTextLike = {
-  commands?: Record<string, { description?: string } | undefined>
-  help?: {
-    previous?: string
-    next?: string
-  }
 }
 
 type HelpCategoryId =
@@ -56,25 +54,6 @@ type DividerComponent = {
   type: 14
   divider: true
   spacing: 1 | 2
-}
-
-type HelpInteractionLike = InteractionLike & {
-  isButton: () => boolean
-  update: (payload: { components: Container[] }) => Promise<unknown>
-}
-
-type HelpMessageLike = {
-  edit: (payload: { components: Container[] }) => Promise<unknown>
-  createComponentCollector: (options: {
-    filter: (interaction: HelpInteractionLike) => boolean
-    idle: number
-    onStop: () => Promise<void> | void
-  }) => {
-    run: (
-      customId: string,
-      handler: (interaction: HelpInteractionLike) => Promise<void>
-    ) => void
-  }
 }
 
 const HELP_CATEGORIES: HelpCategory[] = [
@@ -158,7 +137,9 @@ const CATEGORY_COMMANDS: Record<
 
 const getCategory = (id: HelpCategoryId) => {
   const category = HELP_CATEGORIES.find((entry) => entry.id === id)
-  if (category) return category
+  if (category) {
+    return category
+  }
 
   return {
     id: 'start',
@@ -173,10 +154,12 @@ const getCategory = (id: HelpCategoryId) => {
 })
 export default class HelpCommand extends Command {
   public override async run(ctx: CommandContext) {
-    if (!(await safeDefer(ctx, true))) return
+    if (!(await safeDefer(ctx, true))) {
+      return
+    }
 
     const lang = getContextLanguage(ctx)
-    const t = ctx.t.get(lang) as unknown as HelpTextLike
+    const t = ctx.t.get(lang)
     const commands = Array.from(
       ctx.client.commands.values as Iterable<CommandLike>
     ).sort((a: CommandLike, b: CommandLike) => a.name.localeCompare(b.name))
@@ -201,14 +184,13 @@ export default class HelpCommand extends Command {
       t
     )
 
-    const message = (await ctx.editOrReply(
+    const message = await ctx.editOrReply(
       { components: [container], flags: EPHEMERAL_FLAG },
       true
-    )) as HelpMessageLike
+    )
 
     const collector = message.createComponentCollector({
-      filter: (i: HelpInteractionLike) =>
-        i.user.id === ctx.author.id && i.isButton(),
+      filter: (i) => i.user.id === ctx.author.id && i.isButton(),
       idle: 60_000,
       onStop: async () => {
         const disabled = this._buildContainer(
@@ -227,7 +209,7 @@ export default class HelpCommand extends Command {
     for (const entry of HELP_CATEGORIES) {
       collector.run(
         `ignore_help_cat_${entry.id}`,
-        async (i: HelpInteractionLike) => {
+        async (i: ButtonInteraction) => {
           category = entry.id
           page = 0
           const updated = this._buildContainer(
@@ -243,7 +225,7 @@ export default class HelpCommand extends Command {
       )
     }
 
-    collector.run('ignore_help_prev', async (i: HelpInteractionLike) => {
+    collector.run('ignore_help_prev', async (i: ButtonInteraction) => {
       page = Math.max(page - 1, 0)
       const updated = this._buildContainer(
         commands,
@@ -256,7 +238,7 @@ export default class HelpCommand extends Command {
       await i.update({ components: [updated] })
     })
 
-    collector.run('ignore_help_next', async (i: HelpInteractionLike) => {
+    collector.run('ignore_help_next', async (i: ButtonInteraction) => {
       const totalPages = this._getTotalPages(commands, category)
       page = Math.min(page + 1, totalPages - 1)
       const updated = this._buildContainer(
@@ -291,11 +273,11 @@ export default class HelpCommand extends Command {
   private _formatCommandEntry(
     command: CommandLike,
     commandMap: Map<string, string>,
-    t: HelpTextLike
+    t: Translations
   ) {
     const name = command.name || 'unknown'
     const description =
-      t.commands?.[name]?.description ||
+      t.commands[name as keyof Translations['commands']]?.description ||
       command.description ||
       'No description available.'
 
@@ -323,7 +305,7 @@ export default class HelpCommand extends Command {
   private _buildPaginationRow(
     page: number,
     totalPages: number,
-    t: HelpTextLike,
+    t: Translations,
     disabled: boolean
   ): ActionRowComponent {
     return {
@@ -353,7 +335,7 @@ export default class HelpCommand extends Command {
     category: HelpCategoryId,
     page: number,
     _ctx: CommandContext,
-    t: HelpTextLike,
+    t: Translations,
     disabled = false
   ) {
     const currentCategory = getCategory(category)

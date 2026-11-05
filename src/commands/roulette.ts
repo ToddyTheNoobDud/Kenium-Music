@@ -6,6 +6,7 @@ import {
   Middlewares
 } from 'seyfert'
 import { getContextLanguage } from '../utils/i18n.ts'
+import { safeDefer } from '../utils/interactions.ts'
 
 @Declare({
   name: 'roulette',
@@ -20,13 +21,17 @@ export default class roulettecmds extends Command {
       const t = ctx.t.get(lang)
 
       const guildId = ctx.guildId
-      if (!guildId) return
+      if (!guildId) {
+        return
+      }
 
       const player = ctx.client.aqua.players.get(guildId)
-      if (!player) return
+      if (!player) {
+        return
+      }
 
       const queue = player?.queue
-      if (!queue || queue.length === 0) {
+      if (queue.size === 0) {
         return ctx.write({
           embeds: [
             new Embed()
@@ -37,32 +42,26 @@ export default class roulettecmds extends Command {
         })
       }
 
-      const randomIndex = Math.floor(Math.random() * queue.length)
-      const randomTrack = queue[randomIndex]
-
-      if (randomTrack && queue.splice) {
-        queue.splice(randomIndex, 1)
-        ;(
-          queue as typeof queue & {
-            unshift?: (track: typeof randomTrack) => void
-          }
-        ).unshift?.(randomTrack)
+      const tracks = queue.toArray()
+      const randomIndex = Math.floor(Math.random() * tracks.length)
+      const randomTrack = tracks.splice(randomIndex, 1)[0]
+      if (!randomTrack) {
+        return
       }
-
-      if (player.playing || player.paused) {
-        player.stop()
+      if (!(await safeDefer(ctx, true))) {
+        return
       }
+      tracks.unshift(randomTrack)
+      queue.clear()
+      queue.add(...tracks)
 
-      setTimeout(() => {
-        if (!player.playing && !player.paused && player.queue.size > 0) {
-          player.play().catch(() => {})
-        }
-      }, 100)
+      await player.stop()
+      await player.play()
 
       const trackTitle = randomTrack?.info?.title || 'Unknown Track'
       const trackAuthor = randomTrack?.info?.author || 'Unknown Artist'
 
-      return ctx.write({
+      return ctx.editOrReply({
         embeds: [
           new Embed()
             .setDescription(
@@ -72,7 +71,7 @@ export default class roulettecmds extends Command {
             )
             .setColor(0x00ff00)
             .setFooter({
-              text: `Position: ${randomIndex + 1}/${queue.length + 1}`
+              text: `Position: ${randomIndex + 1}/${queue.size + 1}`
             })
         ],
         flags: 64
@@ -82,7 +81,7 @@ export default class roulettecmds extends Command {
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
 
-      return ctx.write({
+      return ctx.editOrReply({
         embeds: [
           new Embed()
             .setDescription(`❌ ${t.roulette.error}`)

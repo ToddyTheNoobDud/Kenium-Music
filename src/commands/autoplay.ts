@@ -21,10 +21,14 @@ export default class autoPlaycmd extends Command {
       const t = ctx.t.get(lang)
 
       const guildId = ctx.guildId
-      if (!guildId) return
+      if (!guildId) {
+        return
+      }
 
       const player = client.aqua.players.get(guildId)
-      if (!player) return
+      if (!player) {
+        return
+      }
       const newState = !player.isAutoplayEnabled
       player.setAutoplay(newState)
 
@@ -44,7 +48,10 @@ export default class autoPlaycmd extends Command {
 
       await ctx.editOrReply({ embeds: [embed], flags: 64 })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

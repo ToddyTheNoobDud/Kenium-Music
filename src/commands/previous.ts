@@ -20,10 +20,14 @@ export default class previoiusCmds extends Command {
       const { client } = ctx
 
       const guildId = ctx.guildId
-      if (!guildId) return
+      if (!guildId) {
+        return
+      }
 
       const player = client.aqua.players.get(guildId)
-      if (!player) return
+      if (!player) {
+        return
+      }
 
       const playedPrevious = await playPreviousTrack(player)
 
@@ -42,7 +46,10 @@ export default class previoiusCmds extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

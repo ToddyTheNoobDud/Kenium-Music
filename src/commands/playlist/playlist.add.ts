@@ -25,36 +25,11 @@ import {
 } from '../../utils/db.ts'
 import { getContextTranslations } from '../../utils/i18n.ts'
 import { safeDefer } from '../../utils/interactions.ts'
-import {
-  calculatePlaylistAggregate,
-  playlistLockKey,
-  withPlaylistMutationLock
-} from '../../utils/playlistMutations.ts'
+import { calculatePlaylistAggregate } from '../../utils/playlistMutations.ts'
 import { generateSortableId } from '../../utils/simpleDB.ts'
 
 const playlistsCol = () => getPlaylistsCollection()
 const tracksCol = () => getTracksCollection()
-
-type PlaylistAddTextLike = {
-  notFound?: string
-  notFoundDesc?: string
-  full?: string
-  fullDesc?: string
-  nothingAdded?: string
-  nothingAddedDesc?: string
-  addFailed?: string
-  addFailedDesc?: string
-  tracksAdded?: string
-  trackAdded?: string
-  tracks?: string
-  track?: string
-  artist?: string
-  source?: string
-  added?: string
-  total?: string
-  duration?: string
-  playNow?: string
-}
 
 type ResolvedTrackLike = {
   info?: {
@@ -99,9 +74,13 @@ export const _functions = {
       .filter(Boolean),
   canonicalizeUri: (uri: string): string => {
     const ytId = extractYouTubeId(uri)
-    if (ytId) return `youtube:${ytId}`
+    if (ytId) {
+      return `youtube:${ytId}`
+    }
     const s = uri.match(SPOTIFY_TRACK_RE)
-    if (s) return `spotify:${s[1]}`
+    if (s) {
+      return `spotify:${s[1]}`
+    }
     try {
       const u = new URL(uri)
       u.search = ''
@@ -119,17 +98,10 @@ export const _functions = {
 })
 @Options(options)
 export class AddCommand extends SubCommand {
-  async run(ctx: CommandContext) {
-    const { playlist: playlistName, tracks: rawQuery } = ctx.options as {
-      playlist: string
-      tracks: string
-    }
+  async run(ctx: CommandContext<typeof options>) {
+    const { playlist: playlistName, tracks: rawQuery } = ctx.options
     const userId = ctx.author.id
-    const t = (
-      getContextTranslations(ctx) as {
-        playlist?: { add?: PlaylistAddTextLike }
-      }
-    ).playlist?.add
+    const t = getContextTranslations(ctx).playlist.add
 
     const playlistDb = playlistsCol().findOne(
       {
@@ -161,7 +133,9 @@ export class AddCommand extends SubCommand {
 
     const availableSlots = LIMITS.MAX_TRACKS
 
-    if (!(await safeDefer(ctx, true))) return
+    if (!(await safeDefer(ctx, true))) {
+      return
+    }
 
     const timestamp = new Date().toISOString()
     const existingCanonical = new Set<string>()
@@ -174,9 +148,13 @@ export class AddCommand extends SubCommand {
 
     const pushTrack = (track: ResolvedTrackLike) => {
       const uri = track.info?.uri
-      if (!uri || toAdd.length >= availableSlots) return
+      if (!uri || toAdd.length >= availableSlots) {
+        return
+      }
       const canonical = _functions.canonicalizeUri(uri)
-      if (existingCanonical.has(canonical)) return
+      if (existingCanonical.has(canonical)) {
+        return
+      }
 
       const newTrack: Track = {
         _id: generateSortableId(),
@@ -204,20 +182,32 @@ export class AddCommand extends SubCommand {
         query,
         requester: ctx.author
       })
-      if (!res) return
+      if (!res) {
+        return
+      }
       const type = _functions.normalizeLoadType(res.loadType)
-      if (type === 'LOAD_FAILED' || type === 'NO_MATCHES') return
+      if (type === 'LOAD_FAILED' || type === 'NO_MATCHES') {
+        return
+      }
       const tracks = Array.isArray(res.tracks) ? res.tracks : []
-      if (tracks.length === 0) return
+      if (tracks.length === 0) {
+        return
+      }
       const isPlaylist = type.includes('PLAYLIST') || !!res.playlistInfo
       if (isPlaylist) {
         for (const tr of tracks) {
-          if (toAdd.length >= availableSlots) break
-          if (tr) pushTrack(tr as ResolvedTrackLike)
+          if (toAdd.length >= availableSlots) {
+            break
+          }
+          if (tr) {
+            pushTrack(tr as ResolvedTrackLike)
+          }
         }
         return
       }
-      if (tracks[0]) pushTrack(tracks[0] as ResolvedTrackLike)
+      if (tracks[0]) {
+        pushTrack(tracks[0] as ResolvedTrackLike)
+      }
     }
 
     try {
@@ -230,7 +220,9 @@ export class AddCommand extends SubCommand {
           uniqueTokens,
           limit,
           async (token) => {
-            if (toAdd.length >= availableSlots) return
+            if (toAdd.length >= availableSlots) {
+              return
+            }
             await resolveOne(token)
           },
           () => toAdd.length >= availableSlots
@@ -256,53 +248,56 @@ export class AddCommand extends SubCommand {
       let aggregate = { trackCount: 0, totalDuration: 0 }
 
       try {
-        const mutationResult = await withPlaylistMutationLock(
-          playlistLockKey(userId, playlistName),
-          () => {
-            const currentPlaylist = playlistsCol().findOne(
-              { userId, name: playlistName },
-              { fields: ['_id'] }
-            )
-            if (!currentPlaylist) return 'not-found' as const
-
-            const existingRows = tracksCol().find(
-              { playlistId: currentPlaylist._id },
-              { fields: ['uri'] }
-            )
-            const committedCanonical = new Set(
-              existingRows.map((track) => _functions.canonicalizeUri(track.uri))
-            )
-            const slots = Math.max(0, LIMITS.MAX_TRACKS - existingRows.length)
-            committedTracks = toAdd
-              .filter((track) => {
-                const canonical = _functions.canonicalizeUri(track.uri)
-                if (committedCanonical.has(canonical)) return false
-                committedCanonical.add(canonical)
-                return true
-              })
-              .slice(0, slots)
-              .map((track) => ({
-                ...track,
-                playlistId: currentPlaylist._id
-              }))
-            if (committedTracks.length === 0) return 'nothing-added' as const
-
-            getDatabase().transaction(() => {
-              tracksCol().insert(committedTracks)
-              aggregate = calculatePlaylistAggregate(
-                tracksCol().find(
-                  { playlistId: currentPlaylist._id },
-                  { fields: ['duration'] }
-                )
-              )
-              playlistsCol().update(
-                { _id: currentPlaylist._id },
-                { lastModified: timestamp, ...aggregate }
-              )
-            })
-            return 'added' as const
+        const mutationResult = (() => {
+          const currentPlaylist = playlistsCol().findOne(
+            { userId, name: playlistName },
+            { fields: ['_id'] }
+          )
+          if (!currentPlaylist) {
+            return 'not-found' as const
           }
-        )
+
+          const existingRows = tracksCol().find(
+            { playlistId: currentPlaylist._id },
+            { fields: ['uri'] }
+          )
+          const committedCanonical = new Set(
+            existingRows.map((track) => _functions.canonicalizeUri(track.uri))
+          )
+          const slots = Math.max(0, LIMITS.MAX_TRACKS - existingRows.length)
+          committedTracks = toAdd
+            .filter((track) => {
+              const canonical = _functions.canonicalizeUri(track.uri)
+              if (committedCanonical.has(canonical)) {
+                return false
+              }
+              committedCanonical.add(canonical)
+              return true
+            })
+            .slice(0, slots)
+            .map((track) => ({
+              ...track,
+              playlistId: currentPlaylist._id
+            }))
+          if (committedTracks.length === 0) {
+            return 'nothing-added' as const
+          }
+
+          getDatabase().transaction(() => {
+            tracksCol().insert(committedTracks)
+            aggregate = calculatePlaylistAggregate(
+              tracksCol().find(
+                { playlistId: currentPlaylist._id },
+                { fields: ['duration'] }
+              )
+            )
+            playlistsCol().update(
+              { _id: currentPlaylist._id },
+              { lastModified: timestamp, ...aggregate }
+            )
+          })
+          return 'added' as const
+        })()
         if (mutationResult !== 'added') {
           return ctx.editOrReply({
             embeds: [

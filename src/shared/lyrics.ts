@@ -33,10 +33,14 @@ const stripTrackIndexPrefix = (value: string | undefined) =>
     .trim()
 
 const safeNumber = (value: unknown) => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
   if (typeof value === 'string' && value.trim() !== '') {
     const parsed = Number(value)
-    if (Number.isFinite(parsed)) return parsed
+    if (Number.isFinite(parsed)) {
+      return parsed
+    }
   }
   return undefined
 }
@@ -54,15 +58,25 @@ const similarity = (left: string | undefined, right: string | undefined) => {
   const a = normalize(left)
   const b = normalize(right)
 
-  if (!a || !b) return 0
-  if (a === b) return 1
-  if (a.includes(b) || b.includes(a)) return 0.9
+  if (!a || !b) {
+    return 0
+  }
+  if (a === b) {
+    return 1
+  }
+  if (a.includes(b) || b.includes(a)) {
+    return 0.9
+  }
 
   const aTokens = new Set(a.split(' ').filter(Boolean))
   const bTokens = new Set(b.split(' ').filter(Boolean))
   let common = 0
 
-  for (const token of aTokens) if (bTokens.has(token)) common++
+  for (const token of aTokens) {
+    if (bTokens.has(token)) {
+      common++
+    }
+  }
   return (2 * common) / (aTokens.size + bTokens.size)
 }
 
@@ -73,7 +87,9 @@ const sanitizeTrackTitle = (
   const cleanTitle = stripTrackIndexPrefix(safeText(title))
   const cleanArtist = safeText(artist)
 
-  if (!cleanTitle || !cleanArtist) return cleanTitle || cleanArtist
+  if (!cleanTitle || !cleanArtist) {
+    return cleanTitle || cleanArtist
+  }
 
   const parts = cleanTitle.split(/\s[-–—]\s/u).filter(Boolean)
   if (parts.length >= 2) {
@@ -95,7 +111,9 @@ const sanitizeTrackTitle = (
 export const extractLyricsSearchHints = (
   track: TrackLike | null | undefined
 ): LyricsSearchHints | undefined => {
-  if (!track) return undefined
+  if (!track) {
+    return undefined
+  }
 
   const info = track.info ?? undefined
   const artist = safeText(track.author) ?? safeText(info?.author)
@@ -130,7 +148,9 @@ export const lyricsTrackMatchesHints = (
   hints: LyricsSearchHints | undefined,
   track: MatchedLyricsTrack | undefined
 ): boolean => {
-  if (!hints?.title || !track?.title) return false
+  if (!hints?.title || !track?.title) {
+    return false
+  }
 
   const titleScore = similarity(hints.title, track.title)
   const artistScore =
@@ -145,7 +165,9 @@ export const pickLyricsArtwork = (
   track: MatchedLyricsTrack | undefined
 ): string | undefined => {
   const hintedArt = hints?.albumArt
-  if (!hintedArt) return track?.albumArt
+  if (!hintedArt) {
+    return track?.albumArt
+  }
 
   if (!searchQuery?.trim() || lyricsTrackMatchesHints(hints, track)) {
     return hintedArt

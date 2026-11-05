@@ -1,27 +1,18 @@
-import { randomBytes } from 'node:crypto'
-import { EventEmitter } from 'node:events'
+import { Database, type SQLQueryBindings, type Statement } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-/**
- * Minimal JSON types (to avoid `any`)
- */
 type JsonPrimitive = string | number | boolean | null
-export type JsonValue = JsonPrimitive | JsonValue[] | { [k: string]: JsonValue }
+export type JsonValue =
+  | JsonPrimitive
+  | JsonValue[]
+  | { [key: string]: JsonValue }
 
-/**
- * Query types (Mongo-like operators, minimal)
- */
 type QueryOps = Partial<{
-  $ne: JsonValue
-  $in: JsonValue[]
-  $nin: JsonValue[]
-  $gt: JsonPrimitive
-  $gte: JsonPrimitive
-  $lt: JsonPrimitive
-  $lte: JsonPrimitive
+  $ne: JsonPrimitive
+  $in: JsonPrimitive[]
 }>
-type QueryValue = JsonValue | undefined | QueryOps
+type QueryValue = JsonPrimitive | undefined | QueryOps
 type Query = Record<string, QueryValue>
 
 interface FindOptions {
@@ -32,341 +23,129 @@ interface FindOptions {
 }
 
 type Document = {
-  _id?: string
-  createdAt?: string
-  updatedAt?: string
+  _id: string
+  createdAt: string
+  updatedAt: string
 } & Record<string, JsonValue | undefined>
 
 interface AtomicUpdate {
   $set?: Record<string, JsonValue>
   $inc?: Record<string, number>
-  $push?: Record<string, JsonValue>
-  $pull?: Record<string, JsonValue>
 }
 
 interface SimpleDBOptions {
   dbPath?: string
-  cacheSize?: number
 }
 
 type ColumnType = 'TEXT' | 'INTEGER' | 'REAL'
 type SQLValue = string | number | null
 
-interface HotColumnDefinition {
-  type: ColumnType
-  path?: string
-  encode?: (value: unknown) => SQLValue
-  decode?: (value: unknown) => unknown
-}
-
 interface CollectionOptions {
-  cacheSize?: number
-  columns?: Record<string, ColumnType | HotColumnDefinition>
+  columns?: Record<string, ColumnType>
 }
-
-/**
- * Minimal SQLite driver typing (works for better-sqlite3 + bun:sqlite usage in this file)
- */
-type SQLiteRunResult = { changes: number }
-
-interface SQLiteStmt {
-  run(...params: unknown[]): SQLiteRunResult
-  get<T extends Record<string, unknown> = Record<string, unknown>>(
-    ...params: unknown[]
-  ): T | undefined
-  all<T extends Record<string, unknown> = Record<string, unknown>>(
-    ...params: unknown[]
-  ): T[]
-  finalize?: () => void
-}
-
-type TxRunner = <T>(fn: () => T) => T
-
-interface SQLiteDB {
-  prepare(sql: string): SQLiteStmt
-  close(): void
-
-  // better-sqlite3
-  pragma?: (p: string) => unknown
-  transaction?: (
-    fn: (fn: () => unknown) => unknown
-  ) => (fn: () => unknown) => unknown
-
-  // bun:sqlite (used for pragmas in this file)
-  run?: (sql: string) => unknown
-}
-
-type SQLiteCtor = new (path: string) => SQLiteDB
-
-const IS_BUN =
-  typeof (process as unknown as { isBun?: unknown }).isBun !== 'undefined'
-
-let detectedDriver: 'bun:sqlite' | 'better-sqlite3' | null = null
-
-const DatabaseCtor: SQLiteCtor | null = (() => {
-  try {
-    if (IS_BUN) {
-      const m: unknown = require('bun:sqlite')
-      const ctor = (m as { default?: unknown })?.default ?? m
-      detectedDriver = 'bun:sqlite'
-      return ctor as SQLiteCtor
-    }
-  } catch {}
-
-  try {
-    const m: unknown = require('better-sqlite3')
-    detectedDriver = 'better-sqlite3'
-    return m as SQLiteCtor
-  } catch {
-    detectedDriver = null
-    return null
-  }
-})()
-
-const SQLITE_DRIVER: 'bun:sqlite' | 'better-sqlite3' | null = (() => {
-  if (!DatabaseCtor) return null
-  return detectedDriver
-})()
 
 const VALID_NAME = /^[A-Za-z0-9_]+$/
 const VALID_PATH = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/
 
-function bytesToUuid(bytes: Uint8Array): string {
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-const _functions = {
-  now: () => new Date().toISOString(),
-
-  uuidV7: (): string => {
-    const bun = (
-      globalThis as unknown as {
-        Bun?: { randomUUIDv7?: () => string }
-      }
-    ).Bun
-
-    if (typeof bun?.randomUUIDv7 === 'function') {
-      return bun.randomUUIDv7()
-    }
-
-    const bytes = randomBytes(16)
-    const ts = BigInt(Date.now())
-
-    // 48-bit unix timestamp (milliseconds)
-    bytes[0] = Number((ts >> 40n) & 0xffn)
-    bytes[1] = Number((ts >> 32n) & 0xffn)
-    bytes[2] = Number((ts >> 24n) & 0xffn)
-    bytes[3] = Number((ts >> 16n) & 0xffn)
-    bytes[4] = Number((ts >> 8n) & 0xffn)
-    bytes[5] = Number(ts & 0xffn)
-
-    // version 7 (0b0111xxxx)
-    bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x70
-    // RFC 4122 variant (0b10xxxxxx)
-    bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80
-
-    return bytesToUuid(bytes)
-  },
-
-  generateId: (): string => _functions.uuidV7(),
-
-  isPlainObject: (v: unknown): v is Record<string, unknown> =>
-    !!v && typeof v === 'object' && !Array.isArray(v),
-
-  parseDoc: (raw: string): Document | null => {
-    try {
-      const doc: unknown = JSON.parse(raw)
-      return _functions.isPlainObject(doc) ? (doc as Document) : null
-    } catch {
-      return null
-    }
-  },
-
-  jsonPath: (key: string) => {
-    if (!VALID_PATH.test(key)) throw new Error(`Invalid field path: ${key}`)
-    return `$.${key}`
-  },
-
-  quoteIdent: (name: string) => `"${name.replace(/"/g, '""')}"`,
-
-  normalizeColumn: (
-    field: string,
-    def: ColumnType | HotColumnDefinition
-  ): HotColumnDefinition => {
-    const normalized =
-      typeof def === 'string'
-        ? { type: def, path: field }
-        : { ...def, path: def.path || field }
-
-    if (!VALID_NAME.test(field))
-      throw new Error(`Invalid column field name: ${field}`)
-    if (!VALID_PATH.test(normalized.path || ''))
-      throw new Error(`Invalid column path: ${normalized.path}`)
-
-    return normalized
-  },
-
-  columnSqlValue: (value: unknown, def: HotColumnDefinition): SQLValue => {
-    const encoded = def.encode ? def.encode(value) : value
-    if (encoded == null) return null
-
-    if (def.type === 'INTEGER') {
-      if (typeof encoded === 'boolean') return encoded ? 1 : 0
-      if (typeof encoded === 'number')
-        return Number.isFinite(encoded) ? encoded : 0
-      if (typeof encoded === 'string') {
-        const lowered = encoded.toLowerCase()
-        if (lowered === 'true') return 1
-        if (lowered === 'false') return 0
-        const num = Number(encoded)
-        return Number.isFinite(num) ? num : 0
-      }
-      return 0
-    }
-
-    if (def.type === 'REAL') {
-      const num = Number(encoded)
-      return Number.isFinite(num) ? num : 0
-    }
-
-    return typeof encoded === 'string' ? encoded : JSON.stringify(encoded)
-  },
-
-  decodeColumnValue: (value: unknown, def: HotColumnDefinition): unknown =>
-    def.decode ? def.decode(value) : value,
-
-  toJsonArgument: (value: unknown): string => {
-    const serialized = JSON.stringify(value)
-    return serialized === undefined ? 'null' : serialized
-  },
-
-  finalize: (stmt: SQLiteStmt | undefined) => {
-    try {
-      stmt?.finalize?.()
-    } catch {}
-  },
-
-  makeTxRunner: (db: SQLiteDB): TxRunner | null => {
-    try {
-      if (typeof db.transaction === 'function') {
-        const wrapped = db.transaction((fn: () => unknown) => fn())
-        return <T>(fn: () => T) => wrapped(fn) as T
-      }
-    } catch {}
+function parseDocument(raw: string): Document | null {
+  try {
+    const document: unknown = JSON.parse(raw)
+    return isPlainObject(document) ? (document as Document) : null
+  } catch {
     return null
-  },
-
-  runTx: <T>(runner: TxRunner | null, fn: () => T) =>
-    runner ? runner(fn) : fn(),
-
-  ensureDirForFile: (filePath: string) => {
-    try {
-      mkdirSync(dirname(filePath), { recursive: true })
-    } catch {}
-  },
-
-  applyPragmas: (db: SQLiteDB, pragmas: string[]) => {
-    for (const p of pragmas) {
-      try {
-        if (IS_BUN) db.run?.(`PRAGMA ${p}`)
-        else db.pragma?.(p)
-      } catch {}
-    }
   }
 }
 
-export const generateSortableId = (): string => _functions.generateId()
+function jsonPath(field: string): string {
+  if (!VALID_PATH.test(field)) {
+    throw new Error(`Invalid field path: ${field}`)
+  }
+  return `$.${field}`
+}
 
-class SQLiteCollection<T extends Record<string, unknown>> extends EventEmitter {
-  private readonly db: SQLiteDB
-  private readonly table: string
-  private readonly qtable: string
-  private readonly cacheSize: number
-  private readonly hotColumns: Map<string, HotColumnDefinition>
-  private readonly stmtCache = new Map<string, SQLiteStmt>()
-  private readonly txRunner: TxRunner | null
+const quoteIdentifier = (name: string) => `"${name.replace(/"/g, '""')}"`
+
+function columnSqlValue(value: unknown, columnType: ColumnType): SQLValue {
+  if (value === null || value === undefined) {
+    return null
+  }
+  if (columnType === 'INTEGER') {
+    if (typeof value === 'boolean') {
+      return Number(value)
+    }
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : 0
+    }
+    if (typeof value === 'string') {
+      if (value.toLowerCase() === 'true') {
+        return 1
+      }
+      if (value.toLowerCase() === 'false') {
+        return 0
+      }
+      const numericValue = Number(value)
+      return Number.isFinite(numericValue) ? numericValue : 0
+    }
+    return 0
+  }
+  if (columnType === 'REAL') {
+    const numericValue = Number(value)
+    return Number.isFinite(numericValue) ? numericValue : 0
+  }
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+const toJsonArgument = (value: unknown): string =>
+  JSON.stringify(value) ?? 'null'
+
+export const generateSortableId = (): string => Bun.randomUUIDv7()
+
+class SQLiteCollection<DocumentType extends Record<string, unknown>> {
+  private readonly db: Database
+  private readonly quotedTableName: string
+  private readonly hotColumns: Map<string, ColumnType>
 
   // Pre-compiled statements for core operations
-  private _insert?: SQLiteStmt
-  private _byId?: SQLiteStmt
-  private _updateById?: SQLiteStmt
-  private _deleteById?: SQLiteStmt
-  private _countAll?: SQLiteStmt
-  private _createdAtById?: SQLiteStmt
+  private insertStatement?: Statement<unknown, SQLQueryBindings[]>
+  private byIdStatement?: Statement<{ doc: string }, [string]>
+  private updateStatement?: Statement<unknown, SQLQueryBindings[]>
+  private countStatement?: Statement<{ count: number }, []>
+  private createdAtStatement?: Statement<{ createdAt: string }, [string]>
 
-  // Pre-compiled statements for common query patterns (kept for future use)
-  private _findAll?: SQLiteStmt
-  private _deleteAll?: SQLiteStmt
-
-  // Cache for field-specific prepared statements (playlistId, userId, etc.)
-  private readonly fieldStmtCache = new Map<string, SQLiteStmt>()
-
-  public get tableName() {
-    return this.table
-  }
-  public get database() {
-    return this.db
-  }
-
-  public vacuum(): void {
-    try {
-      this.db.prepare('VACUUM').run()
-    } catch (err) {
-      console.error(`[SQLiteCollection] Vacuum failed for ${this.table}:`, err)
-    }
-  }
-
-  constructor(
-    db: SQLiteDB,
-    name: string,
-    options: number | CollectionOptions = 50
-  ) {
-    super()
-    if (!VALID_NAME.test(name))
+  constructor(db: Database, name: string, options: CollectionOptions = {}) {
+    if (!VALID_NAME.test(name)) {
       throw new Error(`Invalid collection name: ${name}`)
+    }
 
     this.db = db
-    this.table = `col_${name}`
-    this.qtable = `"${this.table}"`
-    const normalizedOptions =
-      typeof options === 'number' ? { cacheSize: options } : options
-    this.cacheSize = Math.max(0, normalizedOptions.cacheSize ?? 50)
-    this.hotColumns = new Map(
-      Object.entries(normalizedOptions.columns ?? {}).map(([field, def]) => [
-        field,
-        _functions.normalizeColumn(field, def)
-      ])
-    )
-    this.txRunner = _functions.makeTxRunner(this.db)
+    this.quotedTableName = quoteIdentifier(`col_${name}`)
+    this.hotColumns = new Map(Object.entries(options.columns ?? {}))
+    for (const field of this.hotColumns.keys()) {
+      if (!VALID_NAME.test(field)) {
+        throw new Error(`Invalid column field name: ${field}`)
+      }
+    }
 
     const hotColumnSql = Array.from(this.hotColumns.entries())
       .map(
-        ([field, def]) =>
-          `,\n          ${_functions.quoteIdent(field)} ${def.type}`
+        ([field, columnType]) =>
+          `,\n          ${quoteIdentifier(field)} ${columnType}`
       )
       .join('')
 
     this.db
       .prepare(
         `
-        CREATE TABLE IF NOT EXISTS ${this.qtable} (
+        CREATE TABLE IF NOT EXISTS ${this.quotedTableName} (
           _id TEXT PRIMARY KEY,
           doc TEXT NOT NULL CHECK (json_valid(doc)),
           createdAt TEXT NOT NULL,
           updatedAt TEXT NOT NULL${hotColumnSql}
         )`
-      )
-      .run()
-
-    this.db
-      .prepare(
-        `CREATE INDEX IF NOT EXISTS "${this.table}_updated" ON ${this.qtable}(updatedAt)`
-      )
-      .run()
-    this.db
-      .prepare(
-        `CREATE INDEX IF NOT EXISTS "${this.table}_created" ON ${this.qtable}(createdAt)`
       )
       .run()
   }
@@ -375,43 +154,17 @@ class SQLiteCollection<T extends Record<string, unknown>> extends EventEmitter {
     return this.hotColumns.has(field)
   }
 
-  private getHotColumnDef(field: string): HotColumnDefinition | null {
-    return this.hotColumns.get(field) ?? null
-  }
-
   private isNumericHotColumn(field: string): boolean {
-    const def = this.getHotColumnDef(field)
-    return def?.type === 'INTEGER' || def?.type === 'REAL'
-  }
-
-  private getDocPath(field: string): string {
-    const def = this.getHotColumnDef(field)
-    return _functions.jsonPath(def?.path || field)
+    const columnType = this.hotColumns.get(field)
+    return columnType === 'INTEGER' || columnType === 'REAL'
   }
 
   private getColumnSqlValue(
     doc: Record<string, unknown>,
     field: string
   ): SQLValue {
-    const def = this.hotColumns.get(field)
-    if (!def) return null
-
-    const path = def.path || field
-    const source = path.includes('.')
-      ? path
-          .split('.')
-          .reduce<unknown>(
-            (acc, key) =>
-              Array.isArray(acc)
-                ? acc[Number(key)]
-                : _functions.isPlainObject(acc)
-                  ? acc[key]
-                  : undefined,
-            doc
-          )
-      : doc[path]
-
-    return _functions.columnSqlValue(source, def)
+    const columnType = this.hotColumns.get(field)
+    return columnType ? columnSqlValue(doc[field], columnType) : null
   }
 
   private getColumnValues(doc: Record<string, unknown>): SQLValue[] {
@@ -423,26 +176,23 @@ class SQLiteCollection<T extends Record<string, unknown>> extends EventEmitter {
   }
 
   private getFieldSelect(field: string): string {
-    if (field === '_id') return `_id AS ${_functions.quoteIdent(field)}`
-    if (field === 'createdAt' || field === 'updatedAt')
-      return `${field} AS ${_functions.quoteIdent(field)}`
-    if (this.isHotColumn(field))
-      return `${_functions.quoteIdent(field)} AS ${_functions.quoteIdent(field)}`
-
-    const path = _functions.jsonPath(field)
-    return `json_extract(doc, '${path}') AS ${_functions.quoteIdent(field)}`
+    return `${this.fieldExpression(field)} AS ${quoteIdentifier(field)}`
   }
 
   private buildSelect(fields?: string[]): {
     selectSql: string
     usesDoc: boolean
   } {
-    if (!fields?.length) return { selectSql: 'doc', usesDoc: true }
+    if (!fields?.length) {
+      return { selectSql: 'doc', usesDoc: true }
+    }
 
     const seen = new Set<string>(['_id'])
     const orderedFields = ['_id']
     for (const field of fields) {
-      if (seen.has(field)) continue
+      if (seen.has(field)) {
+        continue
+      }
       seen.add(field)
       orderedFields.push(field)
     }
@@ -455,320 +205,149 @@ class SQLiteCollection<T extends Record<string, unknown>> extends EventEmitter {
     }
   }
 
-  private decodeProjectedRow(
-    row: Record<string, unknown>
-  ): Record<string, unknown> {
-    for (const [field, def] of this.hotColumns.entries()) {
-      if (!Object.hasOwn(row, field)) continue
-      row[field] = _functions.decodeColumnValue(row[field], def)
+  private get insertQuery(): Statement<unknown, SQLQueryBindings[]> {
+    if (this.insertStatement) {
+      return this.insertStatement
     }
-    return row
-  }
-
-  private get insertStmt(): SQLiteStmt {
-    if (this._insert) return this._insert
-    const hotCols = Array.from(this.hotColumns.keys())
-    const columnList = hotCols.map((field) => _functions.quoteIdent(field))
+    const columnNames = Array.from(this.hotColumns.keys())
+    const columnList = columnNames.map((field) => quoteIdentifier(field))
     const insertColumns = columnList.length ? `, ${columnList.join(', ')}` : ''
-    const insertValues = hotCols.length
-      ? `, ${hotCols.map(() => '?').join(', ')}`
+    const insertValues = columnNames.length
+      ? `, ${columnNames.map(() => '?').join(', ')}`
       : ''
     const updateAssignments = [
       'updatedAt = excluded.updatedAt',
       ...columnList.map((field) => `${field} = excluded.${field}`),
       `doc = json_set(
           excluded.doc,
-          '$.createdAt', ${this.qtable}.createdAt,
+          '$.createdAt', ${this.quotedTableName}.createdAt,
           '$.updatedAt', excluded.updatedAt
         )`
     ]
-    this._insert = this.db.prepare(`
-      INSERT INTO ${this.qtable} (_id, doc, createdAt, updatedAt${insertColumns})
+    this.insertStatement = this.db.prepare(`
+      INSERT INTO ${this.quotedTableName} (_id, doc, createdAt, updatedAt${insertColumns})
       VALUES (?, json(?), ?, ?${insertValues})
       ON CONFLICT(_id) DO UPDATE SET
         ${updateAssignments.join(',\n        ')}
     `)
-    return this._insert
+    return this.insertStatement
   }
 
-  private get createdAtByIdStmt(): SQLiteStmt {
-    if (this._createdAtById) return this._createdAtById
-    this._createdAtById = this.db.prepare(
-      `SELECT createdAt FROM ${this.qtable} WHERE _id = ?`
+  private get createdAtQuery(): Statement<{ createdAt: string }, [string]> {
+    if (this.createdAtStatement) {
+      return this.createdAtStatement
+    }
+    this.createdAtStatement = this.db.prepare(
+      `SELECT createdAt FROM ${this.quotedTableName} WHERE _id = ?`
     )
-    return this._createdAtById
+    return this.createdAtStatement
   }
 
-  private get byIdStmt(): SQLiteStmt {
-    if (this._byId) return this._byId
-    this._byId = this.db.prepare(`SELECT doc FROM ${this.qtable} WHERE _id = ?`)
-    return this._byId
+  private get documentQuery(): Statement<{ doc: string }, [string]> {
+    if (this.byIdStatement) {
+      return this.byIdStatement
+    }
+    this.byIdStatement = this.db.prepare(
+      `SELECT doc FROM ${this.quotedTableName} WHERE _id = ?`
+    )
+    return this.byIdStatement
   }
 
-  private get updateStmt(): SQLiteStmt {
-    if (this._updateById) return this._updateById
-    const hotCols = Array.from(this.hotColumns.keys())
+  private get updateQuery(): Statement<unknown, SQLQueryBindings[]> {
+    if (this.updateStatement) {
+      return this.updateStatement
+    }
+    const columnNames = Array.from(this.hotColumns.keys())
     const assignments = [
       'doc = json(?)',
       'updatedAt = ?',
-      ...hotCols.map((field) => `${_functions.quoteIdent(field)} = ?`)
+      ...columnNames.map((field) => `${quoteIdentifier(field)} = ?`)
     ]
-    this._updateById = this.db.prepare(
-      `UPDATE ${this.qtable} SET ${assignments.join(', ')} WHERE _id = ?`
+    this.updateStatement = this.db.prepare(
+      `UPDATE ${this.quotedTableName} SET ${assignments.join(', ')} WHERE _id = ?`
     )
-    return this._updateById
+    return this.updateStatement
   }
 
-  private get deleteByIdStmt(): SQLiteStmt {
-    if (this._deleteById) return this._deleteById
-    this._deleteById = this.db.prepare(
-      `DELETE FROM ${this.qtable} WHERE _id = ?`
+  private get countQuery(): Statement<{ count: number }, []> {
+    if (this.countStatement) {
+      return this.countStatement
+    }
+    this.countStatement = this.db.prepare(
+      `SELECT COUNT(*) AS count FROM ${this.quotedTableName}`
     )
-    return this._deleteById
+    return this.countStatement
   }
 
-  private get countAllStmt(): SQLiteStmt {
-    if (this._countAll) return this._countAll
-    this._countAll = this.db.prepare(`SELECT COUNT(*) AS c FROM ${this.qtable}`)
-    return this._countAll
+  private fieldExpression(field: string): string {
+    if (
+      field === '_id' ||
+      field === 'createdAt' ||
+      field === 'updatedAt' ||
+      this.isHotColumn(field)
+    ) {
+      return quoteIdentifier(field)
+    }
+    return `json_extract(doc, '${jsonPath(field)}')`
   }
 
-  private getStmt(sql: string, cacheKey?: string): SQLiteStmt {
-    if (!cacheKey || this.cacheSize === 0) return this.db.prepare(sql)
+  private buildWhere(query: Query): {
+    sql: string
+    params: SQLQueryBindings[]
+  } {
+    const conditions: string[] = []
+    const params: SQLQueryBindings[] = []
 
-    const hit = this.stmtCache.get(cacheKey)
-    if (hit) {
-      this.stmtCache.delete(cacheKey)
-      this.stmtCache.set(cacheKey, hit)
-      return hit
+    for (const [field, value] of Object.entries(query)) {
+      const expression = this.fieldExpression(field)
+      if (value === null || value === undefined) {
+        conditions.push(`${expression} IS NULL`)
+      } else if (typeof value === 'object') {
+        const operators = value
+        if (Object.hasOwn(operators, '$ne')) {
+          if (operators.$ne === null) {
+            conditions.push(`${expression} IS NOT NULL`)
+          } else {
+            conditions.push(`${expression} != ?`)
+            params.push(operators.$ne as JsonPrimitive)
+          }
+        }
+        if (operators.$in) {
+          conditions.push(
+            operators.$in.length
+              ? `${expression} IN (${operators.$in.map(() => '?').join(', ')})`
+              : '0=1'
+          )
+          params.push(...operators.$in)
+        }
+      } else {
+        conditions.push(`${expression} = ?`)
+        params.push(typeof value === 'boolean' ? Number(value) : value)
+      }
     }
 
-    if (this.stmtCache.size >= this.cacheSize) {
-      const oldestKey = this.stmtCache.keys().next().value as string | undefined
-      if (oldestKey) {
-        const oldest = this.stmtCache.get(oldestKey)
-        this.stmtCache.delete(oldestKey)
-        _functions.finalize(oldest)
-      }
-    }
-
-    const stmt = this.db.prepare(sql)
-    this.stmtCache.set(cacheKey, stmt)
-    return stmt
+    return { sql: conditions.length ? conditions.join(' AND ') : '1=1', params }
   }
 
-  private buildWhere(query: Query): { sql: string; params: unknown[] } {
-    const parts: string[] = []
-    const params: unknown[] = []
-
-    for (const [key, value] of Object.entries(query)) {
-      if (key === '_id') {
-        if (value == null) {
-          parts.push(`_id IS NULL`)
-          continue
-        }
-
-        if (_functions.isPlainObject(value)) {
-          for (const [op, opVal] of Object.entries(
-            value as Record<string, unknown>
-          )) {
-            switch (op) {
-              case '$ne':
-                if (opVal === null) parts.push(`_id IS NOT NULL`)
-                else {
-                  parts.push(`_id != ?`)
-                  params.push(opVal)
-                }
-                break
-
-              case '$in':
-              case '$nin': {
-                if (!Array.isArray(opVal)) break
-                if (opVal.length === 0) {
-                  if (op === '$in') parts.push('0=1')
-                  break
-                }
-                parts.push(
-                  `_id ${op === '$in' ? 'IN' : 'NOT IN'} (${opVal.map(() => '?').join(', ')})`
-                )
-                params.push(...opVal)
-                break
-              }
-
-              case '$gt':
-              case '$gte':
-              case '$lt':
-              case '$lte':
-                parts.push(
-                  `_id ${
-                    op === '$gt'
-                      ? '>'
-                      : op === '$gte'
-                        ? '>='
-                        : op === '$lt'
-                          ? '<'
-                          : '<='
-                  } ?`
-                )
-                params.push(opVal)
-                break
-            }
-          }
-        } else {
-          if (value === null) parts.push(`_id IS NULL`)
-          else {
-            parts.push(`_id = ?`)
-            params.push(value)
-          }
-        }
-        continue
-      }
-
-      if (key === 'createdAt' || key === 'updatedAt') {
-        const col = key
-
-        if (value == null) {
-          parts.push(`${col} IS NULL`)
-          continue
-        }
-
-        if (_functions.isPlainObject(value)) {
-          for (const [op, opVal] of Object.entries(
-            value as Record<string, unknown>
-          )) {
-            switch (op) {
-              case '$gt':
-                parts.push(`${col} > ?`)
-                params.push(opVal)
-                break
-              case '$gte':
-                parts.push(`${col} >= ?`)
-                params.push(opVal)
-                break
-              case '$lt':
-                parts.push(`${col} < ?`)
-                params.push(opVal)
-                break
-              case '$lte':
-                parts.push(`${col} <= ?`)
-                params.push(opVal)
-                break
-              case '$ne':
-                if (opVal === null) parts.push(`${col} IS NOT NULL`)
-                else {
-                  parts.push(`${col} != ?`)
-                  params.push(opVal)
-                }
-                break
-              case '$in':
-              case '$nin': {
-                if (!Array.isArray(opVal)) break
-                if (opVal.length === 0) {
-                  if (op === '$in') parts.push('0=1')
-                  break
-                }
-                parts.push(
-                  `${col} ${op === '$in' ? 'IN' : 'NOT IN'} (${opVal.map(() => '?').join(', ')})`
-                )
-                params.push(...opVal)
-                break
-              }
-            }
-          }
-        } else {
-          if (value === null) parts.push(`${col} IS NULL`)
-          else {
-            parts.push(`${col} = ?`)
-            params.push(value)
-          }
-        }
-        continue
-      }
-
-      const extract = this.isHotColumn(key)
-        ? _functions.quoteIdent(key)
-        : `json_extract(doc, '${_functions.jsonPath(key)}')`
-
-      if (value == null) {
-        parts.push(`${extract} IS NULL`)
-        continue
-      }
-
-      if (_functions.isPlainObject(value)) {
-        for (const [op, opVal] of Object.entries(
-          value as Record<string, unknown>
-        )) {
-          switch (op) {
-            case '$gt':
-              parts.push(`${extract} > ?`)
-              params.push(opVal)
-              break
-            case '$gte':
-              parts.push(`${extract} >= ?`)
-              params.push(opVal)
-              break
-            case '$lt':
-              parts.push(`${extract} < ?`)
-              params.push(opVal)
-              break
-            case '$lte':
-              parts.push(`${extract} <= ?`)
-              params.push(opVal)
-              break
-            case '$ne':
-              if (opVal === null) parts.push(`${extract} IS NOT NULL`)
-              else {
-                parts.push(`${extract} != ?`)
-                params.push(opVal)
-              }
-              break
-            case '$in':
-            case '$nin': {
-              if (!Array.isArray(opVal)) break
-              if (opVal.length === 0) {
-                if (op === '$in') parts.push('0=1')
-                break
-              }
-              parts.push(
-                `${extract} ${op === '$in' ? 'IN' : 'NOT IN'} (${opVal.map(() => '?').join(', ')})`
-              )
-              params.push(...opVal)
-              break
-            }
-          }
-        }
-        continue
-      }
-
-      // Keep boolean predicates index-friendly (`expr = ?`) for expression indexes.
-      if (value === true || value === false) {
-        parts.push(`${extract} = ?`)
-        params.push(value ? 1 : 0)
-        continue
-      }
-
-      parts.push(`${extract} = ?`)
-      params.push(value)
-    }
-
-    return { sql: parts.length ? parts.join(' AND ') : '1=1', params }
-  }
-
-  insert(docs: T | T[]): (T & Required<Document>) | (T & Required<Document>)[] {
+  insert(document: DocumentType): DocumentType & Document
+  insert(documents: DocumentType[]): (DocumentType & Document)[]
+  insert(
+    docs: DocumentType | DocumentType[]
+  ): (DocumentType & Document) | (DocumentType & Document)[] {
     const isArray = Array.isArray(docs)
     const items = isArray ? docs : [docs]
-    const now = _functions.now()
-    const result: (T & Required<Document>)[] = []
+    const now = new Date().toISOString()
+    const result: (DocumentType & Document)[] = []
 
-    _functions.runTx(this.txRunner, () => {
+    this.db.transaction(() => {
       for (const doc of items) {
-        const inputDoc = doc as T & Partial<Document> & { _id?: string }
-        const _id = inputDoc._id || _functions.generateId()
+        const inputDoc = doc as DocumentType & Partial<Document>
+        const _id = inputDoc._id || generateSortableId()
 
         const shouldLookupCreatedAt = !!inputDoc._id && !inputDoc.createdAt
         const existing =
           shouldLookupCreatedAt && inputDoc._id
-            ? this.createdAtByIdStmt.get<{ createdAt: string }>(inputDoc._id)
+            ? this.createdAtQuery.get(inputDoc._id)
             : undefined
 
         const createdAt = inputDoc.createdAt || existing?.createdAt || now
@@ -779,10 +358,10 @@ class SQLiteCollection<T extends Record<string, unknown>> extends EventEmitter {
           _id,
           createdAt,
           updatedAt
-        } as T & Required<Document>
+        } as DocumentType & Document
         const columnValues = this.getColumnValues(full)
 
-        this.insertStmt.run(
+        this.insertQuery.run(
           full._id,
           JSON.stringify(full),
           full.createdAt,
@@ -791,134 +370,136 @@ class SQLiteCollection<T extends Record<string, unknown>> extends EventEmitter {
         )
         result.push(full)
       }
-    })
+    })()
 
-    const changeData = isArray ? result : result[0]
-    if (changeData) {
-      this.emit('change', 'insert', changeData)
-    }
-    const first = result[0] as T & Required<Document>
+    const first = result[0] as DocumentType & Document
     return isArray ? result : first
   }
 
-  find(query: Query = {}, opts: FindOptions = {}): (T & Required<Document>)[] {
+  find(
+    query: Query = {},
+    options: FindOptions = {}
+  ): (DocumentType & Document)[] {
     const { sql, params } = this.buildWhere(query)
-    const { selectSql, usesDoc } = this.buildSelect(opts.fields)
-    let querySql = `SELECT ${selectSql} FROM ${this.qtable} WHERE ${sql}`
+    const { selectSql, usesDoc } = this.buildSelect(options.fields)
+    let querySql = `SELECT ${selectSql} FROM ${this.quotedTableName} WHERE ${sql}`
 
-    if (opts.sort) {
-      const clauses: string[] = []
-      for (const [field, dir] of Object.entries(opts.sort)) {
-        if (field === '_id' || field === 'createdAt' || field === 'updatedAt') {
-          clauses.push(`${field} ${dir === 1 ? 'ASC' : 'DESC'}`)
-          continue
-        }
-
-        if (this.isHotColumn(field)) {
-          clauses.push(
-            `${_functions.quoteIdent(field)} ${dir === 1 ? 'ASC' : 'DESC'}`
-          )
-          continue
-        }
-
-        clauses.push(
-          `json_extract(doc, '${_functions.jsonPath(field)}') ${dir === 1 ? 'ASC' : 'DESC'}`
-        )
+    if (options.sort) {
+      const clauses = Object.entries(options.sort).map(
+        ([field, direction]) =>
+          `${this.fieldExpression(field)} ${direction === 1 ? 'ASC' : 'DESC'}`
+      )
+      if (clauses.length) {
+        querySql += ` ORDER BY ${clauses.join(', ')}`
       }
-      if (clauses.length) querySql += ` ORDER BY ${clauses.join(', ')}`
     }
 
-    if (typeof opts.limit === 'number') {
-      if (opts.limit < 0) throw new Error('limit must be >= 0')
-      querySql += ` LIMIT ${opts.limit}`
+    if (options.limit !== undefined) {
+      if (options.limit < 0) {
+        throw new Error('limit must be >= 0')
+      }
+      querySql += ` LIMIT ${options.limit}`
     }
-    if (typeof opts.skip === 'number') {
-      if (opts.skip < 0) throw new Error('skip must be >= 0')
-      if (typeof opts.limit !== 'number') querySql += ' LIMIT -1'
-      querySql += ` OFFSET ${opts.skip}`
+    if (options.skip !== undefined) {
+      if (options.skip < 0) {
+        throw new Error('skip must be >= 0')
+      }
+      if (options.limit === undefined) {
+        querySql += ' LIMIT -1'
+      }
+      querySql += ` OFFSET ${options.skip}`
     }
 
-    const cacheKey = this.cacheSize ? `find:${querySql}` : undefined
-    const rows = this.getStmt(querySql, cacheKey).all<Record<string, unknown>>(
-      ...params
-    )
+    const rows = this.db
+      .query<Record<string, unknown>, SQLQueryBindings[]>(querySql)
+      .all(...params)
 
-    const out: (T & Required<Document>)[] = []
+    const documents: (DocumentType & Document)[] = []
 
     for (const row of rows) {
       if (usesDoc) {
-        const rawDoc = (row as { doc?: unknown }).doc
-        if (typeof rawDoc !== 'string') continue
-        const doc = _functions.parseDoc(rawDoc)
-        if (!doc) continue
-        out.push(doc as T & Required<Document>)
+        const doc = parseDocument(row.doc as string)
+        if (!doc) {
+          continue
+        }
+        documents.push(doc as DocumentType & Document)
         continue
       }
 
-      out.push(this.decodeProjectedRow({ ...row }) as T & Required<Document>)
+      documents.push({ ...row } as DocumentType & Document)
     }
 
-    return out
+    return documents
   }
 
   findOne(
     query: Query = {},
-    opts?: FindOptions
-  ): (T & Required<Document>) | null {
-    return this.find(query, { ...opts, limit: 1 })[0] ?? null
+    options?: FindOptions
+  ): (DocumentType & Document) | null {
+    return this.find(query, { ...options, limit: 1 })[0] ?? null
   }
 
-  findById(id: string, opts?: FindOptions): (T & Required<Document>) | null {
-    if (!id) return null
-    if (opts?.fields?.length) {
-      return this.findOne({ _id: id }, { fields: opts.fields }) ?? null
+  findById(
+    id: string,
+    options?: FindOptions
+  ): (DocumentType & Document) | null {
+    if (!id) {
+      return null
     }
-    const row = this.byIdStmt.get<{ doc: string }>(id)
-    return row ? (_functions.parseDoc(row.doc) as T & Required<Document>) : null
-  }
-
-  deleteById(id: string): boolean {
-    if (!id) return false
-    const res = this.deleteByIdStmt.run(id)
-    if (res.changes > 0) this.emit('change', 'delete', { count: res.changes })
-    return res.changes > 0
+    if (options?.fields?.length) {
+      return this.findOne({ _id: id }, { fields: options.fields }) ?? null
+    }
+    const row = this.documentQuery.get(id)
+    return row ? (parseDocument(row.doc) as DocumentType & Document) : null
   }
 
   private updateWhere(
     query: Query,
-    mut: (doc: T & Required<Document>) => T & Required<Document>
+    mutateDocument: (doc: DocumentType & Document) => DocumentType & Document
   ): number {
-    if (!query || !Object.keys(query).length)
+    if (!query || !Object.keys(query).length) {
       throw new Error('Update query cannot be empty')
+    }
 
     const { sql, params } = this.buildWhere(query)
-    const selSql = `SELECT _id, doc FROM ${this.qtable} WHERE ${sql}`
-    const rows = this.getStmt(selSql, `selupd:${selSql}`).all<{
-      _id: string
-      doc: string
-    }>(...params)
-    if (!rows.length) return 0
+    const selectSql = `SELECT _id, doc FROM ${this.quotedTableName} WHERE ${sql}`
+    const rows = this.db
+      .query<
+        {
+          _id: string
+          doc: string
+        },
+        SQLQueryBindings[]
+      >(selectSql)
+      .all(...params)
+    if (!rows.length) {
+      return 0
+    }
 
-    const now = _functions.now()
+    const now = new Date().toISOString()
     let changed = 0
 
-    _functions.runTx(this.txRunner, () => {
+    this.db.transaction(() => {
       for (const row of rows) {
-        const doc = _functions.parseDoc(row.doc)
-        if (!doc) continue
+        const doc = parseDocument(row.doc)
+        if (!doc) {
+          continue
+        }
 
-        const next = mut({
+        const next = mutateDocument({
           ...doc,
           _id: row._id,
           ...(doc.createdAt ? { createdAt: doc.createdAt } : {}),
           updatedAt: now
-        } as T & Required<Document>)
+        } as DocumentType & Document)
 
         next._id = row._id
-        if (doc.createdAt && !next.createdAt) next.createdAt = doc.createdAt
+        if (doc.createdAt && !next.createdAt) {
+          next.createdAt = doc.createdAt
+        }
         next.updatedAt = now
 
-        this.updateStmt.run(
+        this.updateQuery.run(
           JSON.stringify(next),
           now,
           ...this.getColumnValues(next),
@@ -926,292 +507,236 @@ class SQLiteCollection<T extends Record<string, unknown>> extends EventEmitter {
         )
         changed++
       }
-    })
+    })()
 
-    if (changed) this.emit('change', 'update', { count: changed })
     return changed
   }
 
-  private updateHotColumns(query: Query, updates: Partial<T>): number | null {
+  private updateHotColumns(
+    query: Query,
+    updates: Partial<DocumentType>
+  ): number | null {
     const entries = Object.entries(updates).filter(
       ([, value]) => value !== undefined
     )
-    if (!entries.length) return 0
-    if (entries.some(([field]) => !this.isHotColumn(field))) return null
+    if (!entries.length) {
+      return 0
+    }
+    if (entries.some(([field]) => !this.isHotColumn(field))) {
+      return null
+    }
 
     const { sql, params } = this.buildWhere(query)
-    const now = _functions.now()
+    const now = new Date().toISOString()
     const assignments = ['updatedAt = ?']
-    const stmtParams: unknown[] = [now]
+    const statementParams: SQLQueryBindings[] = [now]
     const jsonArgs = [`'$.updatedAt'`, 'json(?)']
-    const jsonParams: unknown[] = [_functions.toJsonArgument(now)]
+    const jsonParams: SQLQueryBindings[] = [toJsonArgument(now)]
 
     for (const [field, value] of entries) {
-      assignments.push(`${_functions.quoteIdent(field)} = ?`)
-      stmtParams.push(this.getColumnSqlValue({ [field]: value }, field))
-      jsonArgs.push(`'${this.getDocPath(field)}'`, 'json(?)')
-      jsonParams.push(_functions.toJsonArgument(value))
+      assignments.push(`${quoteIdentifier(field)} = ?`)
+      statementParams.push(this.getColumnSqlValue({ [field]: value }, field))
+      jsonArgs.push(`'${jsonPath(field)}'`, 'json(?)')
+      jsonParams.push(toJsonArgument(value))
     }
 
     assignments.push(`doc = json_set(doc, ${jsonArgs.join(', ')})`)
 
-    const updateSql = `UPDATE ${this.qtable} SET ${assignments.join(', ')} WHERE ${sql}`
-    const cacheKey = `uph:${entries
-      .map(([field]) => field)
-      .sort()
-      .join(',')}:${sql}`
-    const res = this.getStmt(updateSql, cacheKey).run(
-      ...stmtParams,
-      ...jsonParams,
-      ...params
-    )
+    const updateSql = `UPDATE ${this.quotedTableName} SET ${assignments.join(', ')} WHERE ${sql}`
+    const result = this.db
+      .query(updateSql)
+      .run(...statementParams, ...jsonParams, ...params)
 
-    if (res.changes > 0) this.emit('change', 'update', { count: res.changes })
-    return res.changes
+    return result.changes
   }
 
-  private updateJsonFields(query: Query, updates: Partial<T>): number | null {
+  private updateJsonFields(
+    query: Query,
+    updates: Partial<DocumentType>
+  ): number | null {
     const entries = Object.entries(updates).filter(
       ([, value]) => value !== undefined
     )
-    if (!entries.length) return 0
-    if (entries.some(([field]) => this.isHotColumn(field))) return null
-
-    const { sql, params } = this.buildWhere(query)
-    const now = _functions.now()
-    const jsonArgs = [`'$.updatedAt'`, 'json(?)']
-    const jsonParams: unknown[] = [_functions.toJsonArgument(now)]
-
-    for (const [field, value] of entries) {
-      jsonArgs.push(`'${this.getDocPath(field)}'`, 'json(?)')
-      jsonParams.push(_functions.toJsonArgument(value))
+    if (!entries.length) {
+      return 0
+    }
+    if (entries.some(([field]) => this.isHotColumn(field))) {
+      return null
     }
 
-    const updateSql = `UPDATE ${this.qtable} SET updatedAt = ?, doc = json_set(doc, ${jsonArgs.join(', ')}) WHERE ${sql}`
-    const cacheKey = `upj:${entries
-      .map(([field]) => field)
-      .sort()
-      .join(',')}:${sql}`
-    const res = this.getStmt(updateSql, cacheKey).run(
-      now,
-      ...jsonParams,
-      ...params
-    )
+    const { sql, params } = this.buildWhere(query)
+    const now = new Date().toISOString()
+    const jsonArgs = [`'$.updatedAt'`, 'json(?)']
+    const jsonParams: SQLQueryBindings[] = [toJsonArgument(now)]
 
-    if (res.changes > 0) this.emit('change', 'update', { count: res.changes })
-    return res.changes
+    for (const [field, value] of entries) {
+      jsonArgs.push(`'${jsonPath(field)}'`, 'json(?)')
+      jsonParams.push(toJsonArgument(value))
+    }
+
+    const updateSql = `UPDATE ${this.quotedTableName} SET updatedAt = ?, doc = json_set(doc, ${jsonArgs.join(', ')}) WHERE ${sql}`
+    const result = this.db.query(updateSql).run(now, ...jsonParams, ...params)
+
+    return result.changes
   }
 
   private updateAtomicHotColumns(
     query: Query,
-    ops: AtomicUpdate
+    operations: AtomicUpdate
   ): number | null {
-    if (ops.$push || ops.$pull) return null
-
-    const setEntries = Object.entries(ops.$set ?? {}).filter(
+    const setEntries = Object.entries(operations.$set ?? {}).filter(
       ([, value]) => value !== undefined
     )
-    const incEntries = Object.entries(ops.$inc ?? {}).filter(([, value]) =>
-      Number.isFinite(value)
+    const incEntries = Object.entries(operations.$inc ?? {}).filter(
+      ([, value]) => Number.isFinite(value)
     )
 
-    if (!setEntries.length && !incEntries.length) return 0
-    if (setEntries.some(([field]) => !this.isHotColumn(field))) return null
-    if (incEntries.some(([field]) => !this.isNumericHotColumn(field)))
+    if (!setEntries.length && !incEntries.length) {
+      return 0
+    }
+    if (setEntries.some(([field]) => !this.isHotColumn(field))) {
       return null
+    }
+    if (incEntries.some(([field]) => !this.isNumericHotColumn(field))) {
+      return null
+    }
 
     const overlap = new Set(setEntries.map(([field]) => field))
-    if (incEntries.some(([field]) => overlap.has(field))) return null
+    if (incEntries.some(([field]) => overlap.has(field))) {
+      return null
+    }
 
     const { sql, params } = this.buildWhere(query)
-    const now = _functions.now()
+    const now = new Date().toISOString()
     const assignments = ['updatedAt = ?']
-    const stmtParams: unknown[] = [now]
+    const statementParams: SQLQueryBindings[] = [now]
     const jsonArgs = [`'$.updatedAt'`, 'json(?)']
-    const jsonParams: unknown[] = [_functions.toJsonArgument(now)]
+    const jsonParams: SQLQueryBindings[] = [toJsonArgument(now)]
 
     for (const [field, value] of setEntries) {
-      assignments.push(`${_functions.quoteIdent(field)} = ?`)
-      stmtParams.push(this.getColumnSqlValue({ [field]: value }, field))
-      jsonArgs.push(`'${this.getDocPath(field)}'`, 'json(?)')
-      jsonParams.push(_functions.toJsonArgument(value))
+      assignments.push(`${quoteIdentifier(field)} = ?`)
+      statementParams.push(this.getColumnSqlValue({ [field]: value }, field))
+      jsonArgs.push(`'${jsonPath(field)}'`, 'json(?)')
+      jsonParams.push(toJsonArgument(value))
     }
 
     for (const [field, value] of incEntries) {
       assignments.push(
-        `${_functions.quoteIdent(field)} = COALESCE(${_functions.quoteIdent(field)}, 0) + ?`
+        `${quoteIdentifier(field)} = COALESCE(${quoteIdentifier(field)}, 0) + ?`
       )
-      stmtParams.push(value)
+      statementParams.push(value)
       jsonArgs.push(
-        `'${this.getDocPath(field)}'`,
-        `COALESCE(${_functions.quoteIdent(field)}, 0) + ?`
+        `'${jsonPath(field)}'`,
+        `COALESCE(${quoteIdentifier(field)}, 0) + ?`
       )
       jsonParams.push(value)
     }
 
     assignments.push(`doc = json_set(doc, ${jsonArgs.join(', ')})`)
 
-    const updateSql = `UPDATE ${this.qtable} SET ${assignments.join(', ')} WHERE ${sql}`
-    const cacheKey = `upah:${setEntries
-      .map(([field]) => `s:${field}`)
-      .concat(incEntries.map(([field]) => `i:${field}`))
-      .sort()
-      .join(',')}:${sql}`
-    const res = this.getStmt(updateSql, cacheKey).run(
-      ...stmtParams,
-      ...jsonParams,
-      ...params
-    )
+    const updateSql = `UPDATE ${this.quotedTableName} SET ${assignments.join(', ')} WHERE ${sql}`
+    const result = this.db
+      .query(updateSql)
+      .run(...statementParams, ...jsonParams, ...params)
 
-    if (res.changes > 0) this.emit('change', 'update', { count: res.changes })
-    return res.changes
+    return result.changes
   }
 
-  update(query: Query, updates: Partial<T>): number {
-    if (!query || !Object.keys(query).length)
+  update(query: Query, updates: Partial<DocumentType>): number {
+    if (!query || !Object.keys(query).length) {
       throw new Error('Update query cannot be empty')
+    }
 
-    const fast = this.updateHotColumns(query, updates)
-    if (fast !== null) return fast
+    const updatedCount = this.updateHotColumns(query, updates)
+    if (updatedCount !== null) {
+      return updatedCount
+    }
 
     const json = this.updateJsonFields(query, updates)
-    if (json !== null) return json
+    if (json !== null) {
+      return json
+    }
 
     return this.updateWhere(query, (doc) => {
-      const next: T & Required<Document> = {
+      const next: DocumentType & Document = {
         ...doc,
         ...updates
       }
-      if (doc._id) next._id = doc._id
-      if (doc.createdAt) next.createdAt = doc.createdAt
-      return next as T & Required<Document>
+      if (doc._id) {
+        next._id = doc._id
+      }
+      if (doc.createdAt) {
+        next.createdAt = doc.createdAt
+      }
+      return next as DocumentType & Document
     })
   }
 
-  updateAtomic(query: Query, ops: AtomicUpdate): number {
-    if (!query || !Object.keys(query).length)
+  updateAtomic(query: Query, operations: AtomicUpdate): number {
+    if (!query || !Object.keys(query).length) {
       throw new Error('Update query cannot be empty')
+    }
 
-    const fast = this.updateAtomicHotColumns(query, ops)
-    if (fast !== null) return fast
+    const updatedCount = this.updateAtomicHotColumns(query, operations)
+    if (updatedCount !== null) {
+      return updatedCount
+    }
 
     return this.updateWhere(query, (doc) => {
-      const next: T & Required<Document> = { ...doc }
+      const next: DocumentType & Document = { ...doc }
 
-      if (ops.$set) Object.assign(next, ops.$set)
+      if (operations.$set) {
+        Object.assign(next, operations.$set)
+      }
 
-      if (ops.$inc) {
+      if (operations.$inc) {
         const mutable = next as Record<string, JsonValue | undefined>
-        for (const [k, v] of Object.entries(ops.$inc)) {
-          const current = mutable[k]
-          mutable[k] = (typeof current === 'number' ? current : 0) + v
+        for (const [field, increment] of Object.entries(operations.$inc)) {
+          const current = mutable[field]
+          mutable[field] =
+            (typeof current === 'number' ? current : 0) + increment
         }
       }
 
-      if (ops.$push) {
-        const mutable = next as Record<string, JsonValue | undefined>
-        for (const [k, v] of Object.entries(ops.$push)) {
-          const cur = mutable[k]
-          if (!Array.isArray(cur)) mutable[k] = [v]
-          else (cur as JsonValue[]).push(v)
-        }
-      }
-
-      if (ops.$pull) {
-        const mutable = next as Record<string, JsonValue | undefined>
-        for (const [k, v] of Object.entries(ops.$pull)) {
-          const cur = mutable[k]
-          if (Array.isArray(cur))
-            mutable[k] = (cur as JsonValue[]).filter((x: JsonValue) => x !== v)
-        }
-      }
-
-      return next as T & Required<Document>
+      return next as DocumentType & Document
     })
   }
 
   delete(query: Query): number {
-    if (!query || !Object.keys(query).length)
+    if (!query || !Object.keys(query).length) {
       throw new Error('Delete query cannot be empty')
+    }
 
     const { sql, params } = this.buildWhere(query)
-    const delSql = `DELETE FROM ${this.qtable} WHERE ${sql}`
-    const res = this.getStmt(delSql, `del:${delSql}`).run(...params)
+    const delSql = `DELETE FROM ${this.quotedTableName} WHERE ${sql}`
+    const result = this.db.query(delSql).run(...params)
 
-    if (res.changes > 0) this.emit('change', 'delete', { count: res.changes })
-    return res.changes
+    return result.changes
   }
 
   count(query: Query = {}): number {
-    if (!Object.keys(query).length)
-      return this.countAllStmt.get<{ c: number }>()?.c ?? 0
+    if (!Object.keys(query).length) {
+      return this.countQuery.get()?.count ?? 0
+    }
 
     const { sql, params } = this.buildWhere(query)
-    const cSql = `SELECT COUNT(*) AS c FROM ${this.qtable} WHERE ${sql}`
+    const countSql = `SELECT COUNT(*) AS count FROM ${this.quotedTableName} WHERE ${sql}`
     return (
-      this.getStmt(cSql, `count:${cSql}`).get<{ c: number }>(...params)?.c ?? 0
+      this.db
+        .query<{ count: number }, SQLQueryBindings[]>(countSql)
+        .get(...params)?.count ?? 0
     )
-  }
-
-  createIndex(field: string, name?: string): void {
-    const safeField = field.includes('.') ? field.split('.').join('_') : field
-    const idxName = name || `${this.table}_${safeField}_idx`
-    if (!VALID_NAME.test(idxName))
-      throw new Error(`Invalid index name: ${idxName}`)
-
-    const expr = this.isHotColumn(field)
-      ? _functions.quoteIdent(field)
-      : `json_extract(doc, '${_functions.jsonPath(field)}')`
-
-    this.db
-      .prepare(
-        `CREATE INDEX IF NOT EXISTS "${idxName}" ON ${this.qtable}(${expr})`
-      )
-      .run()
-  }
-
-  getStats(): { documentCount: number; tableName: string } {
-    return {
-      documentCount: this.countAllStmt.get<{ c: number }>()?.c ?? 0,
-      tableName: this.table
-    }
-  }
-
-  getDatabase(): SQLiteDB {
-    return this.db
-  }
-
-  destroy(): void {
-    _functions.finalize(this._insert)
-    _functions.finalize(this._byId)
-    _functions.finalize(this._updateById)
-    _functions.finalize(this._deleteById)
-    _functions.finalize(this._countAll)
-    _functions.finalize(this._createdAtById)
-
-    _functions.finalize(this._findAll)
-    _functions.finalize(this._deleteAll)
-
-    for (const stmt of this.fieldStmtCache.values()) _functions.finalize(stmt)
-    this.fieldStmtCache.clear()
-
-    for (const stmt of this.stmtCache.values()) _functions.finalize(stmt)
-    this.stmtCache.clear()
-
-    this.removeAllListeners()
   }
 }
 
-export class SimpleDB extends EventEmitter {
-  private readonly db: SQLiteDB
+export class SimpleDB {
+  readonly db: Database
   private readonly collections = new Map<
     string,
     SQLiteCollection<Record<string, unknown>>
   >()
-  private readonly cacheSize: number
 
-  private _checkpointStmt?: SQLiteStmt
-  private _vacuumStmt?: SQLiteStmt
+  private readonly checkpointStatement: Statement
 
   private checkpointTimer: NodeJS.Timeout | null = null
   private optimizeTimer: NodeJS.Timeout | null = null
@@ -1219,61 +744,50 @@ export class SimpleDB extends EventEmitter {
   private static readonly OPTIMIZE_INTERVAL_MS = 24 * 60 * 60 * 1000 // Daily
 
   constructor(options: SimpleDBOptions = {}) {
-    super()
-
-    if (!DatabaseCtor) {
-      const hint = IS_BUN
-        ? 'Bun runtime detected. Ensure bun:sqlite is available or install better-sqlite3.'
-        : 'Node runtime detected. Install better-sqlite3 or run the project with Bun.'
-      throw new Error(`No SQLite driver found. ${hint}`)
-    }
-
-    if (!IS_BUN && SQLITE_DRIVER !== 'better-sqlite3') {
-      throw new Error(
-        'Invalid SQLite driver for Node runtime. Expected better-sqlite3.'
-      )
-    }
-
     const defaultDir = join(process.cwd(), 'db')
     const dbPath = options.dbPath || join(defaultDir, 'sey.sqlite')
-    this.cacheSize = options.cacheSize ?? 50
 
-    mkdirSync(defaultDir, { recursive: true })
-    _functions.ensureDirForFile(dbPath)
+    if (dbPath !== ':memory:') {
+      mkdirSync(dirname(dbPath), { recursive: true })
+    }
 
-    this.db = new DatabaseCtor(dbPath)
+    this.db = new Database(dbPath)
 
-    _functions.applyPragmas(this.db, [
+    for (const pragma of [
+      'busy_timeout = 1000',
+      'auto_vacuum = INCREMENTAL',
       'journal_mode = WAL',
       'synchronous = NORMAL',
       'cache_size = -10000',
       'temp_store = MEMORY',
       'mmap_size = 268435456',
       'foreign_keys = ON',
-      'busy_timeout = 30000',
       'journal_size_limit = 5242880',
-      'auto_vacuum = INCREMENTAL',
       'trusted_schema = OFF'
-    ])
+    ]) {
+      this.db.run(`PRAGMA ${pragma}`)
+    }
 
     try {
       // Recommended for long-lived connections.
       this.db.prepare('PRAGMA optimize = 0x10002').run()
     } catch {}
 
-    this._checkpointStmt = this.db.prepare('PRAGMA wal_checkpoint(PASSIVE)')
+    this.checkpointStatement = this.db.prepare('PRAGMA wal_checkpoint(PASSIVE)')
     this.startCheckpointTimer()
     this.startOptimizeTimer()
   }
 
   private startCheckpointTimer(): void {
-    if (this.checkpointTimer) return
+    if (this.checkpointTimer) {
+      return
+    }
 
     this.checkpointTimer = setInterval(() => {
       this.checkpointPassive()
     }, SimpleDB.CHECKPOINT_INTERVAL_MS)
 
-    this.checkpointTimer.unref?.()
+    this.checkpointTimer.unref()
   }
 
   private stopCheckpointTimer(): void {
@@ -1284,16 +798,9 @@ export class SimpleDB extends EventEmitter {
   }
 
   private startOptimizeTimer(): void {
-    if (this.optimizeTimer) return
-
-    const t = setTimeout(() => {
-      try {
-        console.log('[SimpleDB] Database optimized')
-        this.db.prepare('PRAGMA optimize').run()
-      } catch {}
-    }, 10000)
-
-    t.unref?.()
+    if (this.optimizeTimer) {
+      return
+    }
 
     this.optimizeTimer = setInterval(() => {
       try {
@@ -1301,7 +808,7 @@ export class SimpleDB extends EventEmitter {
       } catch {}
     }, SimpleDB.OPTIMIZE_INTERVAL_MS)
 
-    this.optimizeTimer.unref?.()
+    this.optimizeTimer.unref()
   }
 
   private stopOptimizeTimer(): void {
@@ -1311,43 +818,32 @@ export class SimpleDB extends EventEmitter {
     }
   }
 
-  collection<T extends Record<string, unknown>>(
+  collection<DocumentType extends Record<string, unknown>>(
     name: string,
     options?: CollectionOptions
-  ): SQLiteCollection<T> {
+  ): SQLiteCollection<DocumentType> {
     const existing = this.collections.get(name)
-    if (existing) return existing as unknown as SQLiteCollection<T>
-
-    const col = new SQLiteCollection<T>(this.db, name, {
-      cacheSize: options?.cacheSize ?? this.cacheSize,
-      ...(options?.columns ? { columns: options.columns } : {})
-    })
-    col.on('change', (...args) => this.emit('change', ...args))
-    col.on('error', (err) => this.emit('error', err))
-    this.collections.set(name, col)
-    return col
-  }
-
-  transaction(fn: () => void): void {
-    const runner = _functions.makeTxRunner(this.db)
-    _functions.runTx(runner, fn)
-  }
-
-  vacuum(): void {
-    try {
-      this.stopCheckpointTimer()
-      this.db.prepare('VACUUM').run()
-    } catch (err) {
-      console.error('[SimpleDB] Vacuum failed:', err)
-    } finally {
-      this.startCheckpointTimer()
+    if (existing) {
+      return existing as SQLiteCollection<DocumentType>
     }
+
+    const collection = new SQLiteCollection<DocumentType>(
+      this.db,
+      name,
+      options
+    )
+    this.collections.set(name, collection)
+    return collection
+  }
+
+  transaction(callback: () => void): void {
+    this.db.transaction(callback)()
   }
 
   checkpointPassive(): void {
     try {
-      this._checkpointStmt?.run()
-      this.db.prepare('PRAGMA incremental_vacuum(64)').run()
+      this.db.prepare('PRAGMA incremental_vacuum(64)').all()
+      this.checkpointStatement.all()
     } catch (err) {
       console.error('[SimpleDB] Passive checkpoint failed:', err)
     }
@@ -1365,18 +861,13 @@ export class SimpleDB extends EventEmitter {
     this.stopCheckpointTimer()
     this.stopOptimizeTimer()
 
-    try {
-      this.checkpoint()
-    } catch {}
+    this.checkpoint()
 
-    for (const col of this.collections.values()) col.destroy()
     this.collections.clear()
-
-    _functions.finalize(this._checkpointStmt)
-    _functions.finalize(this._vacuumStmt)
+    this.checkpointStatement.finalize()
 
     try {
-      this.db.close()
+      this.db.close(true)
     } catch {}
   }
 }

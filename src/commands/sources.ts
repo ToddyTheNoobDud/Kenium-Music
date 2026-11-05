@@ -1,3 +1,4 @@
+import type { Node } from 'aqualink'
 import { Command, type CommandContext, Container, Declare } from 'seyfert'
 import { lru } from 'tiny-lru'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
@@ -35,27 +36,6 @@ const SOURCE_LABELS: Record<string, string> = Object.freeze({
   youtube: 'YouTube'
 })
 
-type NodeInfoLike = {
-  version?: {
-    semver?: string
-  }
-  buildTime?: string | number
-  sourceManagers?: unknown[]
-}
-
-type NodeLike = {
-  name?: string
-  host?: string
-  connected?: boolean
-  info?: NodeInfoLike | null
-  options?: {
-    name?: string
-  }
-  rest?: {
-    getInfo?: () => Promise<NodeInfoLike>
-  }
-}
-
 type SourcesSummary = {
   nodeName: string
   version: string
@@ -67,8 +47,12 @@ type DividerComponent = { type: 14; divider: true; spacing: 1 | 2 }
 
 const formatSourceName = (source: string): string => {
   const normalized = source.trim().toLowerCase()
-  if (!normalized) return 'Unknown'
-  if (SOURCE_LABELS[normalized]) return SOURCE_LABELS[normalized]
+  if (!normalized) {
+    return 'Unknown'
+  }
+  if (SOURCE_LABELS[normalized]) {
+    return SOURCE_LABELS[normalized]
+  }
 
   return normalized
     .split(/[-_\s]+/)
@@ -78,7 +62,7 @@ const formatSourceName = (source: string): string => {
 }
 
 async function getNodeSources(
-  node: NodeLike | null | undefined
+  node: Node | null | undefined
 ): Promise<SourcesSummary> {
   if (!node) {
     return {
@@ -93,9 +77,9 @@ async function getNodeSources(
   )
   let info = node.info ?? null
 
-  if (!info && typeof node.rest?.getInfo === 'function') {
+  if (!info) {
     try {
-      info = await node.rest.getInfo()
+      info = (await node.rest.getInfo()) ?? null
       node.info = info
     } catch {
       info = null
@@ -148,14 +132,16 @@ const groupSources = (sources: string[]) =>
     })
   })).filter((group) => group.sources.length > 0)
 
-const getTargetNodes = (ctx: CommandContext): NodeLike[] => {
+const getTargetNodes = (ctx: CommandContext): Node[] => {
   const player = ctx.client.aqua.players.get(ctx.guildId as string)
-  const playerNode = player?.nodes as NodeLike | undefined
+  const playerNode = player?.nodes as Node | undefined
 
-  if (playerNode) return [playerNode]
+  if (playerNode) {
+    return [playerNode]
+  }
 
   const allNodes = Array.from(
-    ctx.client.aqua.nodeMap.values() as Iterable<NodeLike>
+    ctx.client.aqua.nodeMap.values() as Iterable<Node>
   )
   const connectedNodes = allNodes.filter((node) => node?.connected)
 
@@ -224,7 +210,9 @@ function createSourcesContainer(
 export default class SourcesCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     try {
-      if (!(await safeDefer(ctx))) return
+      if (!(await safeDefer(ctx))) {
+        return
+      }
 
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
@@ -270,7 +258,10 @@ export default class SourcesCommand extends Command {
         flags: COMPONENTS_V2_FLAG
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

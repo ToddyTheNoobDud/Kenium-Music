@@ -1,6 +1,7 @@
 import { Command, type CommandContext, Declare, Middlewares } from 'seyfert'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
 import { createNowPlayingContainer } from '../shared/nowPlaying.ts'
+import { getTrackRequester } from '../shared/trackRequester.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 
 @Declare({
@@ -16,7 +17,9 @@ export default class Grab extends Command {
       const t = ctx.t.get(lang)
 
       const guildId = ctx.guildId
-      if (!guildId) return
+      if (!guildId) {
+        return
+      }
 
       const player = client.aqua.players.get(guildId)
 
@@ -31,21 +34,18 @@ export default class Grab extends Command {
 
       const artworkUrl =
         song?.info?.artworkUrl ||
-        // biome-ignore lint/suspicious/noExplicitAny: library requirement
-        (client as any)?.me?.avatarURL?.({ extension: 'webp' }) ||
+        client.me.avatarURL({ extension: 'webp' }) ||
         ''
 
       const trackUI = createNowPlayingContainer({
         position: player.position,
         volume: player.volume,
-        loop: player.loop as string,
-        queueLength: player.queue?.length || 0,
+        loop: player.loop,
+        queueLength: player.hasQueue ? player.queue.size : 0,
         title: song.title,
         uri: song.uri,
         length: song.length,
-        requesterName:
-          (song.requester as { username?: string } | undefined)?.username ||
-          'Unknown',
+        requesterName: getTrackRequester(song.requester).username || 'Unknown',
         artworkUrl
       })
 
@@ -68,7 +68,9 @@ export default class Grab extends Command {
       }
     } catch (error: unknown) {
       console.error('Grab Command Error:', error)
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
 
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)

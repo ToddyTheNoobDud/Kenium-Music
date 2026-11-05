@@ -33,8 +33,12 @@ const PLAYER_ACTIONS = new Set([
 ])
 
 export function classifyInteractionId(customId: string): PlaylistInteraction {
-  if (customId.startsWith('ignore_')) return { kind: 'ignore' }
-  if (PLAYER_ACTIONS.has(customId)) return { kind: 'player' }
+  if (customId.startsWith('ignore_')) {
+    return { kind: 'ignore' }
+  }
+  if (PLAYER_ACTIONS.has(customId)) {
+    return { kind: 'player' }
+  }
 
   const idParts = customId.split(':')
   if (
@@ -62,7 +66,9 @@ export function classifyInteractionId(customId: string): PlaylistInteraction {
 
   const parts = customId.split('_')
   const userId = parts.at(-1)
-  if (!userId) return { kind: 'unknown' }
+  if (!userId) {
+    return { kind: 'unknown' }
+  }
 
   if (
     parts.length >= 4 &&
@@ -83,7 +89,9 @@ export function classifyInteractionId(customId: string): PlaylistInteraction {
     (parts[1] === 'prev' || parts[1] === 'next')
   ) {
     const page = Number(parts[2])
-    if (!Number.isFinite(page)) return { kind: 'unknown' }
+    if (!Number.isFinite(page)) {
+      return { kind: 'unknown' }
+    }
     return {
       kind: 'playlist',
       action: parts[1] === 'prev' ? 'previous' : 'next',

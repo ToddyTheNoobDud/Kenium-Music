@@ -1,31 +1,34 @@
 import {
+  type ButtonInteraction,
   Command,
   type CommandContext,
   Container,
   createStringOption,
   Declare,
+  type Message,
   Middlewares,
-  Options
+  Options,
+  type WebhookMessage
 } from 'seyfert'
 import { MUSIC_PLATFORMS } from '../shared/emojis.ts'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
-import type {
-  ComponentCollectorLike,
-  ComponentCollectorSourceLike,
-  InteractionLike,
-  PlayerLike,
-  TrackLike
-} from '../shared/helperTypes.ts'
-import { ensurePlayerForVoice, maybeStartPlayback } from '../shared/playback.ts'
+import type { PlayerLike, TrackLike } from '../shared/helperTypes.ts'
+import {
+  enqueueTrack,
+  ensurePlayerForVoice,
+  getQueueCapacity,
+  getQueueLoadState,
+  maybeStartPlayback
+} from '../shared/playback.ts'
 import { formatDuration, truncate } from '../shared/utils.ts'
 import { authorizeVoiceControl } from '../shared/voiceAuthorization.ts'
+import type { Translations } from '../utils/i18n.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
-import { getMemberVoiceState } from '../utils/interactions.ts'
+import { getMemberVoiceState, safeDefer } from '../utils/interactions.ts'
 
 const CONFIG = Object.freeze({
   INTERACTION_TIMEOUT: 45000,
   MAX_RESULTS: 5,
-  DEFAULT_PLATFORM: 'youtube' as keyof typeof MUSIC_PLATFORMS,
   BUTTON_STYLE_SELECTION: 2,
   MAX_QUERY_LENGTH: 100,
   MIN_QUERY_LENGTH: 2
@@ -33,7 +36,6 @@ const CONFIG = Object.freeze({
 
 const REGEX_PATTERNS = Object.freeze({
   CUSTOM_EMOJI: /^<:([a-zA-Z0-9_]+):(\d+)>$/,
-  DURATION_PARTS: /(\d+):(\d+)/,
   CLEAN_QUERY: /[^\w\s-]/g,
   WHITESPACE: /\s+/g
 })
@@ -64,47 +66,6 @@ type SearchTrackLike = TrackLike & {
   platform?: {
     emoji?: string
   } | null
-}
-
-type SearchTextLike = {
-  common?: {
-    unknown?: string
-  }
-  player?: {
-    author?: string
-  }
-  commands?: {
-    search?: {
-      name?: string
-    }
-  }
-  search: {
-    invalidQuery: string
-    noResults: string
-    genericError: string
-    noVoiceChannel: string
-    failedToJoinVoice: string
-    trackAdded: string
-    searchError: string
-  }
-}
-
-type SearchInteractionLike = InteractionLike & {
-  customId: string
-  deferUpdate: () => Promise<unknown>
-  followup: (
-    payload: { content: string; flags: number },
-    fetchReply?: boolean
-  ) => Promise<unknown>
-  editOrReply: (payload: {
-    components: Container[]
-    flags?: number
-  }) => Promise<unknown>
-}
-
-type SearchMessageLike = ComponentCollectorSourceLike<SearchInteractionLike> & {
-  delete?: () => Promise<unknown>
-  edit?: (payload: { components: Container[] | [] }) => Promise<unknown>
 }
 
 type TextDisplayComponent = { type: 10; content: string }
@@ -148,28 +109,28 @@ const options = {
   description: 'Search for a song on music platforms'
 })
 export default class SearchCommand extends Command {
-  private activeCollectors = new WeakSet<
-    ComponentCollectorLike<SearchInteractionLike>
-  >()
-
-  public override async run(ctx: CommandContext): Promise<void> {
+  public override async run(
+    ctx: CommandContext<typeof options>
+  ): Promise<void> {
     const lang = getContextLanguage(ctx)
-    const thele = ctx.t.get(lang) as unknown as SearchTextLike
-    const { query, platform = 'youtube' } = ctx.options as {
-      query: string
-      platform?: string
-    }
+    const thele = ctx.t.get(lang)
+    const { query, platform = 'youtube' } = ctx.options
 
     // Validate and sanitize query
     const cleanQuery = sanitizeQuery(query)
     if (cleanQuery.length < CONFIG.MIN_QUERY_LENGTH) {
-      await ctx.write({ content: thele.search.invalidQuery, flags: 64 })
+      await ctx.editOrReply({ content: thele.search.invalidQuery, flags: 64 })
       return
     }
 
     try {
+      if (!(await safeDefer(ctx, true))) {
+        return
+      }
       const player = await this.getOrCreatePlayer(ctx, thele)
-      if (!player) return
+      if (!player) {
+        return
+      }
 
       // Get the selected platform or default to YouTube
       const platformKey = platform as keyof typeof MUSIC_PLATFORMS
@@ -183,7 +144,7 @@ export default class SearchCommand extends Command {
       )
 
       if (!tracks.length) {
-        await ctx.write({ content: thele.search.noResults, flags: 64 })
+        await ctx.editOrReply({ content: thele.search.noResults, flags: 64 })
         return
       }
 
@@ -193,33 +154,38 @@ export default class SearchCommand extends Command {
         selectedPlatform,
         thele
       )
-      const message = (await ctx.write(
-        { components: [searchContainer], flags: 32768 | 64 },
-        true
-      )) as SearchMessageLike
+      const message = await ctx.editResponse({
+        components: [searchContainer],
+        flags: 32768 | 64
+      })
 
       this.setupInteractionHandler(message, ctx, cleanQuery, tracks, thele)
     } catch (error: unknown) {
       console.error('Search command error:', error)
-      if (isExpiredInteraction(error)) return
-      await ctx.write({ content: thele.search.genericError, flags: 64 })
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      await ctx.editOrReply({ content: thele.search.genericError, flags: 64 })
     }
   }
 
   private async getOrCreatePlayer(
     ctx: CommandContext,
-    thele: SearchTextLike
+    thele: Translations
   ): Promise<PlayerLike | null> {
     try {
       const player = await ensurePlayerForVoice(ctx, ctx.channelId)
       if (!player) {
-        await ctx.write({ content: thele.search.noVoiceChannel, flags: 64 })
+        await ctx.editOrReply({
+          content: thele.search.noVoiceChannel,
+          flags: 64
+        })
         return null
       }
       return player
     } catch (error) {
       console.error('Failed to create player:', error)
-      await ctx.write({
+      await ctx.editOrReply({
         content: thele.search.failedToJoinVoice,
         flags: 64
       })
@@ -251,7 +217,7 @@ export default class SearchCommand extends Command {
     track: SearchTrackLike,
     index: number,
     platform: MusicPlatform,
-    thele: SearchTextLike
+    thele: Translations
   ): string {
     const emoji = track.platform?.emoji || platform.emoji
     const titleValue = String(track.info?.title || track.title || 'Unknown')
@@ -276,7 +242,7 @@ export default class SearchCommand extends Command {
     track: SearchTrackLike,
     index: number,
     platform: MusicPlatform,
-    thele: SearchTextLike
+    thele: Translations
   ): SectionComponent {
     return {
       type: 9,
@@ -299,7 +265,7 @@ export default class SearchCommand extends Command {
     query: string,
     tracks: SearchTrackLike[],
     platform: MusicPlatform,
-    thele: SearchTextLike
+    thele: Translations
   ): Container {
     const components: Array<
       | TextDisplayComponent
@@ -349,41 +315,27 @@ export default class SearchCommand extends Command {
   }
 
   private setupInteractionHandler(
-    message: SearchMessageLike,
+    message: Message | WebhookMessage,
     ctx: CommandContext,
     query: string,
     tracks: SearchTrackLike[],
-    thele: SearchTextLike
+    thele: Translations
   ): void {
-    let collector: ComponentCollectorLike<SearchInteractionLike> | undefined
-    collector = message.createComponentCollector?.({
-      filter: (i: SearchInteractionLike) =>
-        i.user.id === ctx.interaction.user.id,
+    const collector = message.createComponentCollector({
+      filter: (i) => i.user.id === ctx.interaction.user.id,
       idle: CONFIG.INTERACTION_TIMEOUT,
       onStop: () => {
-        if (collector) this.activeCollectors.delete(collector)
-        if (typeof message.delete === 'function') {
-          message.delete().catch(() => {
-            if (typeof message.edit === 'function') {
-              message.edit({ components: [] }).catch(() => {})
-            }
-          })
-          return
-        }
-        if (typeof message.edit === 'function') {
+        message.delete().catch(() => {
           message.edit({ components: [] }).catch(() => {})
-        }
+        })
       }
     })
-    if (!collector) return
-
-    this.activeCollectors.add(collector)
 
     // Handle track selection
     for (let i = 0; i < Math.min(tracks.length, CONFIG.MAX_RESULTS); i++) {
       collector.run(
         `ignore_select_${i}`,
-        async (interaction: SearchInteractionLike) => {
+        async (interaction: ButtonInteraction) => {
           try {
             await interaction.deferUpdate()
             await this.handleTrackSelection(interaction, ctx, tracks, thele)
@@ -398,7 +350,7 @@ export default class SearchCommand extends Command {
     Object.keys(MUSIC_PLATFORMS).forEach((key) => {
       collector.run(
         `ignore_platform_${key.toLowerCase()}`,
-        async (interaction: SearchInteractionLike) => {
+        async (interaction: ButtonInteraction) => {
           try {
             await interaction.deferUpdate()
             await this.handlePlatformSwitch(
@@ -417,10 +369,10 @@ export default class SearchCommand extends Command {
   }
 
   private async handleTrackSelection(
-    i: SearchInteractionLike,
+    i: ButtonInteraction,
     ctx: CommandContext,
     tracks: SearchTrackLike[],
-    thele: SearchTextLike
+    thele: Translations
   ): Promise<void> {
     const guildId = i.guildId ?? ctx.guildId
     const player = guildId
@@ -436,42 +388,54 @@ export default class SearchCommand extends Command {
       playerDestroyed: player?.destroyed === true
     })
     if (!authorization.ok || !player) {
-      await i.followup(
-        {
-          content:
-            'You must be in the same voice channel as the active player.',
-          flags: 64
-        },
-        true
-      )
+      await i.followup({
+        content: 'You must be in the same voice channel as the active player.',
+        flags: 64
+      })
       return
     }
     const trackIndex = parseInt(i.customId.split('_')[2] || '-1', 10)
     const track = tracks[trackIndex]
 
     if (track) {
-      if (typeof player.queue?.add === 'function') {
-        player.queue.add(track)
+      if (!getQueueCapacity(player)) {
+        await i.followup({
+          content: 'The queue limit is 1,000 tracks.',
+          flags: 64
+        })
+        return
+      }
+      const state = getQueueLoadState(player)
+      const result = await ctx.client.aqua.resolve({
+        query: track.info?.uri || track.uri || '',
+        requester: i.user
+      })
+      const freshTrack = result.tracks?.[0]
+      if (!freshTrack || !enqueueTrack(player, freshTrack, state)) {
+        await i.followup({
+          content: state.cancelled
+            ? 'Playback loading was cancelled.'
+            : 'The track could not be added; the queue limit is 1,000 tracks.',
+          flags: 64
+        })
+        return
       }
       const titleValue = String(track.info?.title || track.title || 'Unknown')
-      await i.followup(
-        {
-          content: `${thele.search.trackAdded}: **${titleValue.slice(0, 30)}${titleValue.length > 30 ? '...' : ''}**`,
-          flags: 64
-        },
-        true
-      )
+      await i.followup({
+        content: `${thele.search.trackAdded}: **${titleValue.slice(0, 30)}${titleValue.length > 30 ? '...' : ''}**`,
+        flags: 64
+      })
 
       await maybeStartPlayback(player)
     }
   }
 
   private async handlePlatformSwitch(
-    i: SearchInteractionLike,
+    i: ButtonInteraction,
     ctx: CommandContext,
     query: string,
     tracks: SearchTrackLike[],
-    thele: SearchTextLike
+    thele: Translations
   ): Promise<void> {
     const platformKey = i.customId.split('_')[2] as keyof typeof MUSIC_PLATFORMS
     const newPlatform = MUSIC_PLATFORMS[platformKey]
@@ -498,11 +462,11 @@ export default class SearchCommand extends Command {
         )
         await i.editOrReply({ components: [searchContainer], flags: 32768 })
       } else {
-        await i.followup({ content: thele.search.noResults, flags: 64 }, true)
+        await i.followup({ content: thele.search.noResults, flags: 64 })
       }
     } catch (error) {
       console.error(`Platform switch error:`, error)
-      await i.followup({ content: thele.search.searchError, flags: 64 }, true)
+      await i.followup({ content: thele.search.searchError, flags: 64 })
     }
   }
 }

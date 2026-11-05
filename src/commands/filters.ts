@@ -44,16 +44,20 @@ const options = {
 })
 @Middlewares(['checkPlayer', 'checkVoice', 'checkTrack'])
 export default class FiltersCommand extends Command {
-  public override async run(ctx: CommandContext) {
+  public override async run(ctx: CommandContext<typeof options>) {
     try {
       const { client } = ctx
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
 
-      if (!(await safeDefer(ctx, true))) return
+      if (!(await safeDefer(ctx, true))) {
+        return
+      }
 
       const guildId = ctx.guildId
-      if (!guildId) return
+      if (!guildId) {
+        return
+      }
 
       const player = client.aqua.players.get(guildId)
       if (!player) {
@@ -64,41 +68,41 @@ export default class FiltersCommand extends Command {
         return
       }
 
-      const { filters } = ctx.options as { filters: string }
+      const { filters } = ctx.options
 
-      player.filters.clearFilters()
+      await player.filters.clearFilters()
 
       switch (filters) {
         case '8d':
-          player.filters.set8D(true)
+          await player.filters.set8D(true)
           break
         case 'equalizer':
-          player.filters.setEqualizer([{ band: 0, gain: 0.5 }])
+          await player.filters.setEqualizer([{ band: 0, gain: 0.5 }])
           break
         case 'karaoke':
-          player.filters.setKaraoke(true)
+          await player.filters.setKaraoke(true)
           break
         case 'timescale':
-          player.filters.setTimescale(true, {
+          await player.filters.setTimescale(true, {
             speed: 1.2,
             pitch: 1.2,
             rate: 1.0
           })
           break
         case 'tremolo':
-          player.filters.setTremolo(true, { depth: 0.5, frequency: 4 })
+          await player.filters.setTremolo(true, { depth: 0.5, frequency: 4 })
           break
         case 'vibrato':
-          player.filters.setVibrato(true, { depth: 0.5, frequency: 4 })
+          await player.filters.setVibrato(true, { depth: 0.5, frequency: 4 })
           break
         case 'rotation':
-          player.filters.setRotation(true, { rotationHz: 0.2 })
+          await player.filters.setRotation(true, { rotationHz: 0.2 })
           break
         case 'distortion':
-          player.filters.setDistortion(true, { distortion: 0.5 })
+          await player.filters.setDistortion(true, { sinScale: 0.5 })
           break
         case 'channelMix':
-          player.filters.setChannelMix(true, {
+          await player.filters.setChannelMix(true, {
             leftToLeft: 0.5,
             leftToRight: 0.5,
             rightToLeft: 0.5,
@@ -106,22 +110,21 @@ export default class FiltersCommand extends Command {
           })
           break
         case 'lowPass':
-          player.filters.setLowPass(true, { smoothing: 20 })
+          await player.filters.setLowPass(true, { smoothing: 20 })
           break
         case 'bassboost':
-          player.filters.setBassboost(true)
+          await player.filters.setBassboost(true)
           break
         case 'slowmode':
-          player.filters.setSlowmode(true)
+          await player.filters.setSlowmode(true)
           break
         case 'nightcore':
-          player.filters.setNightcore(true)
+          await player.filters.setNightcore(true)
           break
         case 'vaporwave':
-          player.filters.setVaporwave(true)
+          await player.filters.setVaporwave(true)
           break
         case 'clear':
-          player.filters.clearFilters()
           break
         default:
           await ctx.editOrReply({
@@ -143,7 +146,9 @@ export default class FiltersCommand extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
       console.error('filters command error:', error)
     }
   }

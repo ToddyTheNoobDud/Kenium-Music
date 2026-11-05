@@ -30,19 +30,23 @@ const options = {
   description: 'Want some loop bro?'
 })
 export default class LoopCommand extends Command {
-  public override async run(ctx: CommandContext): Promise<void> {
+  public override async run(
+    ctx: CommandContext<typeof options>
+  ): Promise<void> {
     try {
       const { client } = ctx
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
-      const { loop } = ctx.options as { loop: string }
+      const { loop } = ctx.options
 
       const player = client.aqua.players.get(ctx.guildId || '') as
         | (Player & {
             setLoop(v: number): void
           })
         | undefined
-      if (!player) return
+      if (!player) {
+        return
+      }
       const loopMap: Record<string, number> = { none: 0, track: 1, queue: 2 }
       const loopValue = loopMap[loop] ?? 0
       player.setLoop(loopValue)
@@ -66,7 +70,9 @@ export default class LoopCommand extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (getErrorCode(error) === 10065) return
+      if (getErrorCode(error) === 10065) {
+        return
+      }
     }
   }
 }

@@ -1,4 +1,4 @@
-import type { AquaClientLike, PlayerLike } from './helperTypes.ts'
+import type { AquaClientLike } from './helperTypes.ts'
 
 const DEFAULT_PLAYER_CONNECTION_OPTIONS = Object.freeze({
   deaf: true,
@@ -11,33 +11,11 @@ type PlayerConnectionOptions = {
   textChannel?: string | null
 }
 
-export const getGuildPlayer = (
-  client: {
-    aqua: { players: { get?: (id: string) => PlayerLike | undefined } }
-  },
-  guildId: string | null | undefined
-): PlayerLike | undefined => {
-  if (!guildId) return undefined
-  return client.aqua.players.get?.(guildId)
-}
-
-export const createPlayerConnection = (
+export const createPlayerConnection = async (
   client: AquaClientLike,
   { guildId, voiceChannel, textChannel }: PlayerConnectionOptions
 ) => {
-  const aqua = client.aqua as {
-    createConnection?: (options: {
-      guildId: string
-      voiceChannel: string
-      deaf: boolean
-      defaultVolume: number
-      textChannel?: string
-    }) => PlayerLike
-  }
-
-  if (typeof aqua.createConnection !== 'function') return undefined
-
-  return aqua.createConnection({
+  return client.aqua.createConnection({
     guildId,
     voiceChannel,
     ...DEFAULT_PLAYER_CONNECTION_OPTIONS,
@@ -45,27 +23,26 @@ export const createPlayerConnection = (
   })
 }
 
-export const getOrCreatePlayer = (
+export const getOrCreatePlayer = async (
   client: AquaClientLike,
   options: PlayerConnectionOptions
 ) => {
-  const players = client.aqua.players as
-    | { get?: (guildId: string) => PlayerLike | undefined }
-    | undefined
-  const player =
-    typeof players?.get === 'function'
-      ? players.get(options.guildId)
-      : undefined
-  if (player && !player.destroyed && player.queue) {
-    if (options.voiceChannel && player.voiceChannel !== options.voiceChannel) {
-      player.connect?.({
+  const player = client.aqua.players.get(options.guildId)
+  if (player && !player.destroyed) {
+    if (
+      options.voiceChannel &&
+      (player.connected === false ||
+        player.voiceChannel !== options.voiceChannel)
+    ) {
+      await player.connect({
         guildId: options.guildId,
         voiceChannel: options.voiceChannel,
         ...(options.textChannel ? { textChannel: options.textChannel } : {})
       })
     }
-    if (options.textChannel && player.textChannel !== options.textChannel)
+    if (options.textChannel && player.textChannel !== options.textChannel) {
       player.textChannel = options.textChannel
+    }
     return player
   }
 

@@ -1,22 +1,46 @@
-import type { CommandContext } from 'seyfert'
 import { getErrorCode, isInteractionExpired } from '../utils/interactions.ts'
 
-export function withErrorGuard(
-  run: (ctx: CommandContext) => Promise<void>
-): (ctx: CommandContext) => Promise<void> {
-  return async (ctx: CommandContext) => {
-    try {
-      await run(ctx)
-    } catch (err: unknown) {
-      if (isInteractionExpired(err) || getErrorCode(err) === 10065) return
-      console.error(err)
-      try {
-        await ctx.editOrReply({ content: 'An error occurred.' })
-      } catch (innerErr) {
-        if (isInteractionExpired(innerErr)) return
-      }
+type DiscordApiErrorLike = {
+  body?: { code?: unknown }
+  response?: { code?: unknown }
+  metadata?: {
+    response?: { code?: unknown }
+    code?: unknown
+    detail?: unknown
+  }
+  message?: unknown
+  code?: unknown
+}
+
+export const extractDiscordApiCode = (error: unknown): number | null => {
+  const err = error as DiscordApiErrorLike
+  const candidates = [
+    err?.body?.code,
+    err?.response?.code,
+    err?.metadata?.response?.code,
+    err?.metadata?.code,
+    err?.code
+  ]
+
+  for (const candidate of candidates) {
+    const value = Number(candidate)
+    if (Number.isFinite(value)) {
+      return value
     }
   }
+
+  const text = String(err?.metadata?.detail || err?.message || err?.code || '')
+  const directMatch = text.match(/\b(10003|10004|50001|50013)\b/)
+  if (directMatch?.[1]) {
+    return Number(directMatch[1])
+  }
+
+  const suffixMatch = String(err?.code || '').match(/_(\d{5})$/)
+  if (suffixMatch?.[1]) {
+    return Number(suffixMatch[1])
+  }
+
+  return null
 }
 
 export function isExpiredInteraction(error: unknown): boolean {

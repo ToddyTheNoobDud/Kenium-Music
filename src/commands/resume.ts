@@ -21,7 +21,9 @@ export default class resumecmds extends Command {
       const { client } = ctx
 
       const player = client.aqua.players.get(String(ctx.guildId))
-      if (!player) return
+      if (!player) {
+        return
+      }
 
       if (!player.paused) {
         await ctx.editOrReply({
@@ -44,7 +46,10 @@ export default class resumecmds extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

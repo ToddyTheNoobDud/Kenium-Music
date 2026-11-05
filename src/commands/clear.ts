@@ -5,6 +5,7 @@ import {
   Embed,
   Middlewares
 } from 'seyfert'
+import { dropPendingPlaylistLoads } from '../events/playlistPlayback.ts'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 
@@ -12,7 +13,7 @@ import { getContextLanguage } from '../utils/i18n.ts'
   name: 'clear',
   description: 'Clear the music queue'
 })
-@Middlewares(['checkPlayer', 'checkVoice', 'checkTrack'])
+@Middlewares(['checkPlayer', 'checkVoice'])
 export default class clearcmds extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     try {
@@ -21,12 +22,18 @@ export default class clearcmds extends Command {
       const t = ctx.t.get(lang)
 
       const guildId = ctx.guildId
-      if (!guildId) return
+      if (!guildId) {
+        return
+      }
 
       const player = client.aqua.players.get(guildId)
-      if (!player) return
+      if (!player) {
+        return
+      }
 
-      if (player.queue.length === 0) {
+      dropPendingPlaylistLoads(player)
+
+      if (!player.hasQueue || player.queue.size === 0) {
         await ctx.editOrReply({
           embeds: [
             new Embed()
@@ -49,7 +56,10 @@ export default class clearcmds extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

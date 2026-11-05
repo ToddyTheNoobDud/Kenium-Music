@@ -20,13 +20,6 @@ import { getContextTranslations } from '../../utils/i18n.ts'
 const playlistsCol = () => getPlaylistsCollection()
 const tracksCol = () => getTracksCollection()
 
-type PlaylistDeleteTextLike = {
-  notFound?: string
-  notFoundDesc?: string
-  deleted?: string
-  deletedDesc?: string
-}
-
 const options = {
   name: createStringOption({
     description: 'Playlist name',
@@ -42,14 +35,10 @@ const options = {
 })
 @Options(options)
 export class DeleteCommand extends SubCommand {
-  async run(ctx: CommandContext) {
-    const { name: playlistName } = ctx.options as { name: string }
+  async run(ctx: CommandContext<typeof options>) {
+    const { name: playlistName } = ctx.options
     const userId = ctx.author.id
-    const t = (
-      getContextTranslations(ctx) as {
-        playlist?: { delete?: PlaylistDeleteTextLike }
-      }
-    ).playlist?.delete
+    const t = getContextTranslations(ctx).playlist.delete
 
     const playlist = playlistsCol().findOne(
       {

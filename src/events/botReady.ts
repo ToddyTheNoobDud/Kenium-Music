@@ -1,19 +1,88 @@
-import { createEvent } from 'seyfert'
-import { updatePresence } from '../../index.ts'
+import {
+  type Client,
+  createEvent,
+  PresenceUpdateStatus,
+  type UsingClient
+} from 'seyfert'
+import { APP_VERSION } from '../shared/constants.ts'
+import { extractDiscordApiCode } from '../shared/errorGuard.ts'
 import { createPlayerConnection } from '../shared/player.ts'
 import { isSupportedVoiceChannelType } from '../shared/voiceLifecycle.ts'
 import { getSettingsCollection } from '../utils/db.ts'
 import {
-  disable247Sync,
   purgeInvalidSettings,
   updateGuildSettingsSync
 } from '../utils/db_helper.ts'
 import {
+  disableTwentyFourSevenForUnknownChannel,
   isVoiceGatewayHealthy,
   refresh247Cache,
   registerVoiceManager,
+  requestTwentyFourSevenRecovery,
   setAutoJoinRunning
 } from './voiceStateUpdate.ts'
+
+export const presenceState = {
+  presenceInterval: null as ReturnType<typeof setInterval> | null,
+  cachedGuildCount: 0,
+  cachedUserCount: 0,
+  lastCountUpdate: 0
+}
+
+const PRESENCE_UPDATE_INTERVAL = 60000
+const COUNT_CACHE_TTL = 300000
+const PRESENCE_ACTIVITIES = [
+  {
+    name: `⚡ Kenium ${APP_VERSION} ⚡`,
+    type: 1,
+    url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
+  },
+  {
+    name: '{users} users',
+    type: 1,
+    url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
+  },
+  {
+    name: '{guilds} servers',
+    type: 1,
+    url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
+  }
+]
+
+export const updatePresence = (client: Client<true>) => {
+  if (presenceState.presenceInterval) {
+    clearInterval(presenceState.presenceInterval)
+  }
+  let activityIndex = 0
+  presenceState.presenceInterval = setInterval(() => {
+    if (!client.me?.id) {
+      return
+    }
+    const now = Date.now()
+    if (now - presenceState.lastCountUpdate > COUNT_CACHE_TTL) {
+      presenceState.cachedGuildCount = client.cache.guilds?.count() ?? 0
+      const guilds = client.cache.guilds?.values() ?? []
+      presenceState.cachedUserCount = guilds.reduce(
+        (total, guild) => total + (guild.memberCount ?? 0),
+        0
+      )
+      presenceState.lastCountUpdate = now
+    }
+    // biome-ignore lint/style/noNonNullAssertion: the index wraps at the activity count
+    const activity = PRESENCE_ACTIVITIES[activityIndex]!
+    activityIndex = (activityIndex + 1) % PRESENCE_ACTIVITIES.length
+    const name = activity.name
+      .replace('{users}', String(presenceState.cachedUserCount))
+      .replace('{guilds}', String(presenceState.cachedGuildCount))
+    client.gateway.setPresence({
+      activities: [{ ...activity, name }],
+      status: PresenceUpdateStatus.Idle,
+      since: now,
+      afk: true
+    })
+  }, PRESENCE_UPDATE_INTERVAL)
+  presenceState.presenceInterval.unref()
+}
 
 const NICKNAME_SUFFIX = ' [24/7]'
 const BATCH_SIZE = 2
@@ -25,37 +94,7 @@ const STARTUP_DELAY = 12000
 const PURGE_DELAY = 6000
 const AQUA_RETRY_DELAY = 30000
 
-type LoggerLike = {
-  info: (...args: unknown[]) => void
-  warn: (...args: unknown[]) => void
-  error: (...args: unknown[]) => void
-}
-
-type ManagedPlayerLike = {
-  destroy?: () => unknown
-}
-
-type GuildMemberLike = {
-  nickname?: string | null
-  user?: { username?: string | null }
-  edit?: (options: { nick: string }) => Promise<unknown>
-}
-
-type ChannelLike = {
-  type?: number
-}
-
-type GuildLike = {
-  name?: string
-  members?: {
-    me?: GuildMemberLike
-  }
-  channels: {
-    fetch: (channelId: string) => Promise<ChannelLike | null>
-  }
-}
-
-type SettingsLike = {
+type SavedVoiceSettings = {
   _id?: string
   guildId?: string
   voiceChannelId?: string | null
@@ -63,169 +102,148 @@ type SettingsLike = {
   twentyFourSevenEnabled?: boolean
 }
 
-type DiscordApiErrorLike = {
-  body?: { code?: unknown }
-  response?: { code?: unknown }
-  metadata?: {
-    response?: { code?: unknown }
-    code?: unknown
-    detail?: unknown
-  }
-  message?: unknown
-  code?: unknown
-}
-
-type BotReadyClient = Parameters<typeof updatePresence>[0] &
-  Parameters<typeof createPlayerConnection>[0] & {
-    botId?: string
-    aqua: Parameters<typeof createPlayerConnection>[0]['aqua'] & {
-      initiated?: boolean
-      leastUsedNodes?: unknown[]
-      players?: {
-        get: (guildId: string) => ManagedPlayerLike | undefined
-      }
-      init: (botId: string) => Promise<unknown>
-    }
-    logger: LoggerLike
-    guilds: {
-      fetch: (guildId: string) => Promise<unknown>
-    }
-  }
-
-let settingsCollection: ReturnType<typeof getSettingsCollection> | null = null
-let clientInstance: BotReadyClient | null = null
 let autoJoinStarted = false
+let playersLoaded = false
 let aquaRetryTimer: NodeJS.Timeout | null = null
 
-const extractDiscordApiCode = (err: DiscordApiErrorLike): number | null => {
-  const candidates = [
-    err?.body?.code,
-    err?.response?.code,
-    err?.metadata?.response?.code,
-    err?.metadata?.code
-  ]
+const hasReadyAqua = (client: UsingClient) =>
+  client.aqua.initiated && client.aqua.leastUsedNodes.length > 0
 
-  for (const candidate of candidates) {
-    const value = Number(candidate)
-    if (Number.isFinite(value)) return value
+// aqualink v4 requires an explicit loadPlayers() call to restore the
+// players that savePlayer() wrote on the previous shutdown. Without it
+// the saved file is never read and non-24/7 sessions are lost on reboot.
+// loadPlayers skips guilds that already have a player, so running it
+// before the 24/7 auto-join sweep is safe for 24/7 guilds too.
+const restoreSavedPlayers = async (client: UsingClient): Promise<void> => {
+  if (playersLoaded || !hasReadyAqua(client)) {
+    return
   }
-
-  const text = String(err?.metadata?.detail || err?.message || err?.code || '')
-  const directMatch = text.match(/\b(10003|10004|50001|50013)\b/)
-  if (directMatch?.[1]) return Number(directMatch[1])
-
-  const suffixMatch = String(err?.code || '').match(/_(\d{5})$/)
-  if (suffixMatch?.[1]) return Number(suffixMatch[1])
-
-  return null
-}
-
-const getSettings = () => {
-  if (!settingsCollection) settingsCollection = getSettingsCollection()
-  return settingsCollection
-}
-
-const hasReadyAqua = (client: BotReadyClient) =>
-  !!(
-    client.aqua?.initiated &&
-    Array.isArray(client.aqua?.leastUsedNodes) &&
-    client.aqua.leastUsedNodes.length > 0
-  )
-
-const updateNickname = async (guild: {
-  members?: { me?: GuildMemberLike }
-}) => {
-  const botMember = guild.members?.me
-  if (!botMember) return
-
-  const currentNick = botMember.nickname || botMember.user?.username || ''
-  if (currentNick.includes(NICKNAME_SUFFIX)) return
-
+  playersLoaded = true
   try {
-    await botMember.edit?.({ nick: currentNick + NICKNAME_SUFFIX })
+    await client.aqua.loadPlayers()
+    client.logger.info('[Aqua] Restored saved players from disk.')
+  } catch (err) {
+    playersLoaded = false
+    const error = err as NodeJS.ErrnoException
+    if (error?.code === 'ENOENT') {
+      client.logger.info('[Aqua] No saved players file found, starting fresh.')
+      return
+    }
+    client.logger.warn(
+      `[Aqua] Failed to load saved players: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+}
+
+const updateNickname = async (
+  guild: Awaited<ReturnType<UsingClient['guilds']['fetch']>>,
+  botId: string
+) => {
+  try {
+    const botMember = await guild.members.fetch(botId)
+    const currentNick = botMember.nick || botMember.user.username
+    if (!currentNick.includes(NICKNAME_SUFFIX)) {
+      await botMember.edit({ nick: currentNick + NICKNAME_SUFFIX })
+    }
   } catch {}
 }
 
-const disable247ForGuild = async (guildId: string, reason: string) => {
-  try {
-    if (guildId && /^\d+$/.test(guildId)) {
-      disable247Sync(guildId, reason)
-    }
-
-    const player = clientInstance?.aqua?.players?.get(guildId)
-    player?.destroy?.()
-
-    clientInstance?.logger?.info(
-      `[24/7] Disabled for guild ${guildId}: ${reason}`
-    )
-  } catch (err) {
-    clientInstance?.logger?.error(`[24/7] Disable failed for ${guildId}:`, err)
-  }
-}
-
 const clearInvalidTextChannel = async (
+  client: UsingClient,
   guildId: string,
   textChannelId: string
 ) => {
   try {
     updateGuildSettingsSync(guildId, { textChannelId: null })
-    clientInstance?.logger?.info(
+    client.logger.info(
       `[24/7] Cleared invalid text channel ${textChannelId} for guild ${guildId}.`
     )
   } catch (err) {
-    clientInstance?.logger?.error(
+    client.logger.error(
       `[24/7] Failed to clear text channel ${textChannelId} for ${guildId}:`,
       err
     )
   }
 }
 
-const processGuild = async (client: BotReadyClient, settings: SettingsLike) => {
+export const processGuild = async (
+  client: UsingClient,
+  settings: SavedVoiceSettings
+) => {
   const guildId = String(settings._id || settings.guildId || '')
-  if (!guildId) return
-  if (!isVoiceGatewayHealthy()) return
+  if (!guildId) {
+    return
+  }
+  if (!isVoiceGatewayHealthy()) {
+    return
+  }
 
   const voiceChannelId = settings.voiceChannelId
   const textChannelId = settings.textChannelId || null
 
   if (!voiceChannelId) {
-    await disable247ForGuild(guildId, 'missing voice channel id')
+    client.logger.warn(
+      `[24/7] Missing saved voice channel for ${guildId}; keeping 24/7 settings.`
+    )
     return
   }
 
   const guild = await client.guilds.fetch(guildId).catch((err: unknown) => {
-    const apiCode = extractDiscordApiCode(err as DiscordApiErrorLike)
-    if (apiCode === 10004 || apiCode === 50001 || apiCode === 50013) {
-      client.logger.warn(
-        `[24/7] Guild ${guildId} is inaccessible (${apiCode}). Removing invalid 24/7 settings.`
+    if (extractDiscordApiCode(err) === 10004) {
+      updateGuildSettingsSync(guildId, {
+        twentyFourSevenEnabled: false,
+        last247DisableReason: 'unknown_guild'
+      })
+      client.logger.info(
+        `[24/7] Disabled 24/7 for unknown guild ${guildId} (Discord 10004).`
       )
-      void disable247ForGuild(guildId, `Guild fetch failed ${apiCode}`)
       return null
     }
-
     client.logger.warn(
       `[24/7] Failed to fetch guild ${guildId}: ${err instanceof Error ? err.message : String(err)}`
     )
     return null
   })
 
-  if (!guild) return
-  const guildLike = guild as GuildLike
+  if (!guild) {
+    return
+  }
 
   const [voiceChannel, textChannel] = await Promise.all([
-    guildLike.channels.fetch(voiceChannelId).catch(() => null),
+    guild.channels.fetch(voiceChannelId, true).catch(async (err: unknown) => {
+      if (extractDiscordApiCode(err) === 10003) {
+        await disableTwentyFourSevenForUnknownChannel(
+          client,
+          guildId,
+          voiceChannelId
+        )
+        return null
+      }
+      client.logger.warn(
+        `[24/7] Failed to fetch voice channel ${voiceChannelId} for ${guildId}; keeping 24/7 settings: ${err instanceof Error ? err.message : String(err)}`
+      )
+      return undefined
+    }),
     textChannelId
-      ? guildLike.channels.fetch(textChannelId).catch(() => null)
+      ? guild.channels.fetch(textChannelId).catch((err: unknown) => {
+          if (extractDiscordApiCode(err) === 10003) {
+            return null
+          }
+          client.logger.warn(
+            `[24/7] Failed to fetch text channel ${textChannelId} for ${guildId}; keeping its saved ID: ${err instanceof Error ? err.message : String(err)}`
+          )
+          return undefined
+        })
       : null
   ])
 
-  if (!voiceChannel || !isSupportedVoiceChannelType(voiceChannel.type)) {
+  if (voiceChannel == null) {
+    return
+  }
+
+  if (!isSupportedVoiceChannelType(voiceChannel.type)) {
     client.logger.warn(
-      `[24/7] ${guildLike.name} (${guildId}): Voice channel ${voiceChannelId} is invalid or missing.`
-    )
-    await disable247ForGuild(
-      guildId,
-      `Voice channel ${voiceChannelId} is invalid or missing`
+      `[24/7] ${guild.name} (${guildId}): Voice channel ${voiceChannelId} is invalid or missing. Keeping 24/7 settings.`
     )
     return
   }
@@ -235,11 +253,11 @@ const processGuild = async (client: BotReadyClient, settings: SettingsLike) => {
     !!textChannel &&
     !!textChannelId &&
     validTextTypes.includes(textChannel.type ?? -1)
-  if (textChannelId && !canUseText) {
+  if (textChannelId && textChannel !== undefined && !canUseText) {
     client.logger.warn(
-      `[24/7] ${guildLike.name} (${guildId}): Text channel ${textChannelId} is invalid/missing. Proceeding with voice only.`
+      `[24/7] ${guild.name} (${guildId}): Text channel ${textChannelId} is invalid/missing. Proceeding with voice only.`
     )
-    await clearInvalidTextChannel(guildId, textChannelId)
+    await clearInvalidTextChannel(client, guildId, textChannelId)
   }
 
   if (!hasReadyAqua(client)) {
@@ -251,14 +269,12 @@ const processGuild = async (client: BotReadyClient, settings: SettingsLike) => {
 
   try {
     await Promise.all([
-      Promise.resolve(
-        createPlayerConnection(client, {
-          guildId,
-          voiceChannel: voiceChannelId,
-          ...(canUseText ? { textChannel: textChannelId } : {})
-        })
-      ),
-      updateNickname(guildLike)
+      createPlayerConnection(client, {
+        guildId,
+        voiceChannel: voiceChannelId,
+        ...(canUseText ? { textChannel: textChannelId } : {})
+      }),
+      updateNickname(guild, client.botId)
     ])
   } catch (err) {
     client.logger.warn(
@@ -267,18 +283,17 @@ const processGuild = async (client: BotReadyClient, settings: SettingsLike) => {
   }
 }
 
-const processAutoJoin = async (client: BotReadyClient) => {
-  if (autoJoinStarted) return
+export const processAutoJoin = async (client: UsingClient) => {
   if (!hasReadyAqua(client)) {
+    autoJoinStarted = false
     client.logger.warn(
-      '[24/7] Auto-join skipped: Aqua has no connected Lavalink node yet.'
+      '[24/7] Waiting for a ready Lavalink node before auto-join.'
     )
+    await tryInitAqua(client)
     return
   }
-  autoJoinStarted = true
-  client.logger.info('[24/7] Scanning database for 24/7 guilds...')
 
-  const enabled = getSettings().find(
+  const enabled = getSettingsCollection().find(
     {
       twentyFourSevenEnabled: true,
       voiceChannelId: { $ne: null }
@@ -292,10 +307,11 @@ const processAutoJoin = async (client: BotReadyClient) => {
         'twentyFourSevenEnabled'
       ]
     }
-  ) as SettingsLike[]
+  ) as SavedVoiceSettings[]
 
   if (!enabled?.length) {
     client.logger.info('[24/7] No guilds found to rejoin.')
+    setAutoJoinRunning(false)
     return
   }
 
@@ -305,7 +321,11 @@ const processAutoJoin = async (client: BotReadyClient) => {
 
   setAutoJoinRunning(true)
   try {
-    for (let i = 0; i < enabled.length; i += BATCH_SIZE) {
+    for (
+      let batchStart = 0;
+      batchStart < enabled.length;
+      batchStart += BATCH_SIZE
+    ) {
       let waits = 0
       while (!isVoiceGatewayHealthy() && waits < HEALTH_MAX_WAITS) {
         waits += 1
@@ -318,16 +338,13 @@ const processAutoJoin = async (client: BotReadyClient) => {
         break
       }
 
-      const batch = enabled.slice(i, i + BATCH_SIZE)
-      client.logger.info(
-        `[24/7] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}...`
-      )
+      const batch = enabled.slice(batchStart, batchStart + BATCH_SIZE)
 
       for (const settings of batch) {
         await processGuild(client, settings)
       }
 
-      if (i + BATCH_SIZE < enabled.length) {
+      if (batchStart + BATCH_SIZE < enabled.length) {
         const jitter = Math.floor(Math.random() * BATCH_JITTER)
         await new Promise((resolve) =>
           setTimeout(resolve, BATCH_DELAY + jitter)
@@ -339,25 +356,44 @@ const processAutoJoin = async (client: BotReadyClient) => {
   }
 
   client.logger.info('[24/7] Startup auto-join process finished.')
+  requestTwentyFourSevenRecovery(client, 'startup')
 }
 
-const scheduleAquaRetry = (client: BotReadyClient) => {
-  if (aquaRetryTimer) clearTimeout(aquaRetryTimer)
+const scheduleAquaRetry = (client: UsingClient) => {
+  if (aquaRetryTimer) {
+    clearTimeout(aquaRetryTimer)
+  }
   aquaRetryTimer = setTimeout(() => {
     aquaRetryTimer = null
     void tryInitAqua(client)
   }, AQUA_RETRY_DELAY)
-  aquaRetryTimer.unref?.()
+  aquaRetryTimer.unref()
 }
 
-const tryInitAqua = async (client: BotReadyClient) => {
-  if (!client.botId) return false
-  if (hasReadyAqua(client)) return true
+const tryInitAqua = async (client: UsingClient) => {
+  if (!client.botId) {
+    return false
+  }
   try {
-    await client.aqua.init(client.botId)
-    client.logger.info('[Aqua] Connected to Lavalink node(s).')
+    if (!hasReadyAqua(client)) {
+      await client.aqua.init(client.botId)
+      client.logger.info('[Aqua] Connected to Lavalink node(s).')
+    }
     if (!autoJoinStarted) {
-      setTimeout(() => void processAutoJoin(client), STARTUP_DELAY)
+      const startAutoJoin = async () => {
+        if (autoJoinStarted) {
+          return
+        }
+        autoJoinStarted = true
+        // Restore saved sessions first; auto-join then fills the gaps.
+        await restoreSavedPlayers(client)
+        setTimeout(() => void processAutoJoin(client), STARTUP_DELAY)
+      }
+      if (hasReadyAqua(client)) {
+        void startAutoJoin()
+      } else {
+        client.aqua.once('nodeReady', () => void startAutoJoin())
+      }
     }
     return true
   } catch (err) {
@@ -372,34 +408,26 @@ const tryInitAqua = async (client: BotReadyClient) => {
 export default createEvent({
   data: { once: true, name: 'botReady' },
   run: async (user, client) => {
-    const readyClient = client as unknown as BotReadyClient
-    clientInstance = readyClient
-    if (!readyClient.botId) readyClient.botId = user.id
+    if (!client.botId) {
+      client.botId = user.id
+    }
 
-    try {
-      registerVoiceManager(readyClient as any)
-    } catch {}
-    try {
-      refresh247Cache()
-    } catch {}
+    registerVoiceManager(client)
+    refresh247Cache()
 
-    await tryInitAqua(readyClient)
-    updatePresence(readyClient)
-    readyClient.logger.info(`${user.username} is ready`)
+    await tryInitAqua(client)
+    updatePresence(client)
+    client.logger.info(`${user.username} is ready`)
 
     setTimeout(async () => {
       const purged = await purgeInvalidSettings()
       if (purged > 0) {
-        readyClient.logger.info(
+        client.logger.info(
           `[24/7] Purged ${purged} malformed guild settings from database.`
         )
       }
     }, PURGE_DELAY)
 
-    await readyClient.me?.fetch()
-
-    if (hasReadyAqua(readyClient)) {
-      setTimeout(() => void processAutoJoin(readyClient), STARTUP_DELAY)
-    }
+    await client.me?.fetch()
   }
 })

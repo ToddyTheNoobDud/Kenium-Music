@@ -8,23 +8,9 @@ import {
   Middlewares
 } from 'seyfert'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
-import type { QueueLike, TrackLike } from '../shared/helperTypes.ts'
+import { getQueueItems } from '../shared/nowPlaying.ts'
 import { playlistTracksToKeniumText } from '../shared/playlist_format.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
-
-const getQueueTracks = (
-  queue: QueueLike<TrackLike> | undefined
-): TrackLike[] => {
-  if (!queue) return []
-  if (Array.isArray(queue)) return queue.filter(Boolean)
-  if (typeof queue.toArray === 'function')
-    return queue.toArray().filter(Boolean)
-  if (typeof queue.slice === 'function') {
-    const size = queue.size ?? queue.length ?? 0
-    return queue.slice(0, size).filter(Boolean)
-  }
-  return Array.from(queue).filter(Boolean)
-}
 
 @Cooldown.user(1000 * 60, { uses: 2 })
 @Declare({
@@ -40,11 +26,15 @@ export default class exportcmds extends Command {
       const t = ctx.t.get(lang)
 
       const guildId = ctx.guildId
-      if (!guildId) return
+      if (!guildId) {
+        return
+      }
 
       const player = client.aqua.players.get(guildId)
-      if (!player) return
-      const queueTracks = getQueueTracks(player.queue)
+      if (!player) {
+        return
+      }
+      const queueTracks = getQueueItems(player)
 
       if (queueTracks.length === 0) {
         await ctx.editOrReply({
@@ -70,7 +60,9 @@ export default class exportcmds extends Command {
 
       for (let i = 0; i < queueTracks.length; i++) {
         const song = queueTracks[i]
-        if (!song) continue
+        if (!song) {
+          continue
+        }
         const uri = String(song.info?.uri || song.uri || '')
         const title = String(song.info?.title || song.title || 'Unknown')
         const author = String(song.info?.author || song.author || 'Unknown')
@@ -127,7 +119,10 @@ export default class exportcmds extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

@@ -1,4 +1,5 @@
-import type { ConnectionOptions } from 'aqualink'
+import type { ConnectionOptions, PlayOptions } from 'aqualink'
+import type { GuildMember, User } from 'seyfert'
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -13,26 +14,22 @@ export interface VoiceStateLike {
   channelId?: string | null
 }
 
-export interface MemberLike {
-  voice?: unknown
-}
+export type MemberLike = Pick<GuildMember, 'voice'>
 
-export interface QueueLike<T = TrackLike> extends Iterable<T> {
-  size?: number
-  length?: number
-  add?: unknown
+export interface QueueLike<T = TrackLike> {
+  [Symbol.iterator]?: () => Iterator<T>
+  size: number
+  add(...tracks: T[]): unknown
   move?: (from: number, to: number) => unknown
-  clear?: () => void
-  slice?: (start: number, end: number) => T[]
-  toArray?: () => T[]
-  unshift?: unknown
+  clear(): void
+  toArray(): T[]
 }
 
 export interface TrackInfoLike {
   title?: string
   author?: string
   length?: number
-  uri?: string
+  uri?: string | null
   artworkUrl?: string | null
   isrc?: string | null
 }
@@ -40,35 +37,12 @@ export interface TrackInfoLike {
 export interface TrackLike {
   title?: string
   author?: string
-  uri?: string
+  uri?: string | null
   length?: number
   duration?: number
   thumbnail?: string | null
   info?: TrackInfoLike
   requester?: unknown
-}
-
-export interface EditableMessageLike {
-  id?: string
-  channelId?: string
-  edit?: (payload: unknown) => Promise<unknown>
-}
-
-export interface ComponentCollectorLike<TInteraction = InteractionLike> {
-  run: (
-    customId: string,
-    handler: (interaction: TInteraction) => void | Promise<void>
-  ) => void
-  stop?: () => void
-}
-
-export interface ComponentCollectorSourceLike<TInteraction = InteractionLike>
-  extends EditableMessageLike {
-  createComponentCollector?: (options: {
-    idle: number
-    filter: (interaction: TInteraction) => boolean
-    onStop: () => void
-  }) => ComponentCollectorLike<TInteraction> | undefined
 }
 
 export interface PlayerLike<TTrack = TrackLike> {
@@ -85,20 +59,24 @@ export interface PlayerLike<TTrack = TrackLike> {
   textChannel?: string | null
   current?: TTrack | null
   previous?: TTrack | null
-  queue?: QueueLike<TTrack>
+  queue: QueueLike<TTrack>
   nowPlayingMessage?: unknown
-  play?(track?: TTrack | null, options?: unknown): MaybePromise<unknown>
-  pause?: (paused: boolean) => MaybePromise<unknown>
-  skip?: () => unknown
-  stop?: () => unknown
-  destroy?: () => unknown
+  play(track?: TTrack | null, options?: PlayOptions): MaybePromise<unknown>
+  pause(paused: boolean): MaybePromise<unknown>
+  skip(): unknown
+  stop(): unknown
+  destroy(): unknown
   deaf?: boolean
   mute?: boolean
   _reconnecting?: boolean
   _voiceRecovering?: boolean
-  connect?: (options?: ConnectionOptions) => unknown
-  setLoop?: unknown
-  setVolume?: (value: number) => MaybePromise<unknown>
+  connect(options?: ConnectionOptions): unknown
+  connection?: {
+    voiceChannel?: string | null
+    resendVoiceUpdate?: (force?: boolean) => MaybePromise<boolean>
+  }
+  setLoop(mode: 0 | 1 | 2): unknown
+  setVolume(value: number): MaybePromise<unknown>
 }
 
 export interface ResolveResultLike<TTrack = TrackLike> {
@@ -108,7 +86,7 @@ export interface ResolveResultLike<TTrack = TrackLike> {
 
 export interface AvatarClientLike {
   me?: {
-    avatarURL?: unknown
+    avatarURL: User['avatarURL']
     id?: string
   }
 }
@@ -121,30 +99,11 @@ export interface AquaClientLike<TTrack = TrackLike> {
       requester: UserLike
       source?: string
     }) => Promise<ResolveResultLike<TTrack>>
-    players?: {
-      get?: unknown
+    players: {
+      get(guildId: string): PlayerLike<TTrack> | undefined
     }
-    createConnection?: unknown
+    createConnection(
+      options: ConnectionOptions
+    ): MaybePromise<PlayerLike<TTrack>>
   }
-}
-
-export interface InteractionLike {
-  guildId?: string | null | undefined
-  channelId?: string | null | undefined
-  customId?: string
-  user: UserLike
-  member?: MemberLike | null | undefined
-  message?: { id?: string | null | undefined } | null | undefined
-  deferred?: unknown
-  replied?: unknown
-  interaction?: {
-    replied?: unknown
-  }
-  isButton?: () => boolean
-  isStringSelectMenu?: () => boolean
-  values?: string[]
-  deferReply: unknown
-  deferUpdate?: () => Promise<unknown>
-  editOrReply: unknown
-  followup: unknown
 }

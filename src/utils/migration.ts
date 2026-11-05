@@ -1,3 +1,6 @@
+import type { Database } from 'bun:sqlite'
+import { existsSync, renameSync, rmSync } from 'node:fs'
+import type { Playlist, Track } from '../shared/types.ts'
 import {
   getDatabase,
   getPlaylistsCollection,
@@ -5,7 +8,7 @@ import {
   getTracksCollection
 } from './collections.ts'
 
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 7
 
 type ColumnType = 'TEXT' | 'INTEGER' | 'REAL'
 
@@ -13,20 +16,6 @@ interface ColumnSpec {
   path: string
   type: ColumnType
   boolean?: boolean
-}
-
-interface RawSQLiteDB {
-  prepare(sql: string): {
-    get: (...params: unknown[]) => Record<string, unknown> | undefined
-    all: (...params: unknown[]) => unknown[]
-    run: (...params: unknown[]) => unknown
-  }
-  backup?(path: string): Promise<void>
-}
-
-interface RawStmt<T = unknown> {
-  all?: (...params: unknown[]) => T[]
-  iterate?: (...params: unknown[]) => Iterable<T>
 }
 
 const HOT_COLUMNS: Record<string, Record<string, ColumnSpec>> = {
@@ -64,50 +53,32 @@ const HOT_COLUMNS: Record<string, Record<string, ColumnSpec>> = {
   }
 }
 
-function tableExists(rawDb: RawSQLiteDB, tableName: string): boolean {
-  try {
-    return !!rawDb
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
-      .get(tableName)
-  } catch {
-    return false
-  }
+function tableExists(rawDb: Database, tableName: string): boolean {
+  return !!rawDb
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+    .get(tableName)
 }
 
 function columnExists(
-  rawDb: RawSQLiteDB,
+  rawDb: Database,
   tableName: string,
   columnName: string
-) {
-  try {
-    const rows = rawDb.prepare(`PRAGMA table_info("${tableName}")`).all() as {
-      name?: string
-    }[]
-    return rows.some((row) => row.name === columnName)
-  } catch {
-    return false
-  }
+): boolean {
+  const rows = rawDb.prepare(`PRAGMA table_info("${tableName}")`).all() as {
+    name: string
+  }[]
+  return rows.some((row) => row.name === columnName)
 }
 
-function getUserVersion(rawDb: RawSQLiteDB): number {
-  try {
-    const row = rawDb.prepare('PRAGMA user_version').get() as
-      | { user_version?: unknown }
-      | undefined
-    return Number(row?.user_version || 0)
-  } catch {
-    return 0
-  }
+function getUserVersion(rawDb: Database): number {
+  return Number(
+    rawDb.query<{ user_version: number }, []>('PRAGMA user_version').get()
+      ?.user_version ?? 0
+  )
 }
 
-function setUserVersion(rawDb: RawSQLiteDB, version: number): void {
+function setUserVersion(rawDb: Database, version: number): void {
   rawDb.prepare(`PRAGMA user_version = ${version}`).run()
-}
-
-function getAllRows<T>(stmt: RawStmt<T>): T[] {
-  return typeof stmt.all === 'function'
-    ? stmt.all()
-    : Array.from(stmt.iterate?.() ?? [])
 }
 
 function ensureBaseCollections() {
@@ -126,17 +97,25 @@ function columnExtractSql(spec: ColumnSpec): string {
   }
 
   const extract = `json_extract(doc, '${spec.path}')`
-  if (spec.type === 'INTEGER') return `CAST(COALESCE(${extract}, 0) AS INTEGER)`
-  if (spec.type === 'REAL') return `CAST(COALESCE(${extract}, 0) AS REAL)`
+  if (spec.type === 'INTEGER') {
+    return `CAST(COALESCE(${extract}, 0) AS INTEGER)`
+  }
+  if (spec.type === 'REAL') {
+    return `CAST(COALESCE(${extract}, 0) AS REAL)`
+  }
   return extract
 }
 
-function ensureHotColumns(rawDb: RawSQLiteDB): void {
+function ensureHotColumns(rawDb: Database): void {
   for (const [tableName, columns] of Object.entries(HOT_COLUMNS)) {
-    if (!tableExists(rawDb, tableName)) continue
+    if (!tableExists(rawDb, tableName)) {
+      continue
+    }
 
     for (const [columnName, spec] of Object.entries(columns)) {
-      if (columnExists(rawDb, tableName, columnName)) continue
+      if (columnExists(rawDb, tableName, columnName)) {
+        continue
+      }
       rawDb
         .prepare(
           `ALTER TABLE "${tableName}" ADD COLUMN "${columnName}" ${spec.type}`
@@ -146,20 +125,24 @@ function ensureHotColumns(rawDb: RawSQLiteDB): void {
   }
 }
 
-function backfillHotColumns(rawDb: RawSQLiteDB): void {
+function backfillHotColumns(rawDb: Database): void {
   for (const [tableName, columns] of Object.entries(HOT_COLUMNS)) {
-    if (!tableExists(rawDb, tableName)) continue
+    if (!tableExists(rawDb, tableName)) {
+      continue
+    }
 
     const assignments = Object.entries(columns).map(
       ([columnName, spec]) => `"${columnName}" = ${columnExtractSql(spec)}`
     )
 
-    if (!assignments.length) continue
+    if (!assignments.length) {
+      continue
+    }
     rawDb.prepare(`UPDATE "${tableName}" SET ${assignments.join(', ')}`).run()
   }
 }
 
-function rebuildIndexes(rawDb: RawSQLiteDB): void {
+function rebuildIndexes(rawDb: Database): void {
   const obsoleteIndexes = [
     'col_guildSettings_guildId_idx',
     'col_guildSettings_twentyFourSevenEnabled_idx',
@@ -220,167 +203,309 @@ function rebuildIndexes(rawDb: RawSQLiteDB): void {
     .run()
 }
 
-async function migrateLegacyPlaylistTable(rawDb: RawSQLiteDB) {
-  let sourceTable = ''
-  if (tableExists(rawDb, 'col_playlists')) sourceTable = 'col_playlists'
-  else if (tableExists(rawDb, 'col_playlists_old'))
-    sourceTable = 'col_playlists_old'
+type LegacyPlaylistRow = {
+  _id: string
+  doc: string
+  createdAt: string
+  updatedAt: string
+}
 
-  if (!sourceTable) return
-
-  const playlistsV2 = getPlaylistsCollection()
-  const tracksV2 = getTracksCollection()
-
-  if (playlistsV2.getStats().documentCount > 0) {
-    console.log(
-      '[Migration] Legacy playlist table detected, but destination already has data. Skipping legacy import.'
-    )
-    return
+function missingLegacyTracks(
+  row: LegacyPlaylistRow,
+  existingTracks: Track[]
+): Track[] {
+  const legacy = JSON.parse(row.doc) as Playlist & { tracks?: Track[] }
+  if (legacy.tracks !== undefined && !Array.isArray(legacy.tracks)) {
+    throw new Error(`Invalid tracks for legacy playlist ${row._id}`)
   }
-
-  const backupPath = `db/sey.sqlite.bak_${Date.now()}`
-  try {
-    if (typeof rawDb.backup === 'function') {
-      await rawDb.backup(backupPath)
-      console.log(`[Migration] WAL-safe backup created at ${backupPath}`)
-    } else {
-      rawDb.prepare('PRAGMA wal_checkpoint(TRUNCATE)').run()
+  const unmatched = existingTracks.slice()
+  return (legacy.tracks ?? []).filter((legacyTrack) => {
+    if (
+      typeof legacyTrack.title !== 'string' ||
+      typeof legacyTrack.uri !== 'string' ||
+      typeof legacyTrack.author !== 'string'
+    ) {
+      throw new Error(`Invalid track for legacy playlist ${row._id}`)
     }
-  } catch (err) {
-    console.error(
-      '[Migration] Backup failed. Aborting legacy migration for safety:',
-      err
+    const matchIndex = unmatched.findIndex(
+      (track) =>
+        track.title === legacyTrack.title &&
+        track.uri === legacyTrack.uri &&
+        track.author === legacyTrack.author &&
+        track.duration === (legacyTrack.duration || 0) &&
+        track.source === (legacyTrack.source || 'Unknown') &&
+        track.identifier === (legacyTrack.identifier || legacyTrack.uri) &&
+        (track.artworkUrl ?? null) === (legacyTrack.artworkUrl || null) &&
+        (!legacyTrack.isrc || track.isrc === legacyTrack.isrc) &&
+        (!legacyTrack.addedBy || track.addedBy === legacyTrack.addedBy) &&
+        track.addedAt === (legacyTrack.addedAt || row.createdAt)
     )
-    return
-  }
+    if (matchIndex === -1) {
+      return true
+    }
+    unmatched.splice(matchIndex, 1)
+    return false
+  })
+}
 
-  const stmt = rawDb.prepare(
-    `SELECT _id, doc, createdAt, updatedAt FROM ${sourceTable}`
-  ) as RawStmt<{
-    _id: string
-    doc: string
-    createdAt: string
-    updatedAt: string
-  }>
-
-  const rows = getAllRows(stmt)
-  if (!rows.length) return
-
-  let successCount = 0
-  let failureCount = 0
-
+function migrateLegacyPlaylistTable(
+  rawDb: Database,
+  sourceTable: string
+): void {
+  const playlists = getPlaylistsCollection()
+  const tracks = getTracksCollection()
+  const rows = rawDb
+    .prepare(`SELECT _id, doc, createdAt, updatedAt FROM "${sourceTable}"`)
+    .all() as LegacyPlaylistRow[]
   getDatabase().transaction(() => {
     for (const row of rows) {
-      try {
-        const doc = JSON.parse(row.doc)
-        const tracks = Array.isArray(doc.tracks) ? doc.tracks : []
-
-        playlistsV2.insert({
+      const legacy = JSON.parse(row.doc) as Playlist & { tracks?: Track[] }
+      if (
+        typeof legacy.userId !== 'string' ||
+        !legacy.userId ||
+        typeof legacy.name !== 'string' ||
+        !legacy.name
+      ) {
+        throw new Error(`Invalid legacy playlist ${row._id}`)
+      }
+      const existing = playlists.findById(row._id)
+      if (
+        existing &&
+        (existing.userId !== legacy.userId || existing.name !== legacy.name)
+      ) {
+        throw new Error(`Conflicting legacy playlist ${row._id}`)
+      }
+      const missing = missingLegacyTracks(
+        row,
+        tracks.find({ playlistId: row._id })
+      )
+      if (!existing) {
+        playlists.insert({
           _id: row._id,
-          userId: doc.userId,
-          name: doc.name,
-          description: doc.description || '',
-          playCount: doc.playCount || 0,
-          lastPlayedAt: doc.lastPlayedAt || null,
-          totalDuration:
-            doc.totalDuration ||
-            tracks.reduce(
-              (sum: number, t: { duration?: number }) =>
-                sum + (t.duration || 0),
-              0
-            ),
-          trackCount: tracks.length,
-          lastModified: doc.lastModified || row.updatedAt || row.createdAt,
+          userId: legacy.userId,
+          name: legacy.name,
+          description: legacy.description || '',
+          playCount: legacy.playCount || 0,
+          lastPlayedAt: legacy.lastPlayedAt || null,
+          totalDuration: 0,
+          trackCount: 0,
+          lastModified: legacy.lastModified || row.updatedAt || row.createdAt,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt
         })
-
-        if (tracks.length > 0) {
-          tracksV2.insert(
-            tracks.map(
-              (track: {
-                title: string
-                uri: string
-                author: string
-                duration?: number
-                source?: string
-                identifier?: string
-                artworkUrl?: string | null
-                addedAt?: string
-              }) => ({
-                playlistId: row._id,
-                title: track.title,
-                uri: track.uri,
-                author: track.author,
-                duration: track.duration || 0,
-                source: track.source || 'Unknown',
-                identifier: track.identifier || track.uri,
-                artworkUrl: track.artworkUrl || null,
-                addedAt: track.addedAt || row.createdAt
-              })
-            )
+      }
+      if (missing.length) {
+        tracks.insert(
+          missing.map((track) => ({
+            _id: Bun.randomUUIDv7(),
+            playlistId: row._id,
+            title: track.title,
+            uri: track.uri,
+            author: track.author,
+            duration: track.duration || 0,
+            source: track.source || 'Unknown',
+            identifier: track.identifier || track.uri,
+            artworkUrl: track.artworkUrl || null,
+            isrc: track.isrc || null,
+            addedBy: track.addedBy || legacy.userId,
+            addedAt: track.addedAt || row.createdAt
+          }))
+        )
+      }
+      const migratedTracks = tracks.find(
+        { playlistId: row._id },
+        { fields: ['duration'] }
+      )
+      playlists.update(
+        { _id: row._id },
+        {
+          trackCount: migratedTracks.length,
+          totalDuration: migratedTracks.reduce(
+            (total, track) => total + (track.duration || 0),
+            0
           )
         }
-
-        successCount++
-      } catch (err) {
-        failureCount++
-        console.error(`[Migration] Failed to migrate playlist ${row._id}:`, err)
-      }
+      )
+    }
+    if (sourceTable === 'col_playlists') {
+      rawDb
+        .prepare('ALTER TABLE col_playlists RENAME TO col_playlists_old')
+        .run()
     }
   })
+}
 
-  if (
-    failureCount === 0 &&
-    successCount > 0 &&
-    sourceTable === 'col_playlists'
-  ) {
-    rawDb.prepare('ALTER TABLE col_playlists RENAME TO col_playlists_old').run()
-  }
+function dropLegacyTables(rawDb: Database): boolean {
+  try {
+    getDatabase().transaction(() => {
+      if (tableExists(rawDb, 'col_guildLanguages')) {
+        const rows = rawDb
+          .prepare('SELECT doc FROM "col_guildLanguages"')
+          .all() as { doc?: string }[]
+        const settings = getSettingsCollection()
+        for (const row of rows) {
+          const doc = JSON.parse(row.doc ?? '') as {
+            guildId?: unknown
+            lang?: unknown
+          }
+          if (
+            typeof doc.guildId !== 'string' ||
+            !doc.guildId ||
+            typeof doc.lang !== 'string' ||
+            !doc.lang
+          ) {
+            throw new Error('Invalid legacy guild language row')
+          }
+          const existingSettings = settings.findById(doc.guildId)
+          if (existingSettings) {
+            if (!existingSettings.lang) {
+              settings.update({ _id: doc.guildId }, { lang: doc.lang })
+            }
+            continue
+          }
+          settings.insert({
+            _id: doc.guildId,
+            guildId: doc.guildId,
+            twentyFourSevenEnabled: false,
+            voiceChannelId: null,
+            textChannelId: null,
+            lang: doc.lang
+          })
+        }
+        rawDb.prepare('DROP TABLE IF EXISTS "col_guildLanguages"').run()
+      }
 
-  if (successCount > 0) {
-    console.log(
-      `[Migration] Imported ${successCount} legacy playlists into the normalized schema.`
-    )
-  }
-  if (failureCount > 0) {
+      if (!tableExists(rawDb, 'col_playlists_old')) {
+        return
+      }
+      const rows = rawDb
+        .prepare(
+          'SELECT _id, doc, createdAt, updatedAt FROM "col_playlists_old"'
+        )
+        .all() as LegacyPlaylistRow[]
+      const playlists = getPlaylistsCollection()
+      const tracks = getTracksCollection()
+      for (const row of rows) {
+        const legacy = JSON.parse(row.doc) as Playlist & { tracks?: Track[] }
+        const migrated = playlists.findById(row._id)
+        if (
+          !migrated ||
+          migrated.userId !== legacy.userId ||
+          migrated.name !== legacy.name ||
+          migrated.description !== (legacy.description || '') ||
+          (legacy.tracks !== undefined && !Array.isArray(legacy.tracks))
+        ) {
+          throw new Error(`Legacy playlist ${row._id} is not fully migrated`)
+        }
+
+        if (
+          missingLegacyTracks(row, tracks.find({ playlistId: row._id })).length
+        ) {
+          throw new Error(`Legacy playlist ${row._id} has unmigrated tracks`)
+        }
+      }
+      rawDb.prepare('DROP TABLE IF EXISTS "col_playlists_old"').run()
+    })
+    return true
+  } catch (err) {
     console.warn(
-      `[Migration] Legacy import completed with ${failureCount} errors.`
+      '[Migration] Keeping legacy tables: cleanup could not verify a complete transfer.',
+      err
     )
+    return false
   }
 }
 
 export async function migrateDatabase() {
   const db = getDatabase()
-  const rawDb = (db as unknown as { db: RawSQLiteDB }).db
-
-  ensureBaseCollections()
-
+  const rawDb = db.db
   let version = getUserVersion(rawDb)
+  if (version > SCHEMA_VERSION) {
+    return
+  }
 
+  if (
+    version < SCHEMA_VERSION &&
+    rawDb.filename &&
+    rawDb.filename !== ':memory:'
+  ) {
+    const backupPath = `${rawDb.filename}.pre-v${SCHEMA_VERSION}.bak`
+    if (!existsSync(backupPath)) {
+      const temporaryPath = `${backupPath}.tmp`
+      try {
+        const backupStatement = rawDb.prepare('VACUUM INTO ?')
+        try {
+          backupStatement.run(temporaryPath)
+        } finally {
+          backupStatement.finalize()
+        }
+        renameSync(temporaryPath, backupPath)
+      } catch (error) {
+        rmSync(temporaryPath, { force: true })
+        throw error
+      }
+      console.log(`[Migration] Backup created at ${backupPath}`)
+    }
+  }
+  ensureBaseCollections()
+  if (version < 2) {
+    db.transaction(() => {
+      ensureHotColumns(rawDb)
+      backfillHotColumns(rawDb)
+    })
+  }
+
+  if (tableExists(rawDb, 'col_playlists')) {
+    migrateLegacyPlaylistTable(rawDb, 'col_playlists')
+  } else if (version < 1 && tableExists(rawDb, 'col_playlists_old')) {
+    migrateLegacyPlaylistTable(rawDb, 'col_playlists_old')
+  }
   if (version < 1) {
-    await migrateLegacyPlaylistTable(rawDb)
     setUserVersion(rawDb, 1)
     version = 1
   }
-
   if (version < 2) {
-    ensureHotColumns(rawDb)
-    backfillHotColumns(rawDb)
     setUserVersion(rawDb, 2)
     version = 2
   }
-
   if (version < 3) {
-    rebuildIndexes(rawDb)
-    try {
-      rawDb.prepare('PRAGMA optimize').run()
-    } catch {}
-    setUserVersion(rawDb, 3)
+    db.transaction(() => {
+      rebuildIndexes(rawDb)
+      setUserVersion(rawDb, 3)
+    })
+    rawDb.prepare('PRAGMA optimize').run()
     version = 3
   }
-
-  if (version !== SCHEMA_VERSION) {
-    setUserVersion(rawDb, SCHEMA_VERSION)
+  if (version < 6) {
+    for (const tableName of Object.keys(HOT_COLUMNS)) {
+      rawDb.prepare(`DROP INDEX IF EXISTS "${tableName}_created"`).run()
+      rawDb.prepare(`DROP INDEX IF EXISTS "${tableName}_updated"`).run()
+    }
+    const cleanupComplete = dropLegacyTables(rawDb)
+    const autoVacuum = rawDb
+      .query<{ auto_vacuum: number }, []>('PRAGMA auto_vacuum')
+      .get()
+    if (Number(autoVacuum?.auto_vacuum) !== 2) {
+      rawDb.prepare('PRAGMA auto_vacuum = INCREMENTAL').run()
+      rawDb.prepare('VACUUM').run()
+    }
+    if (cleanupComplete) {
+      setUserVersion(rawDb, 6)
+      version = 6
+    }
+  }
+  if (version === 6) {
+    db.transaction(() => {
+      for (const indexName of [
+        'col_guildSettings_created_idx',
+        'col_guildSettings_up_idx',
+        'col_guildSettings_updated_idx',
+        'idx_guild_settings_guild',
+        'idx_settings_guild'
+      ]) {
+        rawDb.prepare(`DROP INDEX IF EXISTS "${indexName}"`).run()
+      }
+      setUserVersion(rawDb, SCHEMA_VERSION)
+    })
   }
 }

@@ -1,42 +1,41 @@
-import { Container } from 'seyfert'
+import {
+  ActionRow,
+  Container,
+  type Message,
+  Separator,
+  type WebhookMessage
+} from 'seyfert'
 import { MUSIC_PLATFORMS, PLAYBACK_E } from './emojis.ts'
 import type {
   AvatarClientLike,
-  EditableMessageLike,
   PlayerLike,
   QueueLike,
   TrackLike
 } from './helperTypes.ts'
+import { getTrackRequester } from './trackRequester.ts'
 
 const MAX_TITLE_LENGTH = 60
-const FLAGS_UPDATE = 36864
+const FLAGS_UPDATE = 32768 | 4096
 const TITLE_SANITIZE_RE = /[^\w\s\-_.]/g
 const WORD_START_RE = /\b\w/g
 
 export const getQueueLength = (queue?: QueueLike<TrackLike> | null) =>
-  queue?.size ?? queue?.length ?? 0
+  queue?.size ?? 0
 
-type QueueSourceLike = { queue?: unknown } | null | undefined
+type QueueSourceLike<TTrack> =
+  | { queue?: Pick<QueueLike<TTrack>, 'size' | 'toArray'> }
+  | null
+  | undefined
 
 export const getTrackTitle = (track: TrackLike | null | undefined) =>
   track?.info?.title || track?.title || ''
 
 export const getQueueItems = <TTrack = TrackLike>(
-  player: QueueSourceLike
-): TTrack[] => {
-  const queue = player?.queue
-  if (Array.isArray(queue)) return queue as TTrack[]
-  if (queue && typeof (queue as { toArray?: unknown }).toArray === 'function') {
-    const items = (queue as { toArray: () => unknown }).toArray()
-    return Array.isArray(items) ? (items as TTrack[]) : []
-  }
-  return []
-}
+  player: QueueSourceLike<TTrack>
+): TTrack[] => player?.queue?.toArray() ?? []
 
-export const getQueueSize = (player: QueueSourceLike): number => {
-  const size = (player?.queue as QueueLike<TrackLike> | undefined)?.size
-  return typeof size === 'number' ? size : getQueueItems(player).length
-}
+export const getQueueSize = (player: QueueSourceLike<TrackLike>): number =>
+  player?.queue?.size ?? 0
 
 export const formatTime = (ms: number | undefined) => {
   const s = Math.floor((ms || 0) / 1000)
@@ -48,126 +47,114 @@ export const truncateText = (
   text: string | undefined,
   maxLength = MAX_TITLE_LENGTH
 ) => {
-  if (!text) return ''
-  if (text.length <= maxLength) return text
+  if (!text) {
+    return ''
+  }
+  if (text.length <= maxLength) {
+    return text
+  }
 
   const processed = String(text).replace(TITLE_SANITIZE_RE, '').trim()
-  if (processed.length <= maxLength) return processed
+  if (processed.length <= maxLength) {
+    return processed
+  }
   return `${processed.slice(0, maxLength - 3).trimEnd()}...`
 }
 
 const titleCaseWordBoundaries = (text: string | undefined) =>
   String(text || '').replace(WORD_START_RE, (c) => c.toUpperCase())
 
-export const getPlatform = (uri: string | undefined) => {
-  if (!uri) return MUSIC_PLATFORMS.youtube
+export const getPlatform = (uri: string | null | undefined) => {
+  if (!uri) {
+    return MUSIC_PLATFORMS.youtube
+  }
 
   const value = uri.toLowerCase()
-  if (value.includes('soundcloud')) return MUSIC_PLATFORMS.soundcloud
-  if (value.includes('spotify')) return MUSIC_PLATFORMS.spotify
-  if (value.includes('deezer')) return MUSIC_PLATFORMS.deezer
-  if (value.includes('youtu')) return MUSIC_PLATFORMS.youtube
+  if (value.includes('soundcloud')) {
+    return MUSIC_PLATFORMS.soundcloud
+  }
+  if (value.includes('spotify')) {
+    return MUSIC_PLATFORMS.spotify
+  }
+  if (value.includes('deezer')) {
+    return MUSIC_PLATFORMS.deezer
+  }
+  if (value.includes('youtu')) {
+    return MUSIC_PLATFORMS.youtube
+  }
   return MUSIC_PLATFORMS.youtube
 }
 
 export const createNowPlayingEmbed = (
-  player: PlayerLike,
+  player: Partial<
+    Pick<PlayerLike, 'position' | 'volume' | 'loop' | 'paused' | 'queue'>
+  >,
   track: TrackLike,
   client: AvatarClientLike
 ) => {
-  const { position = 0, volume = 0, loop, paused } = player || {}
-  const { title = 'Unknown', uri = '', length = 0, requester } = track || {}
-
-  const platform = getPlatform(uri)
-  const volumeIcon = volume === 0 ? '🔇' : volume < 50 ? '🔈' : '🔊'
-  const loopIcon = loop === 'track' ? '🔂' : loop === 'queue' ? '🔁' : '▶️'
-  const displayTitle = titleCaseWordBoundaries(truncateText(title))
-  const me = client?.me as
-    | {
-        avatarURL?: (options?: {
-          extension?: string
-        }) => string | null | undefined
-      }
-    | undefined
-  const artworkUrl =
-    track?.info?.artworkUrl ||
-    (typeof me?.avatarURL === 'function'
-      ? me.avatarURL({ extension: 'webp' })
-      : undefined) ||
-    ''
-
-  return new Container({
-    components: [
-      {
-        type: 10,
-        content: `**${platform.emoji} Now Playing** | **Queue size**: ${getQueueLength(player?.queue)}`
-      },
-      { type: 14, divider: true, spacing: 1 },
-      {
-        type: 9,
-        components: [
-          {
-            type: 10,
-            content: `## **[\`${displayTitle}\`](${uri})**\n\`${formatTime(position)}\` / \`${formatTime(length)}\``
-          },
-          {
-            type: 10,
-            content: `${volumeIcon} \`${volume}%\` ${loopIcon} Requester: \`${(requester as { username?: string } | undefined)?.username || 'Unknown'}\``
-          }
-        ],
-        accessory: {
-          type: 11,
-          media: {
-            url: artworkUrl
-          }
-        }
-      },
-      { type: 14, divider: true, spacing: 2 },
-      {
-        type: 1,
-        components: [
-          {
-            type: 2,
-            label: `${PLAYBACK_E.volume_down}`,
-            style: 2,
-            custom_id: 'volume_down'
-          },
-          {
-            type: 2,
-            label: `${PLAYBACK_E.previous}`,
-            style: 2,
-            custom_id: 'previous'
-          },
-          {
-            type: 2,
-            label: paused ? `${PLAYBACK_E.resume}` : `${PLAYBACK_E.pause}`,
-            style: paused ? 3 : 2,
-            custom_id: paused ? 'resume' : 'pause'
-          },
-          { type: 2, label: `${PLAYBACK_E.skip}`, style: 2, custom_id: 'skip' },
-          {
-            type: 2,
-            label: `${PLAYBACK_E.volume_up}`,
-            style: 2,
-            custom_id: 'volume_up'
-          }
-        ]
-      },
-      { type: 14, divider: true, spacing: 2 }
-    ]
+  const requester = getTrackRequester(track.requester)
+  const container = createNowPlayingContainer({
+    position: player.position,
+    volume: player.volume,
+    loop: player.loop,
+    queueLength: getQueueLength(player.queue),
+    title: track.title,
+    uri: track.uri,
+    length: track.length,
+    requesterName: requester.username || 'Unknown',
+    artworkUrl:
+      track.info?.artworkUrl ||
+      client.me?.avatarURL({ extension: 'webp' }) ||
+      ''
   })
+  return container.addComponents(
+    new ActionRow({
+      type: 1,
+      components: [
+        {
+          type: 2,
+          label: `${PLAYBACK_E.volume_down}`,
+          style: 2,
+          custom_id: 'volume_down'
+        },
+        {
+          type: 2,
+          label: `${PLAYBACK_E.previous}`,
+          style: 2,
+          custom_id: 'previous'
+        },
+        {
+          type: 2,
+          label: player.paused ? `${PLAYBACK_E.resume}` : `${PLAYBACK_E.pause}`,
+          style: player.paused ? 3 : 2,
+          custom_id: player.paused ? 'resume' : 'pause'
+        },
+        { type: 2, label: `${PLAYBACK_E.skip}`, style: 2, custom_id: 'skip' },
+        {
+          type: 2,
+          label: `${PLAYBACK_E.volume_up}`,
+          style: 2,
+          custom_id: 'volume_up'
+        }
+      ]
+    }),
+    new Separator({ type: 14, divider: true, spacing: 2 })
+  )
 }
 
 export const updateNowPlayingEmbed = async (
   player: PlayerLike,
   client: AvatarClientLike
 ) => {
-  const msg = player?.nowPlayingMessage as
-    | EditableMessageLike
+  const msg = player.nowPlayingMessage as
+    | Message
+    | WebhookMessage
     | null
     | undefined
-  if (!msg?.edit || !player?.current) {
-    if (player) player.nowPlayingMessage = null
+  if (!msg || !player.current) {
+    if (player) {
+      player.nowPlayingMessage = null
+    }
     return
   }
 
@@ -181,46 +168,30 @@ export const updateNowPlayingEmbed = async (
   }
 }
 
-type MessageDeleterLike = {
-  messages?: {
-    delete?: (
-      messageId: string,
-      channelId: string
-    ) => Promise<unknown> | unknown
-  }
-}
-
 export const deleteNowPlayingMessage = async (
-  player: PlayerLike | null | undefined,
-  client?: MessageDeleterLike | null | undefined
+  player: Pick<PlayerLike, 'nowPlayingMessage'> | null | undefined
 ): Promise<void> => {
-  const msg = player?.nowPlayingMessage as
-    | (EditableMessageLike & { delete?: () => Promise<unknown> | unknown })
+  const message = player?.nowPlayingMessage as
+    | Message
+    | WebhookMessage
     | null
     | undefined
-  if (player) player.nowPlayingMessage = null
-  if (!msg) return
-
-  try {
-    if (typeof msg.delete === 'function') {
-      await msg.delete()
-    } else if (
-      msg.id &&
-      msg.channelId &&
-      typeof client?.messages?.delete === 'function'
-    ) {
-      await client.messages.delete(msg.id, msg.channelId)
-    }
-  } catch {}
+  if (player) {
+    player.nowPlayingMessage = null
+  }
+  if (!message) {
+    return
+  }
+  await message.delete().catch(() => {})
 }
 
 type NowPlayingUIOptions = {
   position?: number
   volume?: number
-  loop?: string
+  loop?: PlayerLike['loop']
   queueLength?: number
   title?: string
-  uri?: string
+  uri?: string | null
   length?: number
   requesterName?: string
   artworkUrl?: string
@@ -247,9 +218,9 @@ export const createNowPlayingContainer = (options: NowPlayingUIOptions) => {
         ? '\uD83D\uDD08'
         : '\uD83D\uDD0A'
   const loopIcon =
-    loop === 'track'
+    loop === 'track' || loop === 1
       ? '\uD83D\uDD02'
-      : loop === 'queue'
+      : loop === 'queue' || loop === 2
         ? '\uD83D\uDD01'
         : '\u25B6\uFE0F'
   const displayTitle = titleCaseWordBoundaries(truncateText(title))
@@ -266,7 +237,7 @@ export const createNowPlayingContainer = (options: NowPlayingUIOptions) => {
         components: [
           {
             type: 10,
-            content: `## **[\`${displayTitle}\`](${uri})**\n\`${formatTime(position)}\` / \`${formatTime(length)}\``
+            content: `## **[\`${displayTitle}\`](${uri ?? ''})**\n\`${formatTime(position)}\` / \`${formatTime(length)}\``
           },
           {
             type: 10,

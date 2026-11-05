@@ -27,7 +27,7 @@ const options = {
 })
 @Middlewares(['checkPlayer', 'checkVoice', 'checkTrack'])
 export default class Volume extends Command {
-  public override async run(ctx: CommandContext) {
+  public override async run(ctx: CommandContext<typeof options>) {
     try {
       const { options } = ctx
       const { volume } = options as { volume: number }
@@ -35,7 +35,9 @@ export default class Volume extends Command {
       const t = ctx.t.get(lang)
 
       const player = ctx.client.aqua.players.get(ctx.guildId as string)
-      if (!player) return
+      if (!player) {
+        return
+      }
 
       if (volume < 0 || volume > 200) {
         return ctx.write({
@@ -65,7 +67,10 @@ export default class Volume extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

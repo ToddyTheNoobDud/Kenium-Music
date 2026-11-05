@@ -53,7 +53,9 @@ const _functions = {
 @LocalesT('commands.ping.name', 'commands.ping.description')
 export default class PingCommand extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
-    if (!ctx.guildId) return
+    if (!ctx.guildId) {
+      return
+    }
 
     try {
       const lang = getContextLanguage(ctx)
@@ -77,7 +79,9 @@ export default class PingCommand extends Command {
 
       await ctx.write({ embeds: [embed] })
     } catch (error) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
       const t = ctx.t.get('en')
       await ctx.write({
         content: t.errors?.general || 'An error occurred',

@@ -1,5 +1,5 @@
 import { Cooldown } from '@slipher/cooldown'
-import type { Player } from 'aqualink'
+import type { Player, Track } from 'aqualink'
 import {
   ActionRow,
   Button,
@@ -8,6 +8,7 @@ import {
   type CommandContext,
   Container,
   Declare,
+  type Message,
   MessageFlags,
   Middlewares,
   Section,
@@ -15,7 +16,8 @@ import {
   Spacing,
   TextDisplay,
   Thumbnail,
-  type UsingClient
+  type UsingClient,
+  type WebhookMessage
 } from 'seyfert'
 import {
   buildLyricsQueryFromHints,
@@ -39,14 +41,12 @@ type LyricLine = {
 }
 
 interface KaraokeSession {
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic Discord message
-  message: any
+  message: Message | WebhookMessage
   lines: LyricLine[]
   player: Player
   timers: NodeJS.Timeout[]
   timeout: NodeJS.Timeout
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic collector
-  collector: any
+  collector: ReturnType<Message['createComponentCollector']>
   artist: string
   artworkUrl?: string | undefined
   title: string
@@ -63,11 +63,11 @@ interface KaraokeSession {
 
 const sessions = new Map<string, KaraokeSession>()
 
-// biome-ignore lint/suspicious/noExplicitAny: dynamic
-const autoDelete = (msg: any, delay = AUTO_DELETE_MS) => {
-  if (!msg?.delete) return
-  const t = setTimeout(() => msg.delete().catch(() => null), delay)
-  if (t.unref) t.unref()
+const autoDelete = (
+  message: Pick<Message, 'delete'>,
+  delay = AUTO_DELETE_MS
+) => {
+  setTimeout(() => message.delete().catch(() => null), delay).unref()
 }
 
 const divider = () => new Separator().setDivider(true).setSpacing(Spacing.Small)
@@ -80,21 +80,23 @@ const clamp = (value: number, min: number, max: number) =>
 
 const gatewayLatencyOf = (session: KaraokeSession) => {
   const latency = session.client?.gateway?.latency
-  return typeof latency === 'number' && Number.isFinite(latency) ? latency : 0
+  return Number.isFinite(latency) ? (latency ?? 0) : 0
 }
 
 const playerPingOf = (player: Player) => {
-  const ping = (player as unknown as { ping?: unknown }).ping
-  return typeof ping === 'number' && Number.isFinite(ping) ? ping : 0
+  return Number.isFinite(player.ping) ? player.ping : 0
 }
 
 // Expected message.edit round-trip. Uses measured edits once available,
 // otherwise live gateway latency instead of a hardcoded guess.
 const editLeadMs = (session: KaraokeSession) => {
-  if (typeof session.editAvgMs === 'number')
+  if (session.editAvgMs !== undefined) {
     return clamp(Math.round(session.editAvgMs), 50, 600)
+  }
   const gateway = gatewayLatencyOf(session)
-  if (gateway > 0) return clamp(Math.round(gateway + 120), 100, 500)
+  if (gateway > 0) {
+    return clamp(Math.round(gateway + 120), 100, 500)
+  }
   return 220
 }
 
@@ -105,19 +107,18 @@ const seekThresholdMs = (session: KaraokeSession) =>
   clamp(editLeadMs(session) + playerPingOf(session.player) + 300, 500, 2500)
 
 const recordEditSample = (session: KaraokeSession, sample: number) => {
-  if (!Number.isFinite(sample)) return
+  if (!Number.isFinite(sample)) {
+    return
+  }
   const clamped = clamp(sample, 0, 5000)
   session.editAvgMs =
-    typeof session.editAvgMs === 'number'
+    session.editAvgMs !== undefined
       ? Math.round(session.editAvgMs * 0.7 + clamped * 0.3)
       : Math.round(clamped)
 }
 
-const rawPlayerPos = (player: Player) => {
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic
-  const pos = (player as any).position
-  return typeof pos === 'number' && Number.isFinite(pos) ? pos : 0
-}
+const rawPlayerPos = (player: Player) =>
+  Number.isFinite(player.position) ? player.position : 0
 
 const rebasePos = (session: KaraokeSession, pos: number) => {
   session.posBase = pos
@@ -131,19 +132,21 @@ const sessionPos = (session: KaraokeSession) => {
     rebasePos(session, raw)
     return raw
   }
-  if (isPaused(session.player)) return session.posBase
+  if (isPaused(session.player)) {
+    return session.posBase
+  }
   return session.posBase + Math.max(0, Date.now() - session.posBaseAt)
 }
 
 const trackKey = (
   t:
     | {
-        uri?: string
+        uri?: string | null
         identifier?: string
         title?: string
         author?: string
         info?: {
-          uri?: string
+          uri?: string | null
           identifier?: string
           title?: string
           author?: string
@@ -152,7 +155,9 @@ const trackKey = (
     | null
     | undefined
 ) => {
-  if (!t) return ''
+  if (!t) {
+    return ''
+  }
   return [
     t.info?.uri ?? t.uri,
     t.info?.identifier ?? t.identifier,
@@ -170,12 +175,16 @@ const findIdx = (lines: LyricLine[], ms: number) => {
   while (l <= r) {
     const m = (l + r) >> 1
     const line = lines[m]
-    if (!line) break
+    if (!line) {
+      break
+    }
     const ts = lineStart(line)
     if (ts <= ms) {
       res = m
       l = m + 1
-    } else r = m - 1
+    } else {
+      r = m - 1
+    }
   }
   return res
 }
@@ -228,7 +237,7 @@ const karaokeContainer = (
         .setAccessory(new Thumbnail().setMedia(details.artworkUrl))
     : new TextDisplay().setContent(headerText)
 
-  if (!lines.length)
+  if (!lines.length) {
     return new Container()
       .setColor(ACCENT_COLOR)
       .addComponents(
@@ -238,6 +247,7 @@ const karaokeContainer = (
           'No time-synced lyrics available for this track.'
         )
       )
+  }
 
   if (idx < 0) {
     const preview = lines
@@ -258,20 +268,25 @@ const karaokeContainer = (
   }
 
   const cur = lines[idx]
-  if (!cur)
+  if (!cur) {
     return new Container()
       .setColor(ACCENT_COLOR)
       .addComponents(new TextDisplay().setContent('...'))
+  }
 
   const past = idx > 0 ? lines[idx - 1] : undefined
   const next = lines[idx + 1]
 
   const parts: string[] = []
-  if (past) parts.push(viewportLine(past, 'past'), '')
+  if (past) {
+    parts.push(viewportLine(past, 'past'), '')
+  }
   parts.push(viewportLine(cur, 'current'))
-  if (next) parts.push('', '-# UP NEXT', viewportLine(next, 'next'))
-  else if (idx === lines.length - 1)
+  if (next) {
+    parts.push('', '-# UP NEXT', viewportLine(next, 'next'))
+  } else if (idx === lines.length - 1) {
     parts.push('', '-# FINAL LINE  •  bring it home')
+  }
 
   return new Container()
     .setColor(ACCENT_COLOR)
@@ -284,20 +299,21 @@ const karaokeContainer = (
     )
 }
 
-const fetchLyrics = async (
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic
-  track: any
-) => {
+const fetchLyrics = async (track: Track | null) => {
   const hints = extractLyricsSearchHints(track)
   const q = buildLyricsQueryFromHints(hints)
-  if (!q) return null
+  if (!q) {
+    return null
+  }
   try {
     const res = await findLyrics(q, hints, { requireSynced: true })
     const lines = ((res?.lines ?? []) as LyricLine[])
       .map((l) => ({ ...l, line: String(l.line ?? '') }))
       .filter((l) => clean(l.line))
       .sort((a, b) => lineStart(a) - lineStart(b))
-    if (!lines.length) return null
+    if (!lines.length) {
+      return null
+    }
     return { lines, track: res?.track }
   } catch {
     return null
@@ -305,18 +321,28 @@ const fetchLyrics = async (
 }
 
 const clearTimers = (s: KaraokeSession) => {
-  for (const t of s.timers) clearTimeout(t)
+  for (const t of s.timers) {
+    clearTimeout(t)
+  }
   s.timers = []
 }
 
 const ensureSeekWatcher = (guildId: string) => {
   const s = sessions.get(guildId)
-  if (!s) return
-  if (s.seekTimer) clearTimeout(s.seekTimer)
+  if (!s) {
+    return
+  }
+  if (s.seekTimer) {
+    clearTimeout(s.seekTimer)
+  }
   const tick = () => {
     const cur = sessions.get(guildId)
-    if (!cur) return
-    if (cur.stoppedByUser || cur.player.destroyed) return
+    if (!cur) {
+      return
+    }
+    if (cur.stoppedByUser || cur.player.destroyed) {
+      return
+    }
 
     if (isPaused(cur.player)) {
       rebasePos(cur, rawPlayerPos(cur.player))
@@ -340,17 +366,19 @@ const ensureSeekWatcher = (guildId: string) => {
       }
     }
     const t = setTimeout(tick, seekCheckMs(cur))
-    if (t.unref) t.unref()
+    t.unref()
     cur.seekTimer = t
   }
   const t = setTimeout(tick, seekCheckMs(s))
-  if (t.unref) t.unref()
+  t.unref()
   s.seekTimer = t
 }
 
 const renderIdx = async (guildId: string, idx: number) => {
   const s = sessions.get(guildId)
-  if (!s) return
+  if (!s) {
+    return
+  }
   const c = karaokeContainer(
     { artist: s.artist, artworkUrl: s.artworkUrl, title: s.title, uri: s.uri },
     s.lines,
@@ -365,27 +393,29 @@ const renderIdx = async (guildId: string, idx: number) => {
     recordEditSample(s, Date.now() - startedAt)
   } catch (e) {
     const code = (e as { code?: number }).code
-    if (code === 10008 || code === 10065) await cleanup(guildId, 'error')
+    if (code === 10008 || code === 10065) {
+      await cleanup(guildId, 'error')
+    }
   }
 }
 
-const isPaused = (p: Player) =>
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic
-  (p as any)?.paused === true || (p as any)?.playing === false
+const isPaused = (player: Player) => player.paused || !player.playing
 
-const nowPos = (p: Player) => {
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic
-  const pos = (p as any).position
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic
-  const ts = (p as any).timestamp
-  if (typeof pos !== 'number' || !Number.isFinite(pos)) return 0
-  if (typeof ts !== 'number' || !Number.isFinite(ts)) return pos
-  return pos + Math.max(0, Date.now() - ts)
+const nowPos = (player: Player) => {
+  if (!Number.isFinite(player.position)) {
+    return 0
+  }
+  if (!Number.isFinite(player.timestamp)) {
+    return player.position
+  }
+  return player.position + Math.max(0, Date.now() - player.timestamp)
 }
 
 const schedule = (guildId: string, nextIdx: number) => {
   const s = sessions.get(guildId)
-  if (!s) return
+  if (!s) {
+    return
+  }
   clearTimers(s)
   rebasePos(s, rawPlayerPos(s.player))
   ensureSeekWatcher(guildId)
@@ -393,20 +423,24 @@ const schedule = (guildId: string, nextIdx: number) => {
   if (isPaused(s.player)) {
     const t = setTimeout(() => {
       const cur = sessions.get(guildId)
-      if (!cur) return
+      if (!cur) {
+        return
+      }
       if (cur.stoppedByUser || cur.player.destroyed) {
         cleanup(guildId, cur.stoppedByUser ? 'stopped' : 'error').catch(
           () => {}
         )
         return
       }
-      if (isPaused(cur.player)) return schedule(guildId, nextIdx)
+      if (isPaused(cur.player)) {
+        return schedule(guildId, nextIdx)
+      }
       const pos = sessionPos(cur)
       const idx = findIdx(cur.lines, pos)
       renderIdx(guildId, idx).catch(() => {})
       schedule(guildId, idx + 1)
     }, seekCheckMs(s))
-    if (t.unref) t.unref()
+    t.unref()
     s.timers.push(t)
     return
   }
@@ -424,7 +458,7 @@ const schedule = (guildId: string, nextIdx: number) => {
       () => cleanup(guildId, 'finished').catch(() => {}),
       delay
     )
-    if (t.unref) t.unref()
+    t.unref()
     s.timers.push(t)
     return
   }
@@ -435,9 +469,13 @@ const schedule = (guildId: string, nextIdx: number) => {
   let scheduled = 0
   for (let i = nextIdx; i < s.lines.length; i++) {
     const line = s.lines[i]
-    if (!line) continue
+    if (!line) {
+      continue
+    }
     const rawDelay = lineStart(line) - pos - lead
-    if (rawDelay < overdueLimit) continue
+    if (rawDelay < overdueLimit) {
+      continue
+    }
     const delay = Math.max(0, rawDelay)
     const idx = i
     const t = setTimeout(async () => {
@@ -450,10 +488,12 @@ const schedule = (guildId: string, nextIdx: number) => {
         await cleanup(guildId, 'changed')
         return
       }
-      if (isPaused(cur.player)) return schedule(guildId, idx)
+      if (isPaused(cur.player)) {
+        return schedule(guildId, idx)
+      }
       await renderIdx(guildId, idx)
     }, delay)
-    if (t.unref) t.unref()
+    t.unref()
     s.timers.push(t)
     scheduled++
   }
@@ -463,7 +503,7 @@ const schedule = (guildId: string, nextIdx: number) => {
       () => cleanup(guildId, 'finished').catch(() => {}),
       SONG_END_BUFFER_MS
     )
-    if (t.unref) t.unref()
+    t.unref()
     s.timers.push(t)
   }
 }
@@ -473,9 +513,13 @@ const cleanup = async (
   reason: 'stopped' | 'finished' | 'error' | 'changed' = 'error'
 ) => {
   const s = sessions.get(guildId)
-  if (!s) return
+  if (!s) {
+    return
+  }
   clearTimers(s)
-  if (s.seekTimer) clearTimeout(s.seekTimer)
+  if (s.seekTimer) {
+    clearTimeout(s.seekTimer)
+  }
   clearTimeout(s.timeout)
   s.collector?.stop?.('cleanup')
   if (s.message?.edit) {
@@ -506,11 +550,15 @@ export default class KaraokeCommand extends Command {
   }
 
   public override async run(ctx: CommandContext): Promise<void> {
-    if (!(await safeDefer(ctx))) return
+    if (!(await safeDefer(ctx))) {
+      return
+    }
     const lang = getContextLanguage(ctx)
     const t = ctx.t.get(lang)
     const guildId = ctx.guildId
-    if (!guildId) return
+    if (!guildId) {
+      return
+    }
 
     const player = ctx.client.aqua.players.get(guildId)
     if (!player) {
@@ -570,24 +618,22 @@ export default class KaraokeCommand extends Command {
       },
       true
     )
-    if (!msg) return
+    if (!msg) {
+      return
+    }
 
-    const collector = msg.createComponentCollector?.({
+    const collector = msg.createComponentCollector({
       filter: (i: { isButton: () => boolean; customId: string }) =>
         i.isButton() && i.customId === 'ignore_karaoke-stop',
       onStop() {},
       idle: SESSION_TIMEOUT_MS
     })
-    if (!collector) {
-      autoDelete(msg)
-      return
-    }
 
     collector.run(
       'ignore_karaoke-stop',
       async (i: {
         guildId?: string | null
-        member?: { voice?: unknown } | null
+        member?: import('../shared/helperTypes.ts').MemberLike | null
         user: { id: string }
         client?: unknown
         write: (opts: { content: string; flags: number }) => Promise<void>
@@ -627,11 +673,13 @@ export default class KaraokeCommand extends Command {
       () => cleanup(guildId, 'finished').catch(() => {}),
       SESSION_TIMEOUT_MS
     )
-    if (timeout.unref) timeout.unref()
+    timeout.unref()
 
     if (sessions.size >= 100) {
       const first = sessions.keys().next().value
-      if (first) await cleanup(first, 'error')
+      if (first) {
+        await cleanup(first, 'error')
+      }
     }
     const startRaw = rawPlayerPos(player)
     sessions.set(guildId, {
@@ -654,10 +702,14 @@ export default class KaraokeCommand extends Command {
     })
 
     const created = sessions.get(guildId)
-    if (created) recordEditSample(created, Date.now() - sendStartedAt)
+    if (created) {
+      recordEditSample(created, Date.now() - sendStartedAt)
+    }
 
     schedule(guildId, idx + 1)
-    if (idx >= res.lines.length - 1) schedule(guildId, res.lines.length)
+    if (idx >= res.lines.length - 1) {
+      schedule(guildId, res.lines.length)
+    }
   }
 }
 
@@ -670,8 +722,12 @@ export const hasKaraokeSession = (guildId: string) =>
 
 export const resyncKaraokeSession = (guildId: string, position: unknown) => {
   const s = sessions.get(guildId)
-  if (!s || s.stoppedByUser || s.player.destroyed) return
-  if (typeof position !== 'number' || !Number.isFinite(position)) return
+  if (!s || s.stoppedByUser || s.player.destroyed) {
+    return
+  }
+  if (typeof position !== 'number' || !Number.isFinite(position)) {
+    return
+  }
   rebasePos(s, position)
   const idx = findIdx(s.lines, position)
   renderIdx(guildId, idx).catch(() => {})
@@ -682,12 +738,12 @@ export const syncKaraokeSessionTrack = async (
   guildId: string,
   track:
     | {
-        uri?: string
+        uri?: string | null
         identifier?: string
         title?: string
         author?: string
         info?: {
-          uri?: string
+          uri?: string | null
           identifier?: string
           title?: string
           author?: string
@@ -697,10 +753,16 @@ export const syncKaraokeSessionTrack = async (
     | undefined
 ) => {
   const s = sessions.get(guildId)
-  if (!s) return
+  if (!s) {
+    return
+  }
   const k = trackKey(track)
-  if (!k || k !== s.trackKey) await cleanup(guildId, 'changed')
+  if (!k || k !== s.trackKey) {
+    await cleanup(guildId, 'changed')
+  }
 }
 export const cleanupAllKaraokeSessions = async () => {
-  for (const k of [...sessions.keys()]) await cleanup(k, 'error')
+  for (const k of [...sessions.keys()]) {
+    await cleanup(k, 'error')
+  }
 }

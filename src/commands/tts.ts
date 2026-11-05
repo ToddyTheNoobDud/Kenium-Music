@@ -32,12 +32,14 @@ const options = {
   description: 'Generate and play a TTS message'
 })
 export default class TTSCommand extends Command {
-  public override async run(ctx: CommandContext) {
+  public override async run(ctx: CommandContext<typeof options>) {
     try {
-      const { tts } = ctx.options as { tts: string }
+      const { tts } = ctx.options
       const t = ctx.t.get(getContextLanguage(ctx))
 
-      if (!(await safeDefer(ctx, true))) return
+      if (!(await safeDefer(ctx, true))) {
+        return
+      }
 
       const player = await ensurePlayerForVoice(ctx, ctx.channelId)
       if (!player) {
@@ -77,12 +79,16 @@ export default class TTSCommand extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
       console.error(error)
       try {
         await ctx.editOrReply({ content: 'An error occurred.' })
       } catch (innerErr) {
-        if (isExpiredInteraction(innerErr)) return
+        if (isExpiredInteraction(innerErr)) {
+          return
+        }
       }
     }
   }

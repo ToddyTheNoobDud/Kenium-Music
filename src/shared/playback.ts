@@ -1,26 +1,62 @@
-import { lru } from 'tiny-lru'
+import type { Queue } from 'aqualink'
+import type { ComponentInteraction } from 'seyfert'
 import { getErrorCode, getMemberVoiceState } from '../utils/interactions.ts'
 import type {
   AquaClientLike,
-  InteractionLike,
+  MemberLike,
   PlayerLike,
+  TrackLike,
   UserLike
 } from './helperTypes.ts'
 import { getOrCreatePlayer } from './player.ts'
+import { getTrackRequester } from './trackRequester.ts'
 import { authorizeVoiceControl } from './voiceAuthorization.ts'
 
-// Cache recent Lavalink resolve results to avoid double-resolving
-// (autocomplete + actual play often resolve the same query)
-const RESOLVE_CACHE = lru<{
-  tracks: unknown[]
-  loadType: string
-  result: unknown
-}>(50, 30_000) // 50 queries, 30s TTL
+export const MAX_QUEUE_TRACKS = 1000
+
+type QueueLoadState = { cancelled: boolean; pending: number }
+const queueLoadStates = new WeakMap<PlayerLike, QueueLoadState>()
+
+export const getQueueLoadState = (player: PlayerLike): QueueLoadState => {
+  let state = queueLoadStates.get(player)
+  if (!state) {
+    state = { cancelled: false, pending: 0 }
+    queueLoadStates.set(player, state)
+  }
+  return state
+}
+
+export const cancelQueueLoads = (player: PlayerLike): void => {
+  const state = queueLoadStates.get(player)
+  if (state) {
+    state.cancelled = true
+    state.pending = 0
+  }
+  queueLoadStates.delete(player)
+}
+
+export const getQueueCapacity = (player: PlayerLike): number =>
+  Math.max(
+    0,
+    MAX_QUEUE_TRACKS - player.queue.size - getQueueLoadState(player).pending
+  )
+
+export const enqueueTrack = (
+  player: PlayerLike,
+  track: TrackLike,
+  state = getQueueLoadState(player)
+): boolean => {
+  if (state.cancelled || player.destroyed || !getQueueCapacity(player)) {
+    return false
+  }
+  player.queue.add(track)
+  return true
+}
 
 type VoiceContextLike = {
   guildId?: string | null | undefined
   channelId?: string | null | undefined
-  member?: InteractionLike['member']
+  member?: MemberLike | null | undefined
   client: AquaClientLike
 }
 
@@ -33,40 +69,40 @@ type ResolveAndQueueOptions = {
 }
 
 export const getPlayerVoiceChannelId = (player: PlayerLike): string | null =>
-  player?.voiceChannel || player?._lastVoiceChannel || null
+  player.voiceChannel || player._lastVoiceChannel || null
 
 export const ensurePlayerForVoice = async (
   ctx: VoiceContextLike,
   textChannel = ctx.channelId || null
 ): Promise<PlayerLike | null> => {
   const guildId = ctx.guildId
-  if (!guildId) return null
+  if (!guildId) {
+    return null
+  }
   const voiceState = await getMemberVoiceState(ctx)
   const voiceChannelId = voiceState?.channelId
-  if (!voiceChannelId) return null
+  if (!voiceChannelId) {
+    return null
+  }
   return (
-    getOrCreatePlayer(ctx.client, {
+    (await getOrCreatePlayer(ctx.client, {
       guildId,
       voiceChannel: voiceChannelId,
       textChannel
-    }) ?? null
+    })) ?? null
   )
 }
 
 export const maybeStartPlayback = async (
   player: PlayerLike
 ): Promise<boolean> => {
-  if (
-    !player ||
-    player.destroyed ||
-    player.paused ||
-    !player.queue ||
-    (player.queue.size ?? 0) <= 0
-  ) {
+  if (player.destroyed || player.paused || player.queue.size === 0) {
     return false
   }
   // Genuinely streaming: leave the queue alone. yeah.
-  if (player.playing && player.connected) return false
+  if (player.playing && player.connected) {
+    return false
+  }
   try {
     if (player.playing) {
       // Silent state: Aqualink deferred the start while voice wasn't
@@ -74,15 +110,17 @@ export const maybeStartPlayback = async (
       // connection so the deferred track flushes on connect.
       const voiceChannel = getPlayerVoiceChannelId(player)
       if (voiceChannel && player.guildId) {
-        await player.connect?.({ guildId: player.guildId, voiceChannel })
+        await player.connect({ guildId: player.guildId, voiceChannel })
       }
       return false
     }
-    await player.play?.()
+    await player.play()
     return true
   } catch (error) {
     const code = getErrorCode(error)
-    if (code === 10065 || code === 10008) return false
+    if (code === 10065 || code === 10008) {
+      return false
+    }
     console.error('[playback] Failed to start playback:', error)
     return false
   }
@@ -95,23 +133,10 @@ export const resolveAndQueue = async ({
   requester,
   source
 }: ResolveAndQueueOptions) => {
-  const cacheKey = (source ? `${source}:` : '') + query.toLowerCase().trim()
-  const cached = RESOLVE_CACHE.get(cacheKey)
-  if (cached) {
-    const loadType = cached.loadType
-    const added =
-      loadType === 'playlist'
-        ? cached.tracks
-        : cached.tracks[0]
-          ? [cached.tracks[0]]
-          : []
-    const queue = player.queue
-    for (const track of added) {
-      if (typeof queue?.add === 'function') queue.add(track)
-    }
-    return { result: cached.result, added, loadType }
+  if (!getQueueCapacity(player)) {
+    return { result: null, added: [], loadType: '' }
   }
-
+  const state = getQueueLoadState(player)
   const result = await client.aqua.resolve({
     query,
     requester,
@@ -122,51 +147,43 @@ export const resolveAndQueue = async ({
     return { result, added: [], loadType: String(result?.loadType || '') }
   }
   const loadType = String(result?.loadType || '').toLowerCase()
-  const added = loadType === 'playlist' ? tracks : tracks[0] ? [tracks[0]] : []
-  const queue = player.queue
-  for (const track of added) {
-    if (typeof queue?.add === 'function') {
-      queue.add(track)
-    }
-  }
-  RESOLVE_CACHE.set(cacheKey, { tracks: added, loadType, result })
+  const candidates = loadType === 'playlist' ? tracks : tracks.slice(0, 1)
+  const added = candidates.filter((track) => enqueueTrack(player, track, state))
   return { result, added, loadType }
 }
 
 export const playPreviousTrack = async (
   player: PlayerLike
 ): Promise<boolean> => {
-  const previous = player?.previous
-  if (!player || !previous) return false
+  const previous = player.previous
+  if (!previous) {
+    return false
+  }
   const current = player.current
   // Park the interrupted track at the front so skip() returns to it.
-  // AquaLink archives it into history on replace by itself, so never
-  // enqueue `previous` — that is what duplicated the queue on each press.
   if (current && current !== previous) {
     const queue = player.queue
-    if (queue && typeof queue.add === 'function') {
-      queue.add(current)
-      const queueSize = queue.size ?? 0
-      if (queueSize > 1 && typeof queue.move === 'function') {
-        queue.move(queueSize - 1, 0)
-      }
+    if (!enqueueTrack(player, current)) {
+      return false
+    }
+    const queueSize = queue.size
+    if (queueSize > 1) {
+      ;(queue as Pick<Queue, 'move'>).move(queueSize - 1, 0)
     }
   }
-  await player.play?.(previous)
+  await player.play(previous, { noReplace: false })
   return true
 }
 
 export const ensureMemberCanControlPlayer = async (
-  interaction: InteractionLike,
+  interaction: Pick<ComponentInteraction, 'guildId' | 'user' | 'member'>,
   player: PlayerLike,
   options: { requesterOnly?: boolean } = {}
 ) => {
   const memberVoice = await getMemberVoiceState(interaction)
   const memberVoiceChannelId = memberVoice?.channelId || null
   const playerVoiceChannelId = getPlayerVoiceChannelId(player)
-  const requesterId = (
-    player?.current?.requester as { id?: string } | undefined
-  )?.id
+  const requesterId = getTrackRequester(player.current?.requester).id
   const authorization = authorizeVoiceControl({
     guildId: interaction.guildId,
     memberChannelId: memberVoiceChannelId,

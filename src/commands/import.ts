@@ -8,15 +8,32 @@ import {
   Middlewares,
   Options
 } from 'seyfert'
+import {
+  MAX_RESOLVE_CONCURRENCY,
+  resolveTrack,
+  resolveTracksConcurrently
+} from '../events/playlistPlayback.ts'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
 import { fetchImportFile, ImportFileError } from '../shared/importFile.ts'
 import {
+  enqueueTrack,
+  getQueueCapacity,
+  getQueueLoadState,
+  maybeStartPlayback
+} from '../shared/playback.ts'
+import {
   buildTrackResolveQueries,
-  type PlaylistFileTrack,
   parsePlaylistFile
 } from '../shared/playlist_format.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 import { safeDefer } from '../utils/interactions.ts'
+
+const options = {
+  file: createAttachmentOption({
+    description: 'The file to import',
+    required: true
+  })
+}
 
 @Cooldown.user(1000 * 60, { uses: 2 })
 
@@ -24,25 +41,38 @@ import { safeDefer } from '../utils/interactions.ts'
   name: 'import',
   description: 'Import a queue from a file (txt, pdf)'
 })
-@Options({
-  file: createAttachmentOption({
-    description: 'The file to import',
-    required: true
-  })
-})
+@Options(options)
 @Middlewares(['checkVoice', 'cooldown', 'checkPlayer'])
 export default class importcmds extends Command {
-  public override async run(ctx: CommandContext): Promise<void> {
+  public override async run(
+    ctx: CommandContext<typeof options>
+  ): Promise<void> {
     try {
-      if (!(await safeDefer(ctx, true))) return
+      if (!(await safeDefer(ctx, true))) {
+        return
+      }
 
       const { client } = ctx
       const lang = getContextLanguage(ctx)
       const t = ctx.t.get(lang)
-      const { file } = ctx.options as {
-        file: { url: string; size?: number }
+      const { file } = ctx.options
+      if (!ctx.guildId) {
+        return
       }
+      const player = client.aqua.players.get(ctx.guildId)
+      if (!player) {
+        return
+      }
+      if (!getQueueCapacity(player)) {
+        await ctx.editOrReply({ content: 'The queue limit is 1,000 tracks.' })
+        return
+      }
+      const state = getQueueLoadState(player)
       const fileContent = await fetchImportFile(file)
+      if (state.cancelled || player.destroyed) {
+        await ctx.editOrReply({ content: 'Import cancelled.' })
+        return
+      }
 
       if (!fileContent.trim()) {
         await ctx.editOrReply({
@@ -54,15 +84,12 @@ export default class importcmds extends Command {
         })
         return
       }
-      if (!ctx.guildId) return
-      const player = client.aqua.players.get(ctx.guildId)
-      if (!player) return
-
       const parsed = parsePlaylistFile(fileContent, 'Kenium Queue')
-      const tracks =
-        parsed?.tracks
-          .filter((track) => buildTrackResolveQueries(track).length)
-          .filter(Boolean) || []
+      const validTracks =
+        parsed?.tracks.filter(
+          (track) => buildTrackResolveQueries(track).length
+        ) || []
+      const tracks = validTracks.slice(0, getQueueCapacity(player))
 
       if (tracks.length === 0) {
         await ctx.editOrReply({
@@ -86,54 +113,32 @@ export default class importcmds extends Command {
 
       await ctx.editOrReply({ embeds: [embed], flags: 64 })
 
-      const batchSize = Math.min(
-        10,
-        Math.max(3, Math.floor(tracks.length / 20))
-      )
       let successCount = 0
       let failCount = 0
-
-      for (let i = 0; i < tracks.length; i += batchSize) {
-        const batch = tracks.slice(i, i + batchSize)
-
-        const results = await Promise.allSettled(
-          batch.map(async (track: PlaylistFileTrack) => {
-            for (const query of buildTrackResolveQueries(track)) {
-              const result = await client.aqua.resolve({
-                query,
-                requester: ctx.interaction.user,
-                ...(query.startsWith('isrc:') ? { source: 'spsearch' } : {})
-              })
-
-              if (result?.tracks?.[0]) {
-                await player.queue.add(result.tracks[0])
-                return true
-              }
-            }
-            return false
-          })
+      for (
+        let offset = 0;
+        offset < tracks.length && getQueueCapacity(player);
+        offset += MAX_RESOLVE_CONCURRENCY
+      ) {
+        const batch = tracks.slice(offset, offset + MAX_RESOLVE_CONCURRENCY)
+        const resolved = await resolveTracksConcurrently(
+          batch,
+          MAX_RESOLVE_CONCURRENCY,
+          (track) =>
+            resolveTrack(client.aqua, track, ctx.interaction.user, state)
         )
-
-        results.forEach((result) => {
-          if (result.status === 'fulfilled' && result.value) {
-            successCount++
-          } else {
-            failCount++
-          }
-        })
-
-        if (i + batchSize < tracks.length) {
-          const delay = Math.max(
-            50,
-            200 - (successCount / (successCount + failCount)) * 150
-          )
-          await new Promise((resolve) => setTimeout(resolve, delay))
+        if (state.cancelled || player.destroyed) {
+          await ctx.editOrReply({ content: 'Import cancelled.' })
+          return
         }
+        for (const track of resolved) {
+          if (enqueueTrack(player, track, state)) {
+            successCount += 1
+          }
+        }
+        failCount += batch.length - resolved.length
       }
-
-      if (!player.playing && !player.paused && player.queue.length > 0) {
-        await player.play()
-      }
+      await maybeStartPlayback(player)
 
       const completeTitle = t?.import?.complete || '🔥 Import Complete'
       const successText =
@@ -151,10 +156,15 @@ export default class importcmds extends Command {
       const totalText =
         t?.import?.totalQueueSize?.replace(
           '{count}',
-          player.queue.length.toString()
-        ) || `🎵 Total queue size: **${player.queue.length}** tracks`
+          player.queue.size.toString()
+        ) || `🎵 Total queue size: **${player.queue.size}** tracks`
 
-      const description = [successText, failText, totalText]
+      const omitted = validTracks.length - successCount - failCount
+      const limitText =
+        omitted > 0
+          ? `${omitted} track(s) omitted; the queue limit is 1,000 tracks.`
+          : ''
+      const description = [successText, failText, totalText, limitText]
         .filter(Boolean)
         .join('\n')
 
@@ -166,7 +176,9 @@ export default class importcmds extends Command {
 
       await ctx.editOrReply({ embeds: [resultEmbed], flags: 64 })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
       const message =
         error instanceof ImportFileError
           ? error.message
@@ -179,7 +191,9 @@ export default class importcmds extends Command {
           flags: 64
         })
       } catch (responseError) {
-        if (isExpiredInteraction(responseError)) return
+        if (isExpiredInteraction(responseError)) {
+          return
+        }
         throw responseError
       }
     }

@@ -10,16 +10,13 @@ import {
 } from 'seyfert'
 import {
   decidePlaylistPlayer,
-  enqueueTracksAndCount,
-  MAX_RESOLVE_CONCURRENCY,
   type PlaylistTrackDoc,
   registerPendingPlaylistLoads,
-  resolveTrack,
-  resolveTracksConcurrently
+  topUpPlaylistBuffer
 } from '../../events/playlistPlayback.ts'
 import { ICONS } from '../../shared/constants.ts'
 import type { PlayerLike } from '../../shared/helperTypes.ts'
-import { maybeStartPlayback } from '../../shared/playback.ts'
+import { getQueueLoadState } from '../../shared/playback.ts'
 import { getOrCreatePlayer } from '../../shared/player.ts'
 import {
   createEmbed,
@@ -34,29 +31,6 @@ import { safeDefer } from '../../utils/interactions.ts'
 const playlistsCol = () => getPlaylistsCollection()
 const tracksCol = () => getTracksCollection()
 const FIRST_CHUNK_TRACKS = 10
-
-type PlaylistPlayTextLike = {
-  notFound?: string
-  notFoundDesc?: string
-  empty?: string
-  emptyDesc?: string
-  noVoiceChannel?: string
-  noVoiceChannelDesc?: string
-  loadFailed?: string
-  loadFailedDesc?: string
-  shuffling?: string
-  playing?: string
-  playlist?: string
-  loaded?: string
-  duration?: string
-  channel?: string
-  mode?: string
-  shuffled?: string
-  sequential?: string
-  inQueue?: string
-  playFailed?: string
-  playFailedDesc?: string
-}
 
 const options = {
   playlist: createStringOption({
@@ -102,15 +76,10 @@ const _functions = {
 @Cooldown.user(20000, { uses: 2 })
 @Middlewares(['checkVoice'])
 export class PlayCommand extends SubCommand {
-  async run(ctx: CommandContext) {
-    const { playlist: playlistName, shuffle = false } = ctx.options as {
-      playlist: string
-      shuffle?: boolean
-    }
+  async run(ctx: CommandContext<typeof options>) {
+    const { playlist: playlistName, shuffle = false } = ctx.options
 
-    const translations = getContextTranslations(ctx) as {
-      playlist?: { play?: PlaylistPlayTextLike }
-    }
+    const translations = getContextTranslations(ctx)
     const tp = translations.playlist?.play
 
     const playlistDb = playlistsCol().findOne(
@@ -119,7 +88,7 @@ export class PlayCommand extends SubCommand {
         name: playlistName
       },
       {
-        fields: ['_id', 'playCount', 'totalDuration']
+        fields: ['_id', 'totalDuration']
       }
     )
 
@@ -149,7 +118,9 @@ export class PlayCommand extends SubCommand {
       )
     }
 
-    if (!(await safeDefer(ctx, true))) return
+    if (!(await safeDefer(ctx, true))) {
+      return
+    }
 
     const voiceState = await ctx.member?.voice()
     if (!voiceState?.channelId) {
@@ -179,7 +150,7 @@ export class PlayCommand extends SubCommand {
       const player = (
         playerDecision.action === 'reuse'
           ? existingPlayer
-          : getOrCreatePlayer(ctx.client, {
+          : await getOrCreatePlayer(ctx.client, {
               guildId,
               voiceChannel: voiceState.channelId,
               textChannel: ctx.channelId
@@ -196,57 +167,60 @@ export class PlayCommand extends SubCommand {
 
       const total = dbTracks.length
       const ordered = shuffle ? shuffleArray(dbTracks.slice()) : dbTracks
-      const firstChunk = ordered.slice(0, FIRST_CHUNK_TRACKS)
-      const remaining = ordered.slice(firstChunk.length)
-
-      const resolvedFirst = await resolveTracksConcurrently(
-        firstChunk,
-        MAX_RESOLVE_CONCURRENCY,
-        (track) => resolveTrack(ctx.client.aqua, track, ctx.interaction.user)
+      const state = getQueueLoadState(player)
+      const accepted = registerPendingPlaylistLoads(
+        player,
+        ordered,
+        ctx.interaction.user
       )
-
-      const loadedCount = await enqueueTracksAndCount(
-        resolvedFirst,
-        (track) => {
-          if (typeof player.queue?.add !== 'function')
-            throw new Error('Player queue is unavailable')
-          return player.queue.add(track)
-        }
+      if (!accepted) {
+        return _functions.editError(
+          ctx,
+          'Queue Full',
+          'The queue limit is 1,000 tracks.'
+        )
+      }
+      const loadedCount = await topUpPlaylistBuffer(
+        ctx.client.aqua,
+        player,
+        FIRST_CHUNK_TRACKS
       )
-
-      if (loadedCount === 0 && remaining.length === 0) {
+      if (state.cancelled) {
+        return _functions.editError(
+          ctx,
+          'Load Cancelled',
+          'Playback loading was cancelled.'
+        )
+      }
+      if (!loadedCount && !state.pending) {
         return _functions.editError(
           ctx,
           tp?.loadFailed || 'Load Failed',
-          tp?.loadFailedDesc ||
-            'Could not load any tracks from this playlist. The tracks may no longer be available.'
+          tp?.loadFailedDesc || 'Could not load any tracks from this playlist.'
         )
       }
 
-      registerPendingPlaylistLoads(guildId, remaining, ctx.interaction.user)
-
       try {
-        playlistsCol().update(
+        playlistsCol().updateAtomic(
           { _id: playlistDb._id },
           {
-            playCount: (playlistDb.playCount || 0) + 1,
-            lastPlayedAt: new Date().toISOString()
+            $inc: { playCount: 1 },
+            $set: { lastPlayedAt: new Date().toISOString() }
           }
         )
       } catch (dbError) {
         console.error('Database error updating playlist stats:', dbError)
       }
 
-      await maybeStartPlayback(player)
-
-      const failedUpfront = firstChunk.length - loadedCount
       const notes: string[] = []
-      if (failedUpfront > 0)
-        notes.push(`⚠️ ${failedUpfront} track(s) could not be loaded`)
-      if (remaining.length > 0)
+      if (state.pending > 0) {
+        notes.push('More tracks will load as the queue plays.')
+      }
+      if (accepted < total) {
         notes.push(
-          `⏳ ${remaining.length} more track(s) will load as the queue plays`
+          'The queue limit is 1,000 tracks; excess tracks were omitted.'
         )
+      }
 
       return ctx.editOrReply({
         embeds: [
@@ -263,8 +237,8 @@ export class PlayCommand extends SubCommand {
                 inline: true
               },
               {
-                name: `${ICONS.tracks} ${tp?.loaded || 'Loaded'}`,
-                value: `${loadedCount}/${total} tracks`,
+                name: `${ICONS.tracks} Queued`,
+                value: `${accepted}/${total} tracks`,
                 inline: true
               },
               {
@@ -287,7 +261,7 @@ export class PlayCommand extends SubCommand {
                 inline: true
               },
               {
-                name: `${ICONS.tracks} ${tp?.inQueue || 'In Queue'}`,
+                name: `${ICONS.tracks} ${'In Queue'}`,
                 value: `${player.queue?.size ?? loadedCount} track(s)`,
                 inline: true
               }

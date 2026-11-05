@@ -7,6 +7,7 @@ import {
   type Container,
   definePlugins,
   LimitedMemoryAdapter,
+  type Message,
   type ParseClient,
   type ParseLocales
 } from 'seyfert'
@@ -19,19 +20,18 @@ import {
   resyncKaraokeSession,
   syncKaraokeSessionTrack
 } from './src/commands/karaoke.ts'
+import { presenceState } from './src/events/botReady.ts'
 import {
   dropPendingPlaylistLoads,
   topUpPlaylistBuffer
 } from './src/events/playlistPlayback.ts'
 import {
   registerVoiceManager,
-  requestTwentyFourSevenRecovery,
   setVoiceGatewayHealthy
 } from './src/events/voiceStateUpdate.ts'
 import type English from './src/languages/en.ts'
 import { middlewares } from './src/middlewares/middlewares.ts'
 import { APP_VERSION } from './src/shared/constants.ts'
-import type { EditableMessageLike } from './src/shared/helperTypes.ts'
 import {
   createNowPlayingEmbed,
   deleteNowPlayingMessage,
@@ -39,34 +39,24 @@ import {
 } from './src/shared/nowPlaying.ts'
 import { isPlayerRecovering } from './src/shared/voiceLifecycle.ts'
 import { closeDatabase, initDatabase } from './src/utils/db.ts'
-import {
-  flushDatabaseUpdates,
-  isTwentyFourSevenEnabled
-} from './src/utils/db_helper.ts'
+import { isTwentyFourSevenEnabled } from './src/utils/db_helper.ts'
 
 const plugins = definePlugins(cooldown())
 
 // Constants
-const PRESENCE_UPDATE_INTERVAL = 60000
 const VOICE_STATUS_LENGTH = 30
 const VOICE_STATUS_THROTTLE = 5000
-const COUNT_CACHE_TTL = 300000
 const RESUMED_NOW_PLAYING_RESTORE_DELAY = 1500
 const NOW_PLAYING_DEDUPE_WINDOW_MS = 2500
 const SOCKET_CLOSE_LOG_WINDOW_MS = 30_000
 
-const {
-  NODE_HOST,
-  NODE_PASSWORD,
-  NODE_NAME,
-  NODE_PORT,
-  NODE_SECURE,
-  AQUALINK_TRACE,
-  id
-} = process.env
+const { NODE_HOST, NODE_PASSWORD, NODE_NAME, NODE_PORT, NODE_SECURE, id } =
+  process.env
 
 if (!id) {
-  console.error('Bot token (id) is not defined in environment variables.')
+  console.error(
+    'Discord application ID (id) is not defined in environment variables.'
+  )
   process.exit(1)
 }
 
@@ -75,27 +65,10 @@ const client = new Client({
   getRC: () => seyfertConfig,
   onShardDisconnect({ shardId, code, reason }) {
     client.logger.warn(`Shard ${shardId} disconnected: ${code} — ${reason}`)
-    try {
-      setVoiceGatewayHealthy(false)
-    } catch {}
+    setVoiceGatewayHealthy(false)
   },
   onShardReconnect({ shardId }) {
-    client.logger.info(`Shard ${shardId} reconnected`)
-    try {
-      setVoiceGatewayHealthy(true)
-    } catch {}
-    try {
-      requestTwentyFourSevenRecovery(
-        client as unknown as Parameters<
-          typeof requestTwentyFourSevenRecovery
-        >[0],
-        'gatewayReconnect'
-      )
-    } catch (err) {
-      client.logger.warn(
-        `Failed to reconnect 24/7 players after shard ${shardId} reconnected: ${err}`
-      )
-    }
+    client.logger.info(`Shard ${shardId} WebSocket opened`)
   }
 })
 
@@ -112,39 +85,31 @@ const aqua = new Aqua(
   ],
   {
     defaultSearchPlatform: 'ytsearch',
-    restVersion: 'v4',
-    // We own the now-playing message lifecycle (edit on trackStart, delete
-    // in cleanupPlayer). AquaLink's flag deletes it on every trackEnd and
-    // races the next trackStart edit, leaving a deleted message behind.
-    shouldDeleteMessage: false,
     infiniteReconnects: true,
     autoResume: true,
     resumeTimeout: 120,
-    autoRegionMigrate: false,
-    loadBalancer: 'random',
-    useHttp2: false,
     leaveOnEnd: false,
-    debugTrace: AQUALINK_TRACE === 'true',
-    traceMaxEntries: 5000
-  } as ConstructorParameters<typeof Aqua>[2] & { resumeTimeout: number }
+    lazyloadPlayer: true,
+    send: async (payload) => {
+      const shardId = client.gateway.calculateShardId(payload.d.guild_id)
+      await client.gateway.send(shardId, payload)
+    }
+  }
 )
 
-Object.assign(client, { aqua })
+const musicClient = Object.assign(client, { aqua })
 
-export const state = {
-  presenceInterval: null as NodeJS.Timeout | null,
-  voiceStatusUpdates: lru<number>(500, 3_600_000), // 500 guilds, 1hr auto-expiry
-  nowPlayingInflight: lru<Promise<void>>(500, 3_600_000), // 500 guilds, 1hr auto-expiry
-  nowPlayingLastStart: lru<{ trackKey: string; at: number }>(500, 3_600_000), // 500 guilds, 1hr auto-expiry
-  socketCloseLogs: lru<number>(1000, SOCKET_CLOSE_LOG_WINDOW_MS),
-  lastErrorLog: 0,
-  cachedGuildCount: 0,
-  cachedUserCount: 0,
-  lastCountUpdate: 0
+const state = {
+  voiceStatusUpdates: lru<number>(500, 3_600_000), // 500 guilds; 1-hour TTL, lazy expiry
+  nowPlayingInflight: new Map<string, Promise<void>>(),
+  nowPlayingLastStart: lru<{ trackKey: string; at: number }>(500, 3_600_000), // 500 guilds; 1-hour TTL, lazy expiry
+  socketCloseLogs: lru<number>(1000, SOCKET_CLOSE_LOG_WINDOW_MS)
 }
 
 const getTrackKey = (track: Track | null | undefined) => {
-  if (!track) return ''
+  if (!track) {
+    return ''
+  }
 
   const uri = track.info?.uri || track.uri || ''
   const identifier = track.info?.identifier || track.identifier || ''
@@ -156,15 +121,16 @@ const getTrackKey = (track: Track | null | undefined) => {
 
 const getPlayerTextChannelId = (player: Player) =>
   player.textChannel ||
-  player._lastTextChannel ||
-  (player.nowPlayingMessage as EditableMessageLike | null)?.channelId ||
+  (player.nowPlayingMessage as Message | null)?.channelId ||
   null
 
 const shouldLogSocketClose = (guildId: string, code: unknown) => {
   const key = `${guildId}:${String(code ?? 'unknown')}`
   const now = Date.now()
   const lastLog = state.socketCloseLogs.get(key) ?? 0
-  if (now - lastLog < SOCKET_CLOSE_LOG_WINDOW_MS) return false
+  if (now - lastLog < SOCKET_CLOSE_LOG_WINDOW_MS) {
+    return false
+  }
   state.socketCloseLogs.set(key, now)
   return true
 }
@@ -173,108 +139,51 @@ const cleanupPlayer = (
   player: Player,
   reason?: 'queueEnd' | 'playerDestroy'
 ) => {
-  const is247 = isTwentyFourSevenEnabled(player.guildId)
+  const guildId = player.guildId
+  if (!guildId) {
+    return
+  }
+  const is247 = isTwentyFourSevenEnabled(guildId)
   const isQueueEnd = reason === 'queueEnd'
 
   // For 24/7 guilds on queueEnd: keep voice status + lastStart, only clean inflight/karaoke
   if (is247 && isQueueEnd) {
-    state.nowPlayingInflight.delete(player.guildId)
-    if (hasKaraokeSession(player.guildId)) cleanupKaraokeSession(player.guildId)
+    state.nowPlayingInflight.delete(guildId)
+    if (hasKaraokeSession(guildId)) {
+      cleanupKaraokeSession(guildId)
+    }
     if (!isPlayerRecovering(player)) {
-      void deleteNowPlayingMessage(player, client)
+      void deleteNowPlayingMessage(player)
     }
     return
   }
 
   // Full cleanup for non-24/7 or playerDestroy
-  const voiceChannel = player.voiceChannel || player._lastVoiceChannel
-  if (voiceChannel)
+  const voiceChannel = player.voiceChannel
+  if (voiceChannel) {
     client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
+  }
   state.voiceStatusUpdates.delete(player.guildId)
-  state.nowPlayingInflight.delete(player.guildId)
+  state.nowPlayingInflight.delete(guildId)
   state.nowPlayingLastStart.delete(player.guildId)
-  if (hasKaraokeSession(player.guildId)) cleanupKaraokeSession(player.guildId)
+  if (hasKaraokeSession(guildId)) {
+    cleanupKaraokeSession(guildId)
+  }
   if (!isPlayerRecovering(player)) {
-    void deleteNowPlayingMessage(player, client)
+    void deleteNowPlayingMessage(player)
   }
 }
 
 const shutdown = async () => {
-  if (state.presenceInterval) {
-    clearInterval(state.presenceInterval)
-    state.presenceInterval = null
+  if (presenceState.presenceInterval) {
+    clearInterval(presenceState.presenceInterval)
+    presenceState.presenceInterval = null
   }
-  await aqua.savePlayer().catch((e) => console.log(e))
-  await cleanupAllKaraokeSessions().catch((e) => console.log(e))
-  await flushDatabaseUpdates().catch((e) =>
-    console.error('Failed to flush pending database updates:', e)
-  )
+  await aqua.savePlayer().catch((error) => console.error(error))
+  await Promise.all(Array.from(aqua.players.values(), deleteNowPlayingMessage))
+  await cleanupAllKaraokeSessions().catch((error) => console.error(error))
   closeDatabase()
   process.exit(0)
-}
-
-// Pre-defined activities to avoid object recreation every interval
-const PRESENCE_ACTIVITIES = Object.freeze([
-  {
-    name: `⚡ Kenium ${APP_VERSION} ⚡`,
-    type: 1,
-    url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
-  },
-  {
-    name: '{users} users',
-    type: 1,
-    url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
-  },
-  {
-    name: '{guilds} servers',
-    type: 1,
-    url: 'https://www.youtube.com/watch?v=tSFp2ESLxyU'
-  }
-])
-
-export const updatePresence = (clientInstance: Client) => {
-  if (state.presenceInterval) clearInterval(state.presenceInterval)
-
-  let activityIndex = 0
-
-  const timer = setInterval(() => {
-    if (!clientInstance.me?.id) return
-
-    const now = Date.now()
-    if (now - state.lastCountUpdate > COUNT_CACHE_TTL) {
-      // Use cache.count() instead of iterating all guilds.
-      // guildCreate/guildDelete/guildMemberAdd/guildMemberRemove
-      // events maintain running counts incrementally.
-      const guildCount = clientInstance.cache.guilds?.count()
-      if (typeof guildCount === 'number') state.cachedGuildCount = guildCount
-      const allGuilds = clientInstance.cache.guilds?.values() ?? []
-      state.cachedUserCount = (
-        allGuilds as Array<{ memberCount?: number }>
-      ).reduce(
-        (sum: number, g: { memberCount?: number }) =>
-          sum + (g.memberCount ?? 0),
-        0
-      )
-      state.lastCountUpdate = now
-    }
-
-    const currentActivity = PRESENCE_ACTIVITIES[activityIndex]
-    activityIndex = (activityIndex + 1) % PRESENCE_ACTIVITIES.length
-    if (!currentActivity) return
-    const activityName = currentActivity.name
-      .replace('{users}', String(state.cachedUserCount))
-      .replace('{guilds}', String(state.cachedGuildCount))
-
-    clientInstance.gateway?.setPresence({
-      activities: [{ ...currentActivity, name: activityName }],
-      status: 'idle' as any,
-      since: now,
-      afk: true
-    })
-  }, PRESENCE_UPDATE_INTERVAL)
-
-  if (timer.unref) timer.unref()
-  state.presenceInterval = timer as unknown as NodeJS.Timeout
 }
 
 client.setServices({
@@ -304,17 +213,6 @@ client.setServices({
   }
 })
 
-aqua.on('lyricsFound', (_player, track, payload) => {
-  const lyrics = (payload as { lyrics?: unknown[] }).lyrics
-  console.log(
-    `Lyrics found for ${track.info?.title || track.title}: ${lyrics?.length} lines`
-  )
-})
-
-aqua.on('lyricsNotFound', (_player, track) => {
-  console.log(`Lyrics not found for ${track.info?.title || track.title}`)
-})
-
 aqua.on(
   'trackStart',
   async (
@@ -322,8 +220,14 @@ aqua.on(
     track: Track | null | undefined,
     payload?: { resumed?: boolean }
   ) => {
-    const activeTrack = (player.current as Track | null | undefined) || track
-    if (!activeTrack) return
+    const guildId = player.guildId
+    if (!guildId) {
+      return
+    }
+    const activeTrack = player.current || track
+    if (!activeTrack) {
+      return
+    }
 
     const trackKey = getTrackKey(activeTrack)
     const lastStart = state.nowPlayingLastStart.get(player.guildId)
@@ -337,7 +241,7 @@ aqua.on(
     }
 
     // Wait for any in-flight handler for this guild, eliminating the has/get race window
-    const existingInflight = state.nowPlayingInflight.get(player.guildId)
+    const existingInflight = state.nowPlayingInflight.get(guildId)
     if (existingInflight) {
       await existingInflight.catch(() => null)
 
@@ -357,7 +261,7 @@ aqua.on(
         at: Date.now()
       })
 
-      await syncKaraokeSessionTrack(player.guildId, activeTrack)
+      await syncKaraokeSessionTrack(guildId, activeTrack)
 
       if (payload?.resumed && !player.nowPlayingMessage) {
         await new Promise((resolve) =>
@@ -365,10 +269,12 @@ aqua.on(
         )
       }
 
-      const msg = player.nowPlayingMessage as EditableMessageLike | null
-      const textChannelId = player.textChannel || msg?.channelId
+      const message = player.nowPlayingMessage as Message | null
+      const textChannelId = player.textChannel || message?.channelId
 
-      if (!textChannelId) return
+      if (!textChannelId) {
+        return
+      }
 
       const embed: Container = createNowPlayingEmbed(
         player,
@@ -377,34 +283,14 @@ aqua.on(
       )
       const messageOptions = { components: [embed], flags: 4096 | 32768 }
 
-      const tryEditNowPlaying = async () => {
-        if (!msg?.id) return null
-        return (
-          (msg.edit
-            ? await msg.edit(messageOptions).catch(() => null)
-            : await client.messages
-                .edit(msg.id, textChannelId, messageOptions)
-                .catch(() => null)) || null
-        )
-      }
-
-      if (msg?.id) {
-        const edited = await tryEditNowPlaying()
-        if (edited) {
-          player.nowPlayingMessage = edited
-        } else {
-          player.nowPlayingMessage = null
-          const newMsg = await client.messages
-            .write(textChannelId, messageOptions)
-            .catch(() => null)
-          if (newMsg) player.nowPlayingMessage = newMsg
-        }
-      } else {
-        const newMsg = await client.messages
+      const editedMessage = message
+        ? await message.edit(messageOptions).catch(() => null)
+        : null
+      player.nowPlayingMessage =
+        editedMessage ||
+        (await client.messages
           .write(textChannelId, messageOptions)
-          .catch(() => null)
-        if (newMsg) player.nowPlayingMessage = newMsg
-      }
+          .catch(() => null))
 
       const lastVoiceStatusUpdate =
         state.voiceStatusUpdates.get(player.guildId) ?? 0
@@ -422,13 +308,13 @@ aqua.on(
     }
 
     const inflight = handleTrackStart().finally(() => {
-      const current = state.nowPlayingInflight.get(player.guildId)
+      const current = state.nowPlayingInflight.get(guildId)
       if (current === inflight) {
-        state.nowPlayingInflight.delete(player.guildId)
+        state.nowPlayingInflight.delete(guildId)
       }
     })
 
-    state.nowPlayingInflight.set(player.guildId, inflight)
+    state.nowPlayingInflight.set(guildId, inflight)
     await inflight
   }
 )
@@ -438,10 +324,12 @@ aqua.on('trackError', async (...args: unknown[]) => {
   const track = args[1] as Track | null | undefined
   const payload = args[2] as { exception?: { message?: string } }
   const textChannelId = getPlayerTextChannelId(player)
-  if (!textChannelId) return
+  if (!textChannelId) {
+    return
+  }
 
   const errorMsg = payload.exception?.message || 'Playback failed'
-  const fallbackTrack = (player.current as Track | null | undefined) || track
+  const fallbackTrack = player.current || track
   const rawTitle =
     fallbackTrack?.info?.title || fallbackTrack?.title || 'Unknown track'
   const title = truncateText(rawTitle, 25)
@@ -451,19 +339,6 @@ aqua.on('trackError', async (...args: unknown[]) => {
       content: `❌ **${title}**: ${truncateText(errorMsg, 50)}`
     })
     .catch(() => {})
-})
-
-aqua.on('debug', (source: unknown, message?: unknown) => {
-  const detail =
-    message === undefined
-      ? source instanceof Error
-        ? source.message
-        : String(source)
-      : `[${String(source)}] ${
-          message instanceof Error ? message.message : String(message)
-        }`
-
-  client.logger.debug(`[Aqua Debug] ${detail}`)
 })
 
 aqua.on('error', (sourceOrError: unknown, maybeError?: unknown) => {
@@ -476,7 +351,9 @@ aqua.on('error', (sourceOrError: unknown, maybeError?: unknown) => {
   )
   // Suppress benign "Unknown Message" 10008 from now-playing edits racing
   // manual message deletes
-  if (errStr.includes('10008')) return
+  if (errStr.includes('10008')) {
+    return
+  }
   const err =
     maybeError instanceof Error
       ? maybeError
@@ -486,57 +363,45 @@ aqua.on('error', (sourceOrError: unknown, maybeError?: unknown) => {
   client.logger.warn(`[Aqua Error] ${err.message}`)
 })
 
-let dumpTrace: ((label: string, guildId?: string) => void) | null = null
-
-if (AQUALINK_TRACE) {
-  dumpTrace = (label: string, guildId?: string) => {
-    const raw = aqua.getTrace(300)
-    const rows = guildId
-      ? raw.filter(
-          (x) =>
-            x?.data?.guildId === guildId ||
-            x?.data?.guild_id === guildId ||
-            x?.data?.g === guildId
-        )
-      : raw
-    console.log(
-      `[AquaTrace] ${label} entries=${rows.length}\n${rows
-        .map((x) => `${x.seq}|${x.at}|${x.event}|${JSON.stringify(x.data)}`)
-        .join('\n')}`
-    )
-  }
-}
-
 aqua.on('playerDestroy', (player: Player) => {
-  dropPendingPlaylistLoads(player.guildId)
+  dropPendingPlaylistLoads(player)
   cleanupPlayer(player, 'playerDestroy')
 })
-aqua.on('queueEnd', (player: Player) => cleanupPlayer(player, 'queueEnd'))
+aqua.on('queueEnd', (player: Player) => {
+  cleanupPlayer(player, 'queueEnd')
+  void topUpPlaylistBuffer(aqua, player)
+})
 aqua.on('trackEnd', (player: Player) => {
   void topUpPlaylistBuffer(aqua, player)
 })
 
 aqua.on('nodeError', (node, error) => {
-  console.error(`Node [${node.name}] error: ${error.message}`)
+  const message = error instanceof Error ? error.message : String(error)
+  console.error(`Node [${node.name}] error: ${message}`)
 })
 
-// :p
-aqua.on('seek', (player: unknown, _track: unknown, payload: unknown) => {
-  const guildId = (player as { guildId?: unknown } | null)?.guildId
-  const position = (payload as { position?: unknown } | null)?.position
-  if (typeof guildId === 'string') resyncKaraokeSession(guildId, position)
-})
+aqua.on(
+  'seek',
+  (player: Player, _track: Track | null, payload: { position?: number }) => {
+    if (player.guildId) {
+      resyncKaraokeSession(player.guildId, payload.position)
+    }
+  }
+)
 
 aqua.on('socketClosed', (player, payload) => {
+  if (!player.guildId) {
+    return
+  }
   const code = payload?.code ?? 'unknown'
-  dumpTrace?.(`socketClosed code=${code}`, player.guildId)
-  if (!shouldLogSocketClose(player.guildId, code)) return
+  if (!shouldLogSocketClose(player.guildId, code)) {
+    return
+  }
 
   client.logger.debug(`Socket closed [${player.guildId}], code: ${code}`)
 })
 
 aqua.on('nodeDisconnect', (_, reason) => {
-  dumpTrace?.(`nodeDisconnect reason=${JSON.stringify(reason)}`)
   const details =
     typeof reason === 'string' ? reason : JSON.stringify(reason ?? {})
   client.logger.info(`Node disconnected: ${details}`)
@@ -551,11 +416,7 @@ initDatabase()
     await client
       .uploadCommands({ cachePath: './commands.json' })
       .catch(() => {})
-    try {
-      registerVoiceManager(client as any)
-    } catch (err) {
-      client.logger.warn(`Failed to register voice manager: ${err}`)
-    }
+    registerVoiceManager(musicClient)
   })
   .catch((error) => {
     console.error('Startup failed:', error)
@@ -564,7 +425,7 @@ initDatabase()
 
 declare module 'seyfert' {
   interface SeyfertRegistry {
-    client: ParseClient<typeof client> & { aqua: InstanceType<typeof Aqua> }
+    client: ParseClient<typeof musicClient>
     langs: ParseLocales<typeof English>
     middlewares: typeof middlewares
     plugins: typeof plugins

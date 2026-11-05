@@ -25,17 +25,21 @@ const options = {
 })
 @Middlewares(['checkPlayer', 'checkVoice', 'checkTrack'])
 export default class Seek extends Command {
-  public override async run(ctx: CommandContext) {
+  public override async run(ctx: CommandContext<typeof options>) {
     try {
       const t = ctx.t.get(getContextLanguage(ctx))
       const { client } = ctx
 
       const guildId = ctx.guildId
-      if (!guildId) return
+      if (!guildId) {
+        return
+      }
 
       const player = client.aqua.players.get(guildId)
-      if (!player) return
-      const { time } = ctx.options as { time: number }
+      if (!player) {
+        return
+      }
+      const { time } = ctx.options
 
       player.seek(time * 1000)
 
@@ -46,7 +50,10 @@ export default class Seek extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

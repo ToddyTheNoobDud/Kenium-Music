@@ -33,8 +33,12 @@ export const authorizeVoiceControl = ({
   memberId,
   requesterId
 }: VoiceAuthorizationInput): VoiceAuthorizationResult => {
-  if (!guildId) return { ok: false, reason: 'guild' }
-  if (!memberChannelId) return { ok: false, reason: 'member-channel' }
+  if (!guildId) {
+    return { ok: false, reason: 'guild' }
+  }
+  if (!memberChannelId) {
+    return { ok: false, reason: 'member-channel' }
+  }
   if (requirePlayer && (!hasPlayer || playerDestroyed)) {
     return { ok: false, reason: 'player' }
   }

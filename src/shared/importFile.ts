@@ -82,7 +82,9 @@ export async function fetchImportFile(
   try {
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
+      if (done) {
+        break
+      }
       totalBytes += value.byteLength
       try {
         validateImportFileSize(totalBytes, maxBytes)
@@ -93,7 +95,9 @@ export async function fetchImportFile(
       chunks.push(value)
     }
   } catch (error) {
-    if (error instanceof ImportFileError) throw error
+    if (error instanceof ImportFileError) {
+      throw error
+    }
     throw new ImportFileError('The file download was interrupted.')
   } finally {
     reader.releaseLock()
@@ -103,6 +107,8 @@ export async function fetchImportFile(
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes % (1024 * 1024) === 0) return `${bytes / (1024 * 1024)} MiB`
+  if (bytes % (1024 * 1024) === 0) {
+    return `${bytes / (1024 * 1024)} MiB`
+  }
   return `${bytes} bytes`
 }

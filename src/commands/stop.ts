@@ -12,16 +12,18 @@ import { getContextLanguage } from '../utils/i18n.ts'
   name: 'stop',
   description: 'Stop the music player in the guild.'
 })
-@Middlewares(['checkPlayer', 'checkVoice', 'checkTrack'])
+@Middlewares(['checkPlayer', 'checkVoice'])
 export default class skipCmds extends Command {
   public override async run(ctx: CommandContext): Promise<void> {
     try {
       const { client } = ctx
       const t = ctx.t.get(getContextLanguage(ctx))
       const player = client.aqua.players.get(ctx.guildId as string)
-      if (!player) return
+      if (!player) {
+        return
+      }
 
-      player.stop()
+      await player.stop()
 
       await ctx.editOrReply({
         embeds: [
@@ -30,7 +32,10 @@ export default class skipCmds extends Command {
         flags: 64
       })
     } catch (error: unknown) {
-      if (isExpiredInteraction(error)) return
+      if (isExpiredInteraction(error)) {
+        return
+      }
+      throw error
     }
   }
 }

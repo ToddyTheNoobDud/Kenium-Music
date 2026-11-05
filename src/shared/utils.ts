@@ -1,7 +1,12 @@
-import { ActionRow, Button, ButtonStyle, Embed } from 'seyfert'
-import { getPlaylistTracks } from '../utils/db.ts'
+import {
+  ActionRow,
+  type AutocompleteInteraction,
+  Button,
+  ButtonStyle,
+  Embed
+} from 'seyfert'
+import { type getPlaylistsCollection, getPlaylistTracks } from '../utils/db.ts'
 import { COLORS, ICONS } from './constants.ts'
-import type { AvatarClientLike } from './helperTypes.ts'
 import { createPlaylistNameCache } from './playlistNameCache.ts'
 
 const MAX_AUTOCOMPLETE_OPTIONS = 25
@@ -20,31 +25,6 @@ const TITLE_ICONS = Object.freeze({
   info: ICONS.info
 })
 
-export const _functions = {
-  formatSeconds: (totalSeconds: number) => {
-    const hours = Math.floor(totalSeconds / 3600)
-    const minutes = Math.floor((totalSeconds % 3600) / 60)
-    const seconds = totalSeconds % 60
-    return hours > 0
-      ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-      : `${minutes}:${String(seconds).padStart(2, '0')}`
-  },
-
-  clampField: (text: string | number, maxLen: number) => {
-    const str = String(text)
-    return str.length > maxLen ? str.slice(0, maxLen) : str
-  },
-
-  getPlatformFromUri: (uri: string | undefined) => {
-    if (!uri) return 'Music'
-    const lower = uri.toLowerCase()
-    if (lower.includes('youtu')) return `${ICONS.youtube} YouTube`
-    if (lower.includes('spotify')) return `${ICONS.spotify} Spotify`
-    if (lower.includes('soundcloud')) return `${ICONS.soundcloud} SoundCloud`
-    return `${ICONS.music} Music`
-  }
-}
-
 type EmbedFieldInput = {
   name: string | number
   value: string | number
@@ -61,69 +41,10 @@ type ButtonConfig = {
   disabled?: boolean
 }
 
-type AutocompleteOption<Value extends string | number = string> = {
-  name: string
-  value: Value
-}
-
-type PlaylistNameLike = {
-  name?: string
-}
-
-type PlaylistRecordLike = PlaylistNameLike & {
-  _id: string
-}
-
-type TrackOptionLike = {
-  title?: string
-  uri?: string
-}
-
-type PlaylistCollectionLike = {
-  find: (
-    query: { userId?: string | undefined },
-    options: {
-      sort: { lastModified: -1 }
-      limit: number
-      fields: ['name']
-    }
-  ) => PlaylistNameLike[] | null | undefined
-  findOne: (query: {
-    userId?: string | undefined
-    name: string
-  }) => PlaylistRecordLike | null | undefined
-}
-
-type AutocompleteInteractionLike<Value extends string | number = string> = {
-  user?: { id?: string }
-  respond: (options: AutocompleteOption<Value>[]) => Promise<unknown> | unknown
-  getInput?: () => unknown
-  options: {
-    getString: (name: string) => string | null
-  }
-  client: {
-    aqua: {
-      resolve: (options: {
-        query: string
-        requester: unknown
-      }) => Promise<{ tracks?: TrackOptionLike[] | null }>
-    }
-  }
-}
-
-export const botAvatarUrl = (
-  client: AvatarClientLike | undefined | null
-): string | undefined => {
-  try {
-    const me = client?.me
-    // Call as a method: detaching avatarURL loses `this` and throws inside Seyfert. lovely.
-    const url =
-      typeof me?.avatarURL === 'function' ? me.avatarURL() : me?.avatarURL
-    return typeof url === 'string' && url.length > 0 ? url : undefined
-  } catch {
-    return undefined
-  }
-}
+type PlaylistCollection = Pick<
+  ReturnType<typeof getPlaylistsCollection>,
+  'find' | 'findOne'
+>
 
 export const createEmbed = (
   type: keyof typeof TITLE_ICONS,
@@ -141,13 +62,15 @@ export const createEmbed = (
       ...(iconUrl ? { iconUrl } : {})
     })
 
-  if (description) embed.setDescription(description)
+  if (description) {
+    embed.setDescription(description)
+  }
 
   if (fields.length > 0) {
-    const clamped = fields.slice(0, MAX_EMBED_FIELDS).map((f) => ({
-      name: _functions.clampField(f.name, 256),
-      value: _functions.clampField(f.value, 1024),
-      inline: Boolean(f.inline)
+    const clamped = fields.slice(0, MAX_EMBED_FIELDS).map((field) => ({
+      name: String(field.name).slice(0, 256),
+      value: String(field.value).slice(0, 1024),
+      inline: Boolean(field.inline)
     }))
     embed.addFields(clamped)
   }
@@ -156,19 +79,21 @@ export const createEmbed = (
 }
 
 export const createButtons = (configs: ButtonConfig[]) => {
-  const row = new ActionRow()
+  const row = new ActionRow<Button>()
   const limit = Math.min(configs.length, MAX_BUTTONS_PER_ROW)
 
-  for (let i = 0; i < limit; i++) {
-    const c = configs[i]
-    if (!c) continue
+  for (const config of configs.slice(0, limit)) {
     const button = new Button()
-      .setCustomId(c.id)
-      .setLabel(c.label)
-      .setStyle(c.style ?? ButtonStyle.Secondary)
+      .setCustomId(config.id)
+      .setLabel(config.label)
+      .setStyle(config.style ?? ButtonStyle.Secondary)
 
-    if (c.emoji) button.setEmoji(c.emoji)
-    if (c.disabled) button.setDisabled(true)
+    if (config.emoji) {
+      button.setEmoji(config.emoji)
+    }
+    if (config.disabled) {
+      button.setDisabled(true)
+    }
     row.addComponents(button)
   }
 
@@ -176,76 +101,78 @@ export const createButtons = (configs: ButtonConfig[]) => {
 }
 
 export const formatDuration = (ms: number | undefined) => {
-  if (!ms) return '00:00'
-  return _functions.formatSeconds(Math.floor(ms / 1000))
+  if (!ms) {
+    return '00:00'
+  }
+  const totalSeconds = Math.floor(ms / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  const paddedSeconds = String(seconds).padStart(2, '0')
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${paddedSeconds}`
+    : `${minutes}:${paddedSeconds}`
 }
 
 export const determineSource = (uri: string | undefined) => {
-  if (!uri) return '\u2753 Unknown'
-  return _functions.getPlatformFromUri(uri)
+  if (!uri) {
+    return '\u2753 Unknown'
+  }
+  const source = uri.toLowerCase()
+  if (source.includes('youtu')) {
+    return `${ICONS.youtube} YouTube`
+  }
+  if (source.includes('spotify')) {
+    return `${ICONS.spotify} Spotify`
+  }
+  if (source.includes('soundcloud')) {
+    return `${ICONS.soundcloud} SoundCloud`
+  }
+  return `${ICONS.music} Music`
 }
 
 export const extractYouTubeId = (url: string | undefined) => {
-  if (!url) return null
+  if (!url) {
+    return null
+  }
   const match = YT_REGEX.exec(url)
   return match?.[1] ?? null
 }
 
 export const handlePlaylistAutocomplete = async (
-  interaction: AutocompleteInteractionLike,
-  playlistsCollection: PlaylistCollectionLike
+  interaction: AutocompleteInteraction,
+  playlistsCollection: PlaylistCollection
 ) => {
-  const userId = interaction.user?.id
-  if (userId) {
-    const cachedNames = PLAYLIST_NAME_CACHE.get(userId)
-    if (cachedNames) {
-      const options =
-        cachedNames.length > 0
-          ? cachedNames.map((name) => ({
-              name: name.slice(0, 100),
-              value: name
-            }))
-          : [{ name: 'No Playlists', value: 'No Playlists' }]
-      return interaction.respond(options)
-    }
+  const userId = interaction.user.id
+  let names = PLAYLIST_NAME_CACHE.get(userId)
+  if (!names) {
+    names = playlistsCollection
+      .find(
+        { userId },
+        {
+          sort: { lastModified: -1 },
+          limit: MAX_AUTOCOMPLETE_OPTIONS,
+          fields: ['name']
+        }
+      )
+      .map((playlist) => playlist.name)
+    PLAYLIST_NAME_CACHE.set(userId, names)
   }
-  const items =
-    playlistsCollection.find(
-      {
-        ...(interaction.user?.id !== undefined
-          ? { userId: interaction.user.id }
-          : {})
-      },
-      {
-        sort: { lastModified: -1 },
-        limit: MAX_AUTOCOMPLETE_OPTIONS,
-        fields: ['name']
-      }
-    ) || []
-  const names = items
-    .slice(0, MAX_AUTOCOMPLETE_OPTIONS)
-    .map((p: PlaylistNameLike) => String(p.name || ''))
-  if (userId) PLAYLIST_NAME_CACHE.set(userId, names)
-  const options =
-    names.length > 0
-      ? names.map((name) => ({
-          name: name.slice(0, 100),
-          value: name
-        }))
+  return interaction.respond(
+    names.length
+      ? names.map((name) => ({ name: name.slice(0, 100), value: name }))
       : [{ name: 'No Playlists', value: 'No Playlists' }]
-  return interaction.respond(options)
+  )
 }
 
 export const invalidatePlaylistNameCache = (userId: string) =>
   PLAYLIST_NAME_CACHE.invalidate(userId)
 
 export const handleTrackAutocomplete = async (
-  interaction: AutocompleteInteractionLike
+  interaction: AutocompleteInteraction
 ) => {
   try {
-    const raw = interaction.getInput?.()
-    const query =
-      typeof raw === 'string' ? raw.trim() : String(raw || '').trim()
+    const query = String(interaction.getInput() ?? '').trim()
 
     if (!query) {
       return interaction.respond([
@@ -253,19 +180,17 @@ export const handleTrackAutocomplete = async (
       ])
     }
 
-    const res = await interaction.client.aqua.resolve({
+    const result = await interaction.client.aqua.resolve({
       query,
       requester: interaction.user
     })
-    const tracks = Array.isArray(res?.tracks) ? res.tracks : []
+    const tracks = result.tracks
     const options =
       tracks.length > 0
-        ? tracks
-            .slice(0, MAX_AUTOCOMPLETE_OPTIONS)
-            .map((track: TrackOptionLike) => ({
-              name: String(track.title || track.uri || 'Unknown').slice(0, 100),
-              value: String(track.uri || '')
-            }))
+        ? tracks.slice(0, MAX_AUTOCOMPLETE_OPTIONS).map((track) => ({
+            name: String(track.title || track.uri || 'Unknown').slice(0, 100),
+            value: String(track.uri || '')
+          }))
         : [{ name: 'No Tracks Found', value: 'no_tracks' }]
 
     return interaction.respond(options)
@@ -277,8 +202,8 @@ export const handleTrackAutocomplete = async (
 }
 
 export const handleTrackIndexAutocomplete = async (
-  interaction: AutocompleteInteractionLike<number>,
-  playlistsCollection: PlaylistCollectionLike
+  interaction: AutocompleteInteraction,
+  playlistsCollection: PlaylistCollection
 ) => {
   const playlistName = interaction.options.getString('playlist')
   if (!playlistName) {
@@ -286,9 +211,7 @@ export const handleTrackIndexAutocomplete = async (
   }
 
   const playlist = playlistsCollection.findOne({
-    ...(interaction.user?.id !== undefined
-      ? { userId: interaction.user.id }
-      : {}),
+    userId: interaction.user.id,
     name: playlistName
   })
 
@@ -315,31 +238,23 @@ export const handleTrackIndexAutocomplete = async (
 
 export const shuffleArray = <T>(array: T[]) => {
   const shuffled = [...array]
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    const current = shuffled[i] as T
-    shuffled[i] = shuffled[j] as T
-    shuffled[j] = current
+  for (let index = shuffled.length - 1; index > 0; index--) {
+    const targetIndex = Math.floor(Math.random() * (index + 1))
+    const current = shuffled[index] as T
+    shuffled[index] = shuffled[targetIndex] as T
+    shuffled[targetIndex] = current
   }
   return shuffled
 }
 
 export const truncate = (text: string | undefined, max: number): string => {
-  if (!text) return ''
-  if (text.length <= max) return text
-  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}\u2026`
-}
-
-export const safeText = (value: unknown): string =>
-  typeof value === 'string' ? value.trim() : ''
-
-export const safeNumber = (value: unknown): number | undefined => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) return parsed
+  if (!text) {
+    return ''
   }
-  return undefined
+  if (text.length <= max) {
+    return text
+  }
+  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}\u2026`
 }
 
 export const mapPool = async <T>(
@@ -348,28 +263,35 @@ export const mapPool = async <T>(
   fn: (item: T, index: number) => Promise<void>,
   shouldStop?: () => boolean
 ) => {
-  const l = Math.max(1, limit)
+  const concurrency = Math.max(1, limit)
   let nextIndex = 0
   const getNextIndex = (): number => {
-    const idx = nextIndex
+    const itemIndex = nextIndex
     nextIndex += 1
-    return idx
+    return itemIndex
   }
   const next = async () => {
     for (;;) {
-      if (shouldStop?.()) return
-      const idx = getNextIndex()
-      if (idx >= items.length) return
+      if (shouldStop?.()) {
+        return
+      }
+      const itemIndex = getNextIndex()
+      if (itemIndex >= items.length) {
+        return
+      }
       try {
-        const item = items[idx]
+        const item = items[itemIndex]
         if (item !== undefined) {
-          await fn(item, idx)
+          await fn(item, itemIndex)
         }
       } catch (err) {
-        console.error(`mapPool task ${idx} failed:`, err)
+        console.error(`mapPool task ${itemIndex} failed:`, err)
       }
     }
   }
-  const runners = Array.from({ length: Math.min(l, items.length) }, next)
+  const runners = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    next
+  )
   await Promise.all(runners)
 }

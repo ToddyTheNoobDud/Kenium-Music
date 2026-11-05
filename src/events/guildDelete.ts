@@ -1,17 +1,17 @@
 import { createEvent } from 'seyfert'
-import { state } from '../../index.ts'
+import { presenceState } from './botReady.ts'
 
 export default createEvent({
   data: { name: 'guildDelete' },
   run: (guild) => {
-    state.cachedGuildCount = Math.max(0, state.cachedGuildCount - 1)
-    const raw = guild as {
-      memberCount?: number
-      member_count?: number
-    }
-    state.cachedUserCount = Math.max(
+    presenceState.cachedGuildCount = Math.max(
       0,
-      state.cachedUserCount - (raw.memberCount ?? raw.member_count ?? 0)
+      presenceState.cachedGuildCount - 1
+    )
+    presenceState.cachedUserCount = Math.max(
+      0,
+      presenceState.cachedUserCount -
+        ('memberCount' in guild ? (guild.memberCount ?? 0) : 0)
     )
   }
 })

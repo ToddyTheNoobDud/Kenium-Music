@@ -84,10 +84,14 @@ const hasText = (value: unknown) =>
   typeof value === 'string' && /\S/.test(value)
 
 const safeNumber = (value: unknown) => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
   if (typeof value === 'string' && value.trim() !== '') {
     const parsed = Number(value)
-    if (Number.isFinite(parsed)) return parsed
+    if (Number.isFinite(parsed)) {
+      return parsed
+    }
   }
   return undefined
 }
@@ -98,7 +102,9 @@ const uniqueBy = <T>(items: T[], mapper: (item: T) => string) => {
 
   for (const item of items) {
     const key = mapper(item)
-    if (seen.has(key)) continue
+    if (seen.has(key)) {
+      continue
+    }
     seen.add(key)
     output.push(item)
   }
@@ -113,10 +119,14 @@ const sleep = (ms: number) =>
   })
 
 const parseRetryAfter = (value: string | null): number => {
-  if (!value) return 0
+  if (!value) {
+    return 0
+  }
 
   const seconds = Number(value.trim())
-  if (!Number.isFinite(seconds) || seconds <= 0) return 0
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return 0
+  }
 
   return Math.ceil(seconds * 1000)
 }
@@ -128,7 +138,9 @@ const discardBody = async (response: Response) => {
 }
 
 const toDurationSeconds = (durationMs: number | undefined) => {
-  if (!durationMs || durationMs <= 0) return undefined
+  if (!durationMs || durationMs <= 0) {
+    return undefined
+  }
 
   const seconds = Math.round(durationMs / 1000)
   if (seconds < MIN_DURATION_SECONDS || seconds > MAX_DURATION_SECONDS) {
@@ -153,16 +165,24 @@ const tokensOf = (normalized: string) =>
   normalized.split(' ').filter((token) => token.length > 1)
 
 const tokenOverlap = (leftTokens: Set<string>, rightTokens: Set<string>) => {
-  if (!leftTokens.size || !rightTokens.size) return 0
+  if (!leftTokens.size || !rightTokens.size) {
+    return 0
+  }
 
   let common = 0
-  for (const token of leftTokens) if (rightTokens.has(token)) common++
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      common++
+    }
+  }
 
   return (2 * common) / (leftTokens.size + rightTokens.size)
 }
 
 const bigramDice = (a: string, b: string) => {
-  if (a.length < 2 || b.length < 2) return 0
+  if (a.length < 2 || b.length < 2) {
+    return 0
+  }
 
   const counts = new Map<string, number>()
   for (let index = 0; index < a.length - 1; index++) {
@@ -187,9 +207,15 @@ const similarity = (left: string, right: string) => {
   const a = normalizeComparable(left)
   const b = normalizeComparable(right)
 
-  if (!a || !b) return 0
-  if (a === b) return 1
-  if (a.includes(b) || b.includes(a)) return 0.92
+  if (!a || !b) {
+    return 0
+  }
+  if (a === b) {
+    return 1
+  }
+  if (a.includes(b) || b.includes(a)) {
+    return 0.92
+  }
 
   const leftTokens = tokensOf(a)
   const rightTokens = tokensOf(b)
@@ -204,13 +230,23 @@ const durationScore = (
   targetDurationMs: number | undefined,
   candidateDurationMs: number | undefined
 ) => {
-  if (!targetDurationMs || !candidateDurationMs) return 0
+  if (!targetDurationMs || !candidateDurationMs) {
+    return 0
+  }
 
   const diff = Math.abs(targetDurationMs - candidateDurationMs)
-  if (diff <= 1500) return 1
-  if (diff <= 5000) return 0.8
-  if (diff <= 12_000) return 0.45
-  if (diff <= 25_000) return 0.2
+  if (diff <= 1500) {
+    return 1
+  }
+  if (diff <= 5000) {
+    return 0.8
+  }
+  if (diff <= 12_000) {
+    return 0.45
+  }
+  if (diff <= 25_000) {
+    return 0.2
+  }
   return 0
 }
 
@@ -220,7 +256,9 @@ const stripFeaturing = (value: string): string => {
 
   for (const marker of [' feat.', ' ft.', ' featuring ', ' feat ', ' ft ']) {
     const index = lower.indexOf(marker)
-    if (index !== -1 && (cut === -1 || index < cut)) cut = index
+    if (index !== -1 && (cut === -1 || index < cut)) {
+      cut = index
+    }
   }
 
   return (cut === -1 ? value : value.slice(0, cut)).trim()
@@ -243,7 +281,9 @@ const stripTrailingParensJunk = (value: string): string => {
 
   while (output.endsWith(')')) {
     const openIndex = output.lastIndexOf('(')
-    if (openIndex === -1) break
+    if (openIndex === -1) {
+      break
+    }
 
     const inside = output.slice(openIndex + 1, -1).toLowerCase()
     if (
@@ -330,7 +370,9 @@ const parseQuery = (query: string): { title: string; artist?: string } => {
 
   const splitBy = (separator: string) => {
     const index = cleaned.indexOf(separator)
-    if (index <= 0 || index >= cleaned.length - separator.length) return null
+    if (index <= 0 || index >= cleaned.length - separator.length) {
+      return null
+    }
 
     const artist = cleaned.slice(0, index).trim()
     const title = cleaned.slice(index + separator.length).trim()
@@ -359,8 +401,12 @@ const parseQuery = (query: string): { title: string; artist?: string } => {
 }
 
 const shouldUseHints = (query: string, hints?: LyricsSearchHints) => {
-  if (!hints?.title) return false
-  if (!query) return true
+  if (!hints?.title) {
+    return false
+  }
+  if (!query) {
+    return true
+  }
 
   const hintedTitle = normalizeTitle(hints.title)
   const hintedArtist = hints.artist ? normalizeArtist(hints.artist) : ''
@@ -392,7 +438,9 @@ const buildSearchTarget = (
   }
 
   const title = parsed.title || hintTitle
-  if (!title) return null
+  if (!title) {
+    return null
+  }
 
   let artist = parsed.artist
   if (
@@ -418,21 +466,31 @@ const parseLrc = (content: string): LyricsLine[] | null => {
   const lines: LyricsLine[] = []
 
   for (const row of content.split(/\r?\n/)) {
-    if (!row.includes('[')) continue
+    if (!row.includes('[')) {
+      continue
+    }
 
     const stamps = [...row.matchAll(LRC_LINE_TIMESTAMP)]
-    if (!stamps.length) continue
+    if (!stamps.length) {
+      continue
+    }
 
     let text = row.replace(LRC_LINE_TIMESTAMP, ' ')
-    if (row.includes('<')) text = text.replace(LRC_WORD_TIMESTAMP, ' ')
+    if (row.includes('<')) {
+      text = text.replace(LRC_WORD_TIMESTAMP, ' ')
+    }
     text = text.replace(/\s+/g, ' ').trim()
 
-    if (!text) continue
+    if (!text) {
+      continue
+    }
 
     for (const stamp of stamps) {
       const minutes = Number(stamp[1])
       const seconds = Number(stamp[2])
-      if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) continue
+      if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+        continue
+      }
 
       const fractionRaw = stamp[3] ?? ''
       const fraction = Number(fractionRaw.padEnd(3, '0').slice(0, 3))
@@ -499,11 +557,15 @@ export class Lrclib {
     opts: LyricsFindOptions = {}
   ): Promise<LyricsResult | null> {
     const target = buildSearchTarget(query, hints)
-    if (!target) return null
+    if (!target) {
+      return null
+    }
 
     const cacheKey = `${target.normalizedArtist ?? ''}|${target.normalizedTitle}`
     const cached = this.getCached(cacheKey)
-    if (cached !== undefined) return cached
+    if (cached !== undefined) {
+      return cached
+    }
 
     // Independent attempts: an exact hit survives a search outage and
     // vice versa.
@@ -513,9 +575,12 @@ export class Lrclib {
     )
 
     let best: ScoredRecord | null = null
-    if (exactBest) best = exactBest
-    if (searchBest && (!best || searchBest.score > best.score))
+    if (exactBest) {
+      best = exactBest
+    }
+    if (searchBest && (!best || searchBest.score > best.score)) {
       best = searchBest
+    }
 
     const result = best ? this.formatRecord(best.record) : null
     this.setCached(cacheKey, result)
@@ -524,13 +589,17 @@ export class Lrclib {
 
   getCached(key: string): LyricsResult | null | undefined {
     const entry = this.cache.get(key)
-    if (!entry) return undefined
+    if (!entry) {
+      return undefined
+    }
 
     if (entry.expires <= Date.now()) {
       this.cache.delete(key)
       const now = Date.now()
       for (const [cacheKey, value] of this.cache) {
-        if (value.expires <= now) this.cache.delete(cacheKey)
+        if (value.expires <= now) {
+          this.cache.delete(cacheKey)
+        }
       }
       return undefined
     }
@@ -543,12 +612,16 @@ export class Lrclib {
   setCached(key: string, value: LyricsResult | null): void {
     const now = Date.now()
     for (const [cacheKey, entry] of this.cache) {
-      if (entry.expires <= now) this.cache.delete(cacheKey)
+      if (entry.expires <= now) {
+        this.cache.delete(cacheKey)
+      }
     }
 
     while (this.cache.size >= this.maxCacheEntries) {
       const firstKey = this.cache.keys().next().value as string | undefined
-      if (!firstKey) break
+      if (!firstKey) {
+        break
+      }
       this.cache.delete(firstKey)
     }
 
@@ -630,7 +703,9 @@ export class Lrclib {
   private async waitForSlot(): Promise<void> {
     const elapsed = Date.now() - this.lastRequestAt
     const remaining = this.requestMinIntervalMs - elapsed
-    if (remaining > 0) await sleep(remaining)
+    if (remaining > 0) {
+      await sleep(remaining)
+    }
     this.lastRequestAt = Date.now()
   }
 
@@ -639,8 +714,12 @@ export class Lrclib {
   }
 
   private hasContent(record: LrclibRecord, requireSynced = false) {
-    if (record.instrumental) return false
-    if (requireSynced) return hasText(record.syncedLyrics)
+    if (record.instrumental) {
+      return false
+    }
+    if (requireSynced) {
+      return hasText(record.syncedLyrics)
+    }
     return hasText(record.syncedLyrics) || hasText(record.plainLyrics)
   }
 
@@ -654,12 +733,20 @@ export class Lrclib {
 
     if (target.artist) {
       score += artistScore * 28
-      if (artistScore < 0.25) score -= 12
+      if (artistScore < 0.25) {
+        score -= 12
+      }
     }
 
-    if (titleScore < 0.35) score -= 18
-    if (titleScore === 1) score += 12
-    if (target.artist && artistScore === 1) score += 6
+    if (titleScore < 0.35) {
+      score -= 18
+    }
+    if (titleScore === 1) {
+      score += 12
+    }
+    if (target.artist && artistScore === 1) {
+      score += 6
+    }
 
     const seconds = safeNumber(record.duration)
     score +=
@@ -667,8 +754,12 @@ export class Lrclib {
         target.durationMs,
         seconds !== undefined ? Math.round(seconds * 1000) : undefined
       ) * 10
-    if (hasText(record.syncedLyrics)) score += 8
-    if (hasText(record.plainLyrics)) score += 4
+    if (hasText(record.syncedLyrics)) {
+      score += 8
+    }
+    if (hasText(record.plainLyrics)) {
+      score += 4
+    }
 
     return score
   }
@@ -698,7 +789,9 @@ export class Lrclib {
     target: SearchTarget,
     opts: LyricsFindOptions = {}
   ): Promise<ScoredRecord | null> {
-    if (!target.artist) return null
+    if (!target.artist) {
+      return null
+    }
 
     const seconds = toDurationSeconds(target.durationMs)
     const minimum = this.minimumScore(target)
@@ -716,11 +809,17 @@ export class Lrclib {
           ...(seconds !== undefined ? { duration: seconds } : {})
         })
 
-        if (!record || !this.hasContent(record, requireSynced)) continue
+        if (!record || !this.hasContent(record, requireSynced)) {
+          continue
+        }
 
         const score = this.scoreRecord(record, target)
-        if (score < minimum) continue
-        if (!best || score > best.score) best = { record, score }
+        if (score < minimum) {
+          continue
+        }
+        if (!best || score > best.score) {
+          best = { record, score }
+        }
       }
     }
 
@@ -760,19 +859,29 @@ export class Lrclib {
 
     for (const params of this.buildSearchParams(target)) {
       const records = await this.request<LrclibRecord[]>('/search', params)
-      if (!Array.isArray(records)) continue
-
-      for (const record of records) {
-        if (!record || !this.hasContent(record, requireSynced)) continue
-
-        const score = this.scoreRecord(record, target)
-        if (!best || score > best.score) best = { record, score }
+      if (!Array.isArray(records)) {
+        continue
       }
 
-      if (best && best.score >= STRONG_MATCH_SCORE) break
+      for (const record of records) {
+        if (!record || !this.hasContent(record, requireSynced)) {
+          continue
+        }
+
+        const score = this.scoreRecord(record, target)
+        if (!best || score > best.score) {
+          best = { record, score }
+        }
+      }
+
+      if (best && best.score >= STRONG_MATCH_SCORE) {
+        break
+      }
     }
 
-    if (!best || best.score < this.minimumScore(target)) return null
+    if (!best || best.score < this.minimumScore(target)) {
+      return null
+    }
     return best
   }
 }

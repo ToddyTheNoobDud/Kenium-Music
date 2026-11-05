@@ -1,9 +1,9 @@
 import { createEvent } from 'seyfert'
-import { state } from '../../index.ts'
+import { presenceState } from './botReady.ts'
 
 export default createEvent({
   data: { name: 'guildMemberAdd' },
   run: () => {
-    state.cachedUserCount++
+    presenceState.cachedUserCount++
   }
 })

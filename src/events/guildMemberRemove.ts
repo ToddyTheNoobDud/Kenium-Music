@@ -1,9 +1,12 @@
 import { createEvent } from 'seyfert'
-import { state } from '../../index.ts'
+import { presenceState } from './botReady.ts'
 
 export default createEvent({
   data: { name: 'guildMemberRemove' },
   run: () => {
-    state.cachedUserCount = Math.max(0, state.cachedUserCount - 1)
+    presenceState.cachedUserCount = Math.max(
+      0,
+      presenceState.cachedUserCount - 1
+    )
   }
 })

@@ -5,7 +5,6 @@ import {
   ButtonStyle,
   Command,
   type CommandContext,
-  ComponentType,
   createStringOption,
   Declare,
   Embed,
@@ -19,6 +18,7 @@ import {
 } from '../shared/lyrics.ts'
 import { findLyrics } from '../shared/lyricsservice.ts'
 import { formatDuration } from '../shared/utils.ts'
+import type { Translations } from '../utils/i18n.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
 import { safeDefer } from '../utils/interactions.ts'
 import type { LyricsLine } from '../utils/musiclyrics.ts'
@@ -34,27 +34,7 @@ type LyricsTrackLike = {
   albumArt?: string
 }
 
-type LyricsTextLike = {
-  common: {
-    close: string
-    previous: string
-    next: string
-    page: string
-    unknown: string
-  }
-  lyrics: {
-    error: string
-    title: string
-    noLyrics: string
-    syncedLyrics: string
-    textLyrics: string
-    noActivePlayer: string
-    noLyricsFound: string
-    serviceUnavailable: string
-  }
-}
-
-function createErrorEmbed(message: string, thele: LyricsTextLike) {
+function createErrorEmbed(message: string, thele: Translations) {
   return new Embed()
     .setColor(0xe74c3c)
     .setTitle(thele.lyrics.error)
@@ -77,7 +57,9 @@ function formatSyncedLyrics(lines: LyricsLine[]) {
       const lyric = String(line.line || '')
         .replace(/\s+/g, ' ')
         .trim()
-      if (!lyric) return null
+      if (!lyric) {
+        return null
+      }
 
       const stamp = line.range?.start
       const label =
@@ -96,7 +78,9 @@ function formatTextLyrics(plainText: string) {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 
-  if (!cleaned) return ''
+  if (!cleaned) {
+    return ''
+  }
 
   return cleaned
     .split('\n')
@@ -105,14 +89,18 @@ function formatTextLyrics(plainText: string) {
 }
 
 function chunkTextContent(content: string, maxLength = MAX_EMBED_LENGTH) {
-  if (!content.trim()) return ['']
+  if (!content.trim()) {
+    return ['']
+  }
 
   const chunks: string[] = []
   let current = ''
 
   const pushChunk = (value: string) => {
     const trimmed = value.trim()
-    if (trimmed) chunks.push(trimmed)
+    if (trimmed) {
+      chunks.push(trimmed)
+    }
   }
 
   for (const line of content.split('\n')) {
@@ -122,7 +110,9 @@ function chunkTextContent(content: string, maxLength = MAX_EMBED_LENGTH) {
       continue
     }
 
-    if (current) pushChunk(current)
+    if (current) {
+      pushChunk(current)
+    }
     current = ''
 
     if (line.length <= maxLength) {
@@ -135,12 +125,16 @@ function chunkTextContent(content: string, maxLength = MAX_EMBED_LENGTH) {
     }
   }
 
-  if (current) pushChunk(current)
+  if (current) {
+    pushChunk(current)
+  }
   return chunks.length ? chunks : ['']
 }
 
 function chunkSyncedContent(lines: string[]) {
-  if (!lines.length) return ['']
+  if (!lines.length) {
+    return ['']
+  }
 
   const chunks: string[] = []
   let currentLines: string[] = []
@@ -157,18 +151,22 @@ function chunkSyncedContent(lines: string[]) {
       continue
     }
 
-    if (currentLines.length) chunks.push(currentLines.join('\n'))
+    if (currentLines.length) {
+      chunks.push(currentLines.join('\n'))
+    }
     currentLines = [line]
   }
 
-  if (currentLines.length) chunks.push(currentLines.join('\n'))
+  if (currentLines.length) {
+    chunks.push(currentLines.join('\n'))
+  }
   return chunks.length ? chunks : ['']
 }
 
 function createNavigationRow(
   currentPage: number,
   totalPages: number,
-  thele: LyricsTextLike
+  thele: Translations
 ) {
   const row = new ActionRow().addComponents(
     new Button()
@@ -210,7 +208,7 @@ async function displayLyricsUI(
     albumArt?: string
     source?: string
   },
-  thele: LyricsTextLike
+  thele: Translations
 ) {
   const chunks = data.lines
     ? chunkSyncedContent(formatSyncedLyrics(data.lines))
@@ -226,7 +224,7 @@ async function displayLyricsUI(
       .setDescription(
         [
           header ? `*${header}*` : null,
-          chunks[currentPage] || thele.lyrics.noLyrics
+          chunks[currentPage] || thele.lyrics.noLyricsFound
         ]
           .filter(Boolean)
           .join('\n\n')
@@ -238,7 +236,9 @@ async function displayLyricsUI(
         ].join(' | ')
       })
 
-    if (data.albumArt) embed.setThumbnail(data.albumArt)
+    if (data.albumArt) {
+      embed.setThumbnail(data.albumArt)
+    }
 
     return embed
   }
@@ -251,29 +251,23 @@ async function displayLyricsUI(
     true
   )
 
-  if (!response) return
+  if (!response) {
+    return
+  }
 
   const collector = response.createComponentCollector({
-    componentType: ComponentType.Button,
     filter: (interaction) =>
-      interaction.user.id === ctx.interaction.user.id &&
-      (typeof interaction.isButton !== 'function' || interaction.isButton()),
+      interaction.user.id === ctx.interaction.user.id && interaction.isButton(),
     idle: COLLECTOR_TIMEOUT,
     onStop: async () => {
       await response.edit({ components: [] }).catch(() => null)
     }
-  } as {
-    componentType: ComponentType
-    filter: (interaction: {
-      user: { id: string }
-      isButton?: () => boolean
-    }) => boolean
-    idle: number
-    onStop: () => Promise<void>
   })
 
   collector.run('ignore_lyrics_prev', async (interaction) => {
-    if (currentPage <= 0) return
+    if (currentPage <= 0) {
+      return
+    }
 
     currentPage--
     await interaction.update({
@@ -283,7 +277,9 @@ async function displayLyricsUI(
   })
 
   collector.run('ignore_lyrics_next', async (interaction) => {
-    if (currentPage >= totalPages - 1) return
+    if (currentPage >= totalPages - 1) {
+      return
+    }
 
     currentPage++
     await interaction.update({
@@ -302,11 +298,15 @@ async function fetchLyrics(query: string | undefined, currentTrack: unknown) {
   const hints = extractLyricsSearchHints(currentTrack as LyricsTrackLike)
   const searchQuery = query?.trim() || buildLyricsQueryFromHints(hints)
 
-  if (!searchQuery) return null
+  if (!searchQuery) {
+    return null
+  }
 
   try {
     const result = await findLyrics(searchQuery, hints)
-    if (!result?.text && !result?.lines) return null
+    if (!result?.text && !result?.lines) {
+      return null
+    }
 
     return {
       ...result,
@@ -342,12 +342,16 @@ const options = {
 })
 @Middlewares(['cooldown'])
 export default class LyricsCommand extends Command {
-  public override async run(ctx: CommandContext): Promise<void> {
+  public override async run(
+    ctx: CommandContext<typeof options>
+  ): Promise<void> {
     const lang = getContextLanguage(ctx)
-    const thele = ctx.t.get(lang) as unknown as LyricsTextLike
-    if (!(await safeDefer(ctx))) return
+    const thele = ctx.t.get(lang)
+    if (!(await safeDefer(ctx))) {
+      return
+    }
 
-    const search = ((ctx.options as { search?: string }).search || '').trim()
+    const search = (ctx.options.search || '').trim()
     const player = ctx.guildId ? ctx.client.aqua.players.get(ctx.guildId) : null
     const currentTrack = (player?.current || null) as LyricsTrackLike | null
 

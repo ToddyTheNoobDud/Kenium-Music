@@ -1,5 +1,7 @@
 node_modules
 .env
+.env.*
+!.env.example
 config.mjs
 db
 AquaPlayers.jsonl
@@ -12,3 +14,18 @@ runtime-smoke.log
 AGENTS.md
 AquaBrokenPlayers*
 bun.lock
+voice
+
+# Local caches, archives, and scratch files
+/.cache/
+/.agents/
+/dist/
+/*.zip
+/*.log
+/archive-*/
+/recive.js
+/yeah.js
+
+# Separate dependency and reference checkouts
+/AquaLink/
+/aqualibk-v4/

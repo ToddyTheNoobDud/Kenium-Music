@@ -1,14 +1,10 @@
 import { createEvent } from 'seyfert'
-import { state } from '../../index.ts'
+import { presenceState } from './botReady.ts'
 
 export default createEvent({
   data: { name: 'guildCreate' },
   run: (guild) => {
-    state.cachedGuildCount++
-    const raw = guild as {
-      memberCount?: number
-      member_count?: number
-    }
-    state.cachedUserCount += raw.memberCount ?? raw.member_count ?? 0
+    presenceState.cachedGuildCount++
+    presenceState.cachedUserCount += guild.memberCount
   }
 })

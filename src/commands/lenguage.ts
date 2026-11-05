@@ -14,21 +14,6 @@ import {
 } from '../utils/i18n.ts'
 import { safeDefer } from '../utils/interactions.ts'
 
-type LanguageTextLike = {
-  success?: {
-    settingAlradySet?: string
-    languageSet?: string
-  }
-  errors?: {
-    databaseError?: string
-    general?: string
-  }
-}
-
-type LanguageOptions = {
-  language: string
-}
-
 const options = {
   language: createStringOption({
     description: 'Choose the language used for this server.',
@@ -43,7 +28,7 @@ const _functions = {
     lang: string
   ): Promise<void> => {
     const currentLang = getContextLanguage(ctx)
-    const currentTranslations = ctx.t.get(currentLang) as LanguageTextLike
+    const currentTranslations = ctx.t.get(currentLang)
 
     if (getGuildLang(ctx.guildId || '') === lang) {
       await ctx.editOrReply({
@@ -56,7 +41,7 @@ const _functions = {
     }
 
     const success = setGuildLang(ctx.guildId || '', lang)
-    const t = ctx.t.get(lang) as LanguageTextLike
+    const t = ctx.t.get(lang)
     const displayName = getLanguageDisplayName(lang)
     const successBool = success !== undefined && success !== null
     const content = successBool
@@ -76,8 +61,12 @@ const _functions = {
 @LocalesT('commands.language.name', 'commands.language.description')
 @Options(options)
 export default class LanguageCommand extends Command {
-  public override async run(ctx: CommandContext): Promise<void> {
-    if (!(await safeDefer(ctx, true))) return
+  public override async run(
+    ctx: CommandContext<typeof options>
+  ): Promise<void> {
+    if (!(await safeDefer(ctx, true))) {
+      return
+    }
 
     if (!ctx.guildId) {
       await ctx.editOrReply({
@@ -88,12 +77,12 @@ export default class LanguageCommand extends Command {
     }
 
     try {
-      const { language } = ctx.options as LanguageOptions
+      const { language } = ctx.options
       await _functions.handleLanguageSet(ctx, language)
     } catch (error) {
       console.error('Error in language command:', error)
       const currentLang = getContextLanguage(ctx)
-      const t = ctx.t.get(currentLang) as LanguageTextLike
+      const t = ctx.t.get(currentLang)
       await ctx.editOrReply({
         content: t.errors?.general || 'An error occurred',
         flags: 64
