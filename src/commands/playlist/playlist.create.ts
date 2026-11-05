@@ -18,8 +18,6 @@ import { getContextTranslations } from '../../utils/i18n.ts'
 import { validatePlaylistCreation } from '../../utils/playlistMutations.ts'
 import { generateSortableId } from '../../utils/simpleDB.ts'
 
-const playlistsCol = () => getPlaylistsCollection()
-
 const options = {
   name: createStringOption({ description: 'Playlist name', required: true })
 }
@@ -53,37 +51,16 @@ export class CreateCommand extends SubCommand {
       })
     }
 
-    const creation = (() => {
-      const existing = playlistsCol().findOne(
-        { userId, name },
-        { fields: ['_id'] }
-      )
-      if (existing) {
-        return 'exists' as const
-      }
-
-      const validation = validatePlaylistCreation(
-        name,
-        playlistsCol().count({ userId })
-      )
-      if (validation) {
-        return validation
-      }
-
-      const timestamp = new Date().toISOString()
-      const playlist: Playlist = {
-        _id: generateSortableId(),
-        userId,
-        name,
-        createdAt: timestamp,
-        lastModified: timestamp,
-        playCount: 0,
-        totalDuration: 0,
-        trackCount: 0
-      }
-      playlistsCol().insert(playlist)
-      return null
-    })()
+    const existing = getPlaylistsCollection().findOne(
+      { userId, name },
+      { fields: ['_id'] }
+    )
+    const creation = existing
+      ? 'exists'
+      : validatePlaylistCreation(
+          name,
+          getPlaylistsCollection().count({ userId })
+        )
 
     if (creation === 'exists') {
       return ctx.write({
@@ -120,6 +97,19 @@ export class CreateCommand extends SubCommand {
       })
     }
 
+    const timestamp = new Date().toISOString()
+    const playlist: Playlist = {
+      _id: generateSortableId(),
+      userId,
+      name,
+      createdAt: timestamp,
+      lastModified: timestamp,
+      playCount: 0,
+      totalDuration: 0,
+      trackCount: 0
+    }
+    getPlaylistsCollection().insert(playlist)
+
     invalidatePlaylistNameCache(userId)
 
     const embed = createEmbed(
@@ -146,22 +136,16 @@ export class CreateCommand extends SubCommand {
       value: `Use \`/playlists add playlist:${name}\` to add tracks.`
     })
 
-    const created = playlistsCol().findOne(
-      { userId, name },
-      { fields: ['_id'] }
-    )
-    const components = created
-      ? [
-          createButtons([
-            {
-              id: `playlist:view:${created._id}:${userId}`,
-              label: t?.viewPlaylist || 'View Playlist',
-              emoji: ICONS.playlist,
-              style: ButtonStyle.Primary
-            }
-          ])
-        ]
-      : []
+    const components = [
+      createButtons([
+        {
+          id: `playlist:view:${playlist._id}:${userId}`,
+          label: t?.viewPlaylist || 'View Playlist',
+          emoji: ICONS.playlist,
+          style: ButtonStyle.Primary
+        }
+      ])
+    ]
 
     return ctx.write({ embeds: [embed], components, flags: 64 })
   }

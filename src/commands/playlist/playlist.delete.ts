@@ -17,15 +17,12 @@ import {
 } from '../../utils/db.ts'
 import { getContextTranslations } from '../../utils/i18n.ts'
 
-const playlistsCol = () => getPlaylistsCollection()
-const tracksCol = () => getTracksCollection()
-
 const options = {
   name: createStringOption({
     description: 'Playlist name',
     required: true,
     autocomplete: async (interaction) => {
-      return handlePlaylistAutocomplete(interaction, playlistsCol())
+      return handlePlaylistAutocomplete(interaction, getPlaylistsCollection())
     }
   })
 }
@@ -40,7 +37,7 @@ export class DeleteCommand extends SubCommand {
     const userId = ctx.author.id
     const t = getContextTranslations(ctx).playlist.delete
 
-    const playlist = playlistsCol().findOne(
+    const playlist = getPlaylistsCollection().findOne(
       {
         userId,
         name: playlistName
@@ -69,8 +66,8 @@ export class DeleteCommand extends SubCommand {
     getDatabase().transaction(() => {
       const playlistId = playlist._id
       if (playlistId) {
-        tracksCol().delete({ playlistId })
-        playlistsCol().delete({ _id: playlistId })
+        getTracksCollection().delete({ playlistId })
+        getPlaylistsCollection().delete({ _id: playlistId })
       }
     })
     invalidatePlaylistNameCache(userId)

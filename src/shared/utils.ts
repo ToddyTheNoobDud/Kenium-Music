@@ -265,17 +265,12 @@ export const mapPool = async <T>(
 ) => {
   const concurrency = Math.max(1, limit)
   let nextIndex = 0
-  const getNextIndex = (): number => {
-    const itemIndex = nextIndex
-    nextIndex += 1
-    return itemIndex
-  }
   const next = async () => {
     for (;;) {
       if (shouldStop?.()) {
         return
       }
-      const itemIndex = getNextIndex()
+      const itemIndex = nextIndex++
       if (itemIndex >= items.length) {
         return
       }

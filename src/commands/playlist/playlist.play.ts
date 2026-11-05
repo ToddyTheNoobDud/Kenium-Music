@@ -10,12 +10,10 @@ import {
 } from 'seyfert'
 import {
   decidePlaylistPlayer,
-  type PlaylistTrackDoc,
   registerPendingPlaylistLoads,
   topUpPlaylistBuffer
 } from '../../events/playlistPlayback.ts'
 import { ICONS } from '../../shared/constants.ts'
-import type { PlayerLike } from '../../shared/helperTypes.ts'
 import { getQueueLoadState } from '../../shared/playback.ts'
 import { getOrCreatePlayer } from '../../shared/player.ts'
 import {
@@ -24,12 +22,10 @@ import {
   handlePlaylistAutocomplete,
   shuffleArray
 } from '../../shared/utils.ts'
-import { getPlaylistsCollection, getTracksCollection } from '../../utils/db.ts'
+import { getPlaylistsCollection, getPlaylistTracks } from '../../utils/db.ts'
 import { getContextTranslations } from '../../utils/i18n.ts'
 import { safeDefer } from '../../utils/interactions.ts'
 
-const playlistsCol = () => getPlaylistsCollection()
-const tracksCol = () => getTracksCollection()
 const FIRST_CHUNK_TRACKS = 10
 
 const options = {
@@ -37,7 +33,7 @@ const options = {
     description: 'Playlist name to play',
     required: true,
     autocomplete: async (interaction) =>
-      handlePlaylistAutocomplete(interaction, playlistsCol())
+      handlePlaylistAutocomplete(interaction, getPlaylistsCollection())
   }),
   shuffle: createBooleanOption({
     description: 'Whether to shuffle tracks before playing',
@@ -45,27 +41,21 @@ const options = {
   })
 }
 
-const _functions = {
-  getChannelName(vc: { channel: { name: string }; channelId: string }) {
-    return vc?.channel?.name || vc?.channelId || 'Voice'
-  },
+function writeError(ctx: CommandContext, title: string, description: string) {
+  return ctx.write({
+    embeds: [
+      createEmbed('error', title, description, [], ctx.client.me?.avatarURL())
+    ],
+    flags: 64
+  })
+}
 
-  writeError(ctx: CommandContext, title: string, desc: string) {
-    return ctx.write({
-      embeds: [
-        createEmbed('error', title, desc, [], ctx.client.me?.avatarURL())
-      ],
-      flags: 64
-    })
-  },
-
-  editError(ctx: CommandContext, title: string, desc: string) {
-    return ctx.editOrReply({
-      embeds: [
-        createEmbed('error', title, desc, [], ctx.client.me?.avatarURL())
-      ]
-    })
-  }
+function editError(ctx: CommandContext, title: string, description: string) {
+  return ctx.editOrReply({
+    embeds: [
+      createEmbed('error', title, description, [], ctx.client.me?.avatarURL())
+    ]
+  })
 }
 
 @Declare({
@@ -79,10 +69,9 @@ export class PlayCommand extends SubCommand {
   async run(ctx: CommandContext<typeof options>) {
     const { playlist: playlistName, shuffle = false } = ctx.options
 
-    const translations = getContextTranslations(ctx)
-    const tp = translations.playlist?.play
+    const translations = getContextTranslations(ctx).playlist.play
 
-    const playlistDb = playlistsCol().findOne(
+    const playlistDb = getPlaylistsCollection().findOne(
       {
         userId: ctx.author.id,
         name: playlistName
@@ -93,28 +82,23 @@ export class PlayCommand extends SubCommand {
     )
 
     if (!playlistDb) {
-      return _functions.writeError(
+      return writeError(
         ctx,
-        tp?.notFound || 'Playlist Not Found',
-        (tp?.notFoundDesc || 'No playlist named "{name}" exists!').replace(
-          '{name}',
-          playlistName
-        )
+        translations?.notFound || 'Playlist Not Found',
+        (
+          translations?.notFoundDesc || 'No playlist named "{name}" exists!'
+        ).replace('{name}', playlistName)
       )
     }
 
-    const dbTracks = tracksCol().find(
-      { playlistId: playlistDb._id },
-      {
-        sort: { addedAt: 1, _id: 1 },
-        fields: ['uri', 'source', 'identifier', 'title', 'author', 'isrc']
-      }
-    ) as PlaylistTrackDoc[]
-    if (!Array.isArray(dbTracks) || dbTracks.length === 0) {
-      return _functions.writeError(
+    const dbTracks = getPlaylistTracks(playlistDb._id, {
+      fields: ['uri', 'source', 'identifier', 'title', 'author', 'isrc']
+    })
+    if (dbTracks.length === 0) {
+      return writeError(
         ctx,
-        tp?.empty || 'Empty Playlist',
-        tp?.emptyDesc || 'This playlist has no tracks to play!'
+        translations?.empty || 'Empty Playlist',
+        translations?.emptyDesc || 'This playlist has no tracks to play!'
       )
     }
 
@@ -124,49 +108,39 @@ export class PlayCommand extends SubCommand {
 
     const voiceState = await ctx.member?.voice()
     if (!voiceState?.channelId) {
-      return _functions.editError(
+      return editError(
         ctx,
-        tp?.noVoiceChannel || 'No Voice Channel',
-        tp?.noVoiceChannelDesc || 'Join a voice channel to play a playlist'
+        translations?.noVoiceChannel || 'No Voice Channel',
+        translations?.noVoiceChannelDesc ||
+          'Join a voice channel to play a playlist'
       )
     }
 
     try {
       const guildId = ctx.guildId as string
-      const existingPlayer = ctx.client.aqua.players.get(guildId) as
-        | PlayerLike
-        | undefined
+      const existingPlayer = ctx.client.aqua.players.get(guildId)
       const playerDecision = decidePlaylistPlayer(
         existingPlayer,
         voiceState.channelId
       )
       if (playerDecision.action === 'reject') {
-        return _functions.editError(
+        return editError(
           ctx,
-          tp?.playFailed || 'Play Failed',
+          translations?.playFailed || 'Play Failed',
           'You must be in the same voice channel as the player.'
         )
       }
-      const player = (
-        playerDecision.action === 'reuse'
+      const player =
+        existingPlayer && !existingPlayer.destroyed
           ? existingPlayer
           : await getOrCreatePlayer(ctx.client, {
               guildId,
               voiceChannel: voiceState.channelId,
               textChannel: ctx.channelId
             })
-      ) as PlayerLike | undefined
-      if (!player) {
-        return _functions.editError(
-          ctx,
-          tp?.playFailed || 'Play Failed',
-          tp?.playFailedDesc ||
-            'Could not play playlist. Please try again later.'
-        )
-      }
 
       const total = dbTracks.length
-      const ordered = shuffle ? shuffleArray(dbTracks.slice()) : dbTracks
+      const ordered = shuffle ? shuffleArray(dbTracks) : dbTracks
       const state = getQueueLoadState(player)
       const accepted = registerPendingPlaylistLoads(
         player,
@@ -174,11 +148,7 @@ export class PlayCommand extends SubCommand {
         ctx.interaction.user
       )
       if (!accepted) {
-        return _functions.editError(
-          ctx,
-          'Queue Full',
-          'The queue limit is 1,000 tracks.'
-        )
+        return editError(ctx, 'Queue Full', 'The queue limit is 1,000 tracks.')
       }
       const loadedCount = await topUpPlaylistBuffer(
         ctx.client.aqua,
@@ -186,22 +156,23 @@ export class PlayCommand extends SubCommand {
         FIRST_CHUNK_TRACKS
       )
       if (state.cancelled) {
-        return _functions.editError(
+        return editError(
           ctx,
           'Load Cancelled',
           'Playback loading was cancelled.'
         )
       }
       if (!loadedCount && !state.pending) {
-        return _functions.editError(
+        return editError(
           ctx,
-          tp?.loadFailed || 'Load Failed',
-          tp?.loadFailedDesc || 'Could not load any tracks from this playlist.'
+          translations?.loadFailed || 'Load Failed',
+          translations?.loadFailedDesc ||
+            'Could not load any tracks from this playlist.'
         )
       }
 
       try {
-        playlistsCol().updateAtomic(
+        getPlaylistsCollection().updateAtomic(
           { _id: playlistDb._id },
           {
             $inc: { playCount: 1 },
@@ -227,12 +198,12 @@ export class PlayCommand extends SubCommand {
           createEmbed(
             'success',
             shuffle
-              ? tp?.shuffling || 'Shuffling Playlist'
-              : tp?.playing || 'Playing Playlist',
+              ? translations?.shuffling || 'Shuffling Playlist'
+              : translations?.playing || 'Playing Playlist',
             notes.length > 0 ? `\n\n${notes.join('\n')}` : null,
             [
               {
-                name: `${ICONS.playlist} ${tp?.playlist || 'Playlist'}`,
+                name: `${ICONS.playlist} ${translations?.playlist || 'Playlist'}`,
                 value: `**${playlistName}**`,
                 inline: true
               },
@@ -242,26 +213,24 @@ export class PlayCommand extends SubCommand {
                 inline: true
               },
               {
-                name: `${ICONS.duration} ${tp?.duration || 'Duration'}`,
+                name: `${ICONS.duration} ${translations?.duration || 'Duration'}`,
                 value: formatDuration(playlistDb.totalDuration || 0),
                 inline: true
               },
               {
-                name: `${ICONS.music} ${tp?.channel || 'Channel'}`,
-                value: _functions.getChannelName(
-                  voiceState as { channel: { name: string }; channelId: string }
-                ),
+                name: `${ICONS.music} ${translations?.channel || 'Channel'}`,
+                value: voiceState.channelId,
                 inline: true
               },
               {
-                name: `${ICONS.shuffle} ${tp?.mode || 'Mode'}`,
+                name: `${ICONS.shuffle} ${translations?.mode || 'Mode'}`,
                 value: shuffle
-                  ? tp?.shuffled || 'Shuffled'
-                  : tp?.sequential || 'Sequential',
+                  ? translations?.shuffled || 'Shuffled'
+                  : translations?.sequential || 'Sequential',
                 inline: true
               },
               {
-                name: `${ICONS.tracks} ${'In Queue'}`,
+                name: `${ICONS.tracks} In Queue`,
                 value: `${player.queue?.size ?? loadedCount} track(s)`,
                 inline: true
               }
@@ -271,11 +240,11 @@ export class PlayCommand extends SubCommand {
         ]
       })
     } catch (err) {
-      return _functions.editError(
+      return editError(
         ctx,
-        tp?.playFailed || 'Play Failed',
+        translations?.playFailed || 'Play Failed',
         `${
-          tp?.playFailedDesc ||
+          translations?.playFailedDesc ||
           'Could not play playlist. Please try again later.'
         }\n\nError: ${err instanceof Error ? err.message : 'Unknown error'}`
       )

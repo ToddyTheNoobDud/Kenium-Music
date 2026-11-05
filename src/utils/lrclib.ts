@@ -27,12 +27,9 @@ const LRC_LINE_TIMESTAMP = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g
 const LRC_WORD_TIMESTAMP = /<\d{1,3}:\d{1,2}(?:\.\d{1,3})?>/g
 
 class HttpError extends Error {
-  status: number
-
   constructor(status: number) {
     super(`HTTP ${status}`)
     this.name = 'HttpError'
-    this.status = status
   }
 }
 
@@ -63,15 +60,6 @@ interface SearchTarget {
 interface ScoredRecord {
   record: LrclibRecord
   score: number
-}
-
-export interface LrclibOptions {
-  requestTimeoutMs?: number
-  requestMinIntervalMs?: number
-  cacheTTL?: number
-  maxCacheEntries?: number
-  baseUrl?: string
-  userAgent?: string
 }
 
 const stripDiacritics = (value: string) =>
@@ -527,29 +515,9 @@ const parseLrc = (content: string): LyricsLine[] | null => {
 }
 
 export class Lrclib {
-  requestTimeoutMs: number
-  requestMinIntervalMs: number
-  cacheTTL: number
-  maxCacheEntries: number
-  baseUrl: string
-  userAgent: string
-
   private queue: Promise<unknown> = Promise.resolve()
   private lastRequestAt = 0
-  private cache = new Map<string, CacheEntry<LyricsResult | null>>()
-
-  constructor(opts: LrclibOptions = {}) {
-    this.requestTimeoutMs = opts.requestTimeoutMs ?? REQUEST_TIMEOUT_MS
-    this.requestMinIntervalMs =
-      opts.requestMinIntervalMs ?? REQUEST_MIN_INTERVAL_MS
-    this.cacheTTL = opts.cacheTTL ?? CACHE_TTL_MS
-    this.maxCacheEntries = Math.max(
-      10,
-      opts.maxCacheEntries ?? MAX_CACHE_ENTRIES
-    )
-    this.baseUrl = opts.baseUrl ?? BASE_URL
-    this.userAgent = opts.userAgent ?? USER_AGENT
-  }
+  private readonly cache = new Map<string, CacheEntry<LyricsResult | null>>()
 
   async findLyrics(
     query: string,
@@ -617,7 +585,7 @@ export class Lrclib {
       }
     }
 
-    while (this.cache.size >= this.maxCacheEntries) {
+    while (this.cache.size >= MAX_CACHE_ENTRIES) {
       const firstKey = this.cache.keys().next().value as string | undefined
       if (!firstKey) {
         break
@@ -625,14 +593,14 @@ export class Lrclib {
       this.cache.delete(firstKey)
     }
 
-    this.cache.set(key, { value, expires: now + this.cacheTTL })
+    this.cache.set(key, { value, expires: now + CACHE_TTL_MS })
   }
 
   async request<T>(
     endpointPath: string,
     params: Record<string, string | number | undefined>
   ): Promise<T | null> {
-    const url = new URL(`${this.baseUrl}${endpointPath}`)
+    const url = new URL(`${BASE_URL}${endpointPath}`)
 
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== '') {
@@ -654,17 +622,14 @@ export class Lrclib {
       await this.waitForSlot()
 
       const controller = new AbortController()
-      const timeoutId = setTimeout(
-        () => controller.abort(),
-        this.requestTimeoutMs
-      )
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
       ;(timeoutId as NodeJS.Timeout).unref?.()
 
       try {
         const response = await fetch(url, {
           headers: {
             accept: 'application/json',
-            'user-agent': this.userAgent
+            'user-agent': USER_AGENT
           },
           signal: controller.signal
         })
@@ -702,7 +667,7 @@ export class Lrclib {
 
   private async waitForSlot(): Promise<void> {
     const elapsed = Date.now() - this.lastRequestAt
-    const remaining = this.requestMinIntervalMs - elapsed
+    const remaining = REQUEST_MIN_INTERVAL_MS - elapsed
     if (remaining > 0) {
       await sleep(remaining)
     }

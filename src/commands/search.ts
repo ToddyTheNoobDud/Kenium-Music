@@ -1,3 +1,4 @@
+import type { Track } from 'aqualink'
 import {
   type ButtonInteraction,
   Command,
@@ -12,7 +13,7 @@ import {
 } from 'seyfert'
 import { MUSIC_PLATFORMS } from '../shared/emojis.ts'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
-import type { PlayerLike, TrackLike } from '../shared/helperTypes.ts'
+import type { PlayerLike } from '../shared/helperTypes.ts'
 import {
   enqueueTrack,
   ensurePlayerForVoice,
@@ -61,12 +62,6 @@ const sanitizeQuery = (query: string): string => {
 }
 
 type MusicPlatform = (typeof MUSIC_PLATFORMS)[keyof typeof MUSIC_PLATFORMS]
-
-type SearchTrackLike = TrackLike & {
-  platform?: {
-    emoji?: string
-  } | null
-}
 
 type TextDisplayComponent = { type: 10; content: string }
 type DividerComponent = { type: 14; divider: true; spacing: 1 | 2 }
@@ -197,16 +192,14 @@ export default class SearchCommand extends Command {
     ctx: CommandContext,
     query: string,
     source: string
-  ): Promise<SearchTrackLike[]> {
+  ): Promise<Track[]> {
     try {
       const result = await ctx.client.aqua.resolve({
         query,
         source,
         requester: ctx.interaction.user
       })
-      return Array.isArray(result.tracks)
-        ? (result.tracks.slice(0, CONFIG.MAX_RESULTS) as SearchTrackLike[])
-        : []
+      return result.tracks.slice(0, CONFIG.MAX_RESULTS)
     } catch (error: unknown) {
       console.error(`Search tracks error for ${source}:`, error)
       return []
@@ -214,13 +207,13 @@ export default class SearchCommand extends Command {
   }
 
   private createTrackLine(
-    track: SearchTrackLike,
+    track: Track,
     index: number,
     platform: MusicPlatform,
     thele: Translations
   ): string {
-    const emoji = track.platform?.emoji || platform.emoji
-    const titleValue = String(track.info?.title || track.title || 'Unknown')
+    const emoji = platform.emoji
+    const titleValue = track.title || 'Unknown'
     const title = truncate(titleValue, UI_LIMITS.TITLE)
     const author = truncate(
       String(
@@ -228,8 +221,8 @@ export default class SearchCommand extends Command {
       ),
       UI_LIMITS.AUTHOR
     )
-    const uri = String(track.info?.uri || track.uri || '#')
-    const length = Number(track.info?.length || track.length || 0)
+    const uri = track.uri || '#'
+    const length = track.length || 0
     const authorLabel = String(thele.player?.author || 'Author')
 
     return [
@@ -239,7 +232,7 @@ export default class SearchCommand extends Command {
   }
 
   private createTrackSection(
-    track: SearchTrackLike,
+    track: Track,
     index: number,
     platform: MusicPlatform,
     thele: Translations
@@ -263,7 +256,7 @@ export default class SearchCommand extends Command {
 
   private createSearchContainer(
     query: string,
-    tracks: SearchTrackLike[],
+    tracks: Track[],
     platform: MusicPlatform,
     thele: Translations
   ): Container {
@@ -318,7 +311,7 @@ export default class SearchCommand extends Command {
     message: Message | WebhookMessage,
     ctx: CommandContext,
     query: string,
-    tracks: SearchTrackLike[],
+    tracks: Track[],
     thele: Translations
   ): void {
     const collector = message.createComponentCollector({
@@ -371,7 +364,7 @@ export default class SearchCommand extends Command {
   private async handleTrackSelection(
     i: ButtonInteraction,
     ctx: CommandContext,
-    tracks: SearchTrackLike[],
+    tracks: Track[],
     thele: Translations
   ): Promise<void> {
     const guildId = i.guildId ?? ctx.guildId
@@ -407,7 +400,7 @@ export default class SearchCommand extends Command {
       }
       const state = getQueueLoadState(player)
       const result = await ctx.client.aqua.resolve({
-        query: track.info?.uri || track.uri || '',
+        query: track.uri || '',
         requester: i.user
       })
       const freshTrack = result.tracks?.[0]
@@ -420,7 +413,7 @@ export default class SearchCommand extends Command {
         })
         return
       }
-      const titleValue = String(track.info?.title || track.title || 'Unknown')
+      const titleValue = track.title || 'Unknown'
       await i.followup({
         content: `${thele.search.trackAdded}: **${titleValue.slice(0, 30)}${titleValue.length > 30 ? '...' : ''}**`,
         flags: 64
@@ -434,7 +427,7 @@ export default class SearchCommand extends Command {
     i: ButtonInteraction,
     ctx: CommandContext,
     query: string,
-    tracks: SearchTrackLike[],
+    tracks: Track[],
     thele: Translations
   ): Promise<void> {
     const platformKey = i.customId.split('_')[2] as keyof typeof MUSIC_PLATFORMS

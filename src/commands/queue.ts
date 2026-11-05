@@ -12,7 +12,7 @@ import {
 } from 'seyfert'
 import { dropPendingPlaylistLoads } from '../events/playlistPlayback.ts'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
-import type { PlayerLike, QueueLike, TrackLike } from '../shared/helperTypes.ts'
+import type { PlayerLike, TrackLike } from '../shared/helperTypes.ts'
 import { getTrackRequester } from '../shared/trackRequester.ts'
 import { formatDuration, truncate } from '../shared/utils.ts'
 import { authorizeVoiceControl } from '../shared/voiceAuthorization.ts'
@@ -67,18 +67,6 @@ function formatTrackMeta(
   const lengthMs = track.info?.length ?? 0
 
   return `${thele.player.author}: ${artist} • ${lengthMs > 0 ? formatDuration(lengthMs) : 'LIVE'}${requester}`
-}
-
-function getQueueLength(queue: QueueLike<TrackLike>): number {
-  return queue.size
-}
-
-function sliceQueue(
-  queue: QueueLike<TrackLike>,
-  start: number,
-  end: number
-): TrackLike[] {
-  return queue.toArray().slice(start, end)
 }
 
 const createButtonRows = (
@@ -164,13 +152,13 @@ function createQueueContainer(
   page: number,
   thele: Translations
 ): Container {
-  const queueLength = getQueueLength(player?.queue)
+  const queueLength = player.queue.size
   const { validPage, maxPages, startIndex, endIndex } = calcPagination(
     queueLength,
     page
   )
-  const currentTrack = player?.current
-  const queueSlice = sliceQueue(player?.queue, startIndex, endIndex)
+  const currentTrack = player.current
+  const queueSlice = player.queue.toArray().slice(startIndex, endIndex)
 
   const components: ContainerComponentLike[] = [
     {
@@ -230,8 +218,8 @@ function createQueueContainer(
     validPage,
     maxPages,
     {
-      paused: !!player?.paused,
-      loop: !!player?.loop
+      paused: !!player.paused,
+      loop: !!player.loop
     },
     thele
   )
@@ -257,11 +245,10 @@ async function handleQueueNavigation(
     const normalizedAction = action.replace(/^ignore_/, '')
     const guildId = interaction.guildId ?? ctx.guildId
     const player = guildId ? ctx.client.aqua.players.get(guildId) : undefined
-    const mutating = new Set([
-      'queue_playpause',
-      'queue_loop',
-      'queue_clear'
-    ]).has(normalizedAction)
+    const mutating =
+      normalizedAction === 'queue_playpause' ||
+      normalizedAction === 'queue_loop' ||
+      normalizedAction === 'queue_clear'
     if (mutating) {
       const memberVoice = await getMemberVoiceState(interaction)
       const authorization = authorizeVoiceControl({
@@ -273,10 +260,7 @@ async function handleQueueNavigation(
         playerDestroyed: player?.destroyed === true
       })
       if (!authorization.ok) {
-        const followup = interaction.followup as
-          | ((payload: { content: string; flags: number }) => Promise<unknown>)
-          | undefined
-        await followup?.({
+        await interaction.followup({
           content:
             'You must be in the same voice channel as the active player.',
           flags: 64
@@ -287,12 +271,9 @@ async function handleQueueNavigation(
     if (!player || player.destroyed) {
       return
     }
-    const messageId = interaction?.message?.id
-    const state = messageId ? queueViewState.get(messageId) : undefined
+    const messageId = interaction.message.id
+    const state = queueViewState.get(messageId)
     if (!state) {
-      return
-    }
-    if (!messageId) {
       return
     }
 
@@ -306,32 +287,22 @@ async function handleQueueNavigation(
         newPage = Math.max(1, state.page - 1)
         break
       case 'queue_next': {
-        const { maxPages } = calcPagination(
-          getQueueLength(player?.queue),
-          state.page
-        )
+        const { maxPages } = calcPagination(player.queue.size, state.page)
         newPage = Math.min(maxPages, state.page + 1)
         break
       }
       case 'queue_last': {
-        const { maxPages } = calcPagination(
-          getQueueLength(player?.queue),
-          state.page
-        )
+        const { maxPages } = calcPagination(player.queue.size, state.page)
         newPage = maxPages
         break
       }
       case 'queue_refresh':
         break
       case 'queue_playpause':
-        if (player?.paused) {
-          await player.pause(false)
-        } else {
-          await player.pause(true)
-        }
+        await player.pause(!player.paused)
         break
       case 'queue_loop': {
-        const currentLoop = player?.loop || 0
+        const currentLoop = player.loop || 0
         const newLoop = currentLoop === 0 ? 1 : 0
         player.setLoop(newLoop)
         break
@@ -345,7 +316,7 @@ async function handleQueueNavigation(
         return
     }
 
-    const { maxPages } = calcPagination(getQueueLength(player?.queue), newPage)
+    const { maxPages } = calcPagination(player.queue.size, newPage)
     newPage = Math.min(newPage, maxPages)
     queueViewState.set(messageId, { page: newPage, maxPages })
 
@@ -366,8 +337,8 @@ async function handleShowQueue(
   player: PlayerLike,
   thele: Translations
 ): Promise<void> {
-  const queueLength = getQueueLength(player?.queue)
-  if (queueLength === 0 && !player?.current) {
+  const queueLength = player.queue.size
+  if (queueLength === 0 && !player.current) {
     const emptyContainer = new Container({
       components: [
         { type: 10, content: thele.queue.queueEmpty },
@@ -433,7 +404,7 @@ export default class QueueCommand extends Command {
     const lang = getContextLanguage(ctx)
     const thele = ctx.t.get(lang)
     try {
-      const player = ctx.client?.aqua?.players?.get(
+      const player = ctx.client.aqua.players.get(
         ctx.interaction.guildId as string
       )
       if (!player) {

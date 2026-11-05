@@ -3,12 +3,9 @@ import os from 'node:os'
 import path from 'node:path'
 
 class HttpError extends Error {
-  status: number
-
-  constructor(status: number, message?: string) {
-    super(message || `HTTP ${status}`)
+  constructor(status: number) {
+    super(`HTTP ${status}`)
     this.name = 'HttpError'
-    this.status = status
   }
 }
 
@@ -27,6 +24,11 @@ class MxmApiError extends Error {
 }
 
 const APP_ID = 'android-player-v1.0'
+const REQUEST_TIMEOUT_MS = 8000
+const CACHE_TTL_MS = 300_000
+const MAX_CACHE_ENTRIES = 100
+const TOKEN_FILE = path.join(os.tmpdir(), 'mxm_token.json')
+const MANUAL_TOKEN_FILE = path.join(process.cwd(), 'musixmatch_token.txt')
 const TOKEN_TTL = 21_600_000
 const TOKEN_PERSIST_INTERVAL = 300_000
 const MAX_SEARCH_RESULTS = 8
@@ -227,14 +229,6 @@ export interface LyricsFindOptions {
   requireSynced?: boolean | undefined
 }
 
-interface MusixmatchOptions {
-  requestTimeoutMs?: number
-  cacheTTL?: number
-  maxCacheEntries?: number
-  tokenFile?: string
-  manualTokenFile?: string
-}
-
 interface TokenData {
   value: string
   expires: number
@@ -293,24 +287,10 @@ interface MatchableTrack {
 }
 
 export class Musixmatch {
-  tokenData: TokenData | null = null
-  tokenPromise: Promise<string> | null = null
-  lastTokenPersist = 0
-  cache = new Map<string, CacheEntry<LyricsResult | null>>()
-  requestTimeoutMs: number
-  cacheTTL: number
-  maxCacheEntries: number
-  tokenFile: string
-  manualTokenFile: string
-
-  constructor(opts: MusixmatchOptions = {}) {
-    this.requestTimeoutMs = opts.requestTimeoutMs ?? 8000
-    this.cacheTTL = opts.cacheTTL ?? 300_000
-    this.maxCacheEntries = Math.max(10, opts.maxCacheEntries ?? 100)
-    this.tokenFile = opts.tokenFile ?? path.join(os.tmpdir(), 'mxm_token.json')
-    this.manualTokenFile =
-      opts.manualTokenFile ?? path.join(process.cwd(), 'musixmatch_token.txt')
-  }
+  private tokenData: TokenData | null = null
+  private tokenPromise: Promise<string> | null = null
+  private lastTokenPersist = 0
+  private readonly cache = new Map<string, CacheEntry<LyricsResult | null>>()
 
   buildUrl(base: string, params: Record<string, string | undefined>): string {
     const url = new URL(base)
@@ -331,7 +311,7 @@ export class Musixmatch {
     }
 
     try {
-      const value = (await readFile(this.manualTokenFile, 'utf-8')).trim()
+      const value = (await readFile(MANUAL_TOKEN_FILE, 'utf-8')).trim()
       return value || null
     } catch {
       return null
@@ -340,7 +320,7 @@ export class Musixmatch {
 
   async readTokenFromFile(): Promise<TokenData | null> {
     try {
-      const data = await readFile(this.tokenFile, 'utf-8')
+      const data = await readFile(TOKEN_FILE, 'utf-8')
       const parsed = JSON.parse(data) as TokenData | undefined
 
       if (
@@ -358,7 +338,7 @@ export class Musixmatch {
   async saveTokenToFile(token: string, expires: number): Promise<void> {
     try {
       await writeFile(
-        this.tokenFile,
+        TOKEN_FILE,
         JSON.stringify({ value: token, expires }),
         'utf-8'
       )
@@ -375,10 +355,7 @@ export class Musixmatch {
     const onExternalAbort = () => controller.abort()
     externalSignal?.addEventListener('abort', onExternalAbort, { once: true })
 
-    const timeoutId = setTimeout(
-      () => controller.abort(),
-      this.requestTimeoutMs
-    )
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     ;(timeoutId as NodeJS.Timeout).unref?.()
 
     try {
@@ -429,7 +406,7 @@ export class Musixmatch {
     }
 
     try {
-      await unlink(this.tokenFile)
+      await unlink(TOKEN_FILE)
     } catch {}
   }
 
@@ -1140,7 +1117,7 @@ export class Musixmatch {
       }
     }
 
-    while (this.cache.size >= this.maxCacheEntries) {
+    while (this.cache.size >= MAX_CACHE_ENTRIES) {
       const firstKey = this.cache.keys().next().value as string | undefined
       if (!firstKey) {
         break
@@ -1148,7 +1125,7 @@ export class Musixmatch {
       this.cache.delete(firstKey)
     }
 
-    this.cache.set(key, { value, expires: now + this.cacheTTL })
+    this.cache.set(key, { value, expires: now + CACHE_TTL_MS })
   }
 
   formatResult(

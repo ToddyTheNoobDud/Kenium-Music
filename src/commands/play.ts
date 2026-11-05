@@ -1,4 +1,6 @@
+import type { Track } from 'aqualink'
 import {
+  type AutocompleteInteraction,
   Command,
   type CommandContext,
   createStringOption,
@@ -9,7 +11,7 @@ import {
 } from 'seyfert'
 import { LRU } from 'tiny-lru'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
-import type { PlayerLike, TrackLike, UserLike } from '../shared/helperTypes.ts'
+import type { PlayerLike } from '../shared/helperTypes.ts'
 import {
   enqueueTrack,
   ensurePlayerForVoice,
@@ -30,6 +32,8 @@ const USER_CACHE_LIMIT = 150
 const SEARCH_CACHE_SIZE = 96
 const MAX_AUTOCOMPLETE_RESULTS = 4
 const THROTTLE_INTERVAL_MS = 250
+const THROTTLE_CLEANUP_EVERY = 200
+const THROTTLE_RETENTION_MS = 45_000
 const SEARCH_TTL_MS = 25_000
 const EMBED_COLOR = 0x100e09
 const MAX_DEBOUNCE_ENTRIES = 500
@@ -42,146 +46,82 @@ const AUTOCOMPLETE_DEBOUNCE_MS = 200
 
 type TrackInfo = { title: string; uri: string }
 
-type SearchResult = TrackLike
+type AutocompleteTrack = { title: string; author: string; uri: string }
 
-type PlayAutocompleteInteractionLike = {
-  user: UserLike
-  client: CommandContext['client']
-  getInput?: () => unknown
-  respond: (
-    choices: Array<{ name: string; value: string }>
-  ) => Promise<unknown> | unknown
-}
-
-type ResolveResponseLike = {
-  loadType?: string
-  tracks?: SearchResult[]
-  playlistInfo?: {
-    name?: string
-    thumbnail?: string | null
+async function respondToAutocomplete(
+  interaction: AutocompleteInteraction,
+  choices: Array<{ name: string; value: string }>
+): Promise<unknown> {
+  try {
+    return await interaction.respond(choices)
+  } catch (error) {
+    if (isInteractionExpired(error) || getErrorCode(error) === 40060) {
+      return undefined
+    }
+    throw error
   }
 }
 
-const _functions = {
-  async safeAutocompleteRespond(
-    interaction: PlayAutocompleteInteractionLike,
-    choices: Array<{ name: string; value: string }>
-  ): Promise<unknown> {
-    try {
-      return await interaction.respond(choices)
-    } catch (error) {
-      if (isInteractionExpired(error) || getErrorCode(error) === 40060) {
-        return undefined
-      }
-      throw error
-    }
-  },
+function addRecentTrack(userId: string, track: Track): void {
+  if (track.uri && track.title) {
+    recentTracks.add(userId, track.title, track.uri)
+  }
+}
 
-  isUrl(query: unknown): boolean {
-    const s = String(query ?? '')
-      .trim()
-      .toLowerCase()
-    return s.startsWith('http://') || s.startsWith('https://')
-  },
-
-  formatChoice(title: unknown, author?: unknown): string {
-    const t = truncate(String(title ?? ''), MAX_TITLE_LENGTH)
-    const a = author ? ` - ${truncate(String(author), MAX_AUTHOR_LENGTH)}` : ''
-    return truncate(t + a, MAX_CHOICE_LENGTH)
-  },
-
-  cacheKey(query: string): string {
-    return query.trim().toLowerCase()
-  },
-
-  addRecentFromTrack(userId: string, track: TrackLike): void {
-    const info = track?.info
-    if (info?.uri && info?.title) {
-      recentTracks.add(userId, info.title, info.uri)
-    }
-  },
-
-  async processAutocomplete(
-    interaction: PlayAutocompleteInteractionLike,
-    userId: string,
-    query: string
-  ): Promise<unknown> {
-    if (!query || query.length < MIN_QUERY_LENGTH) {
-      const recent = recentTracks.getRecent(userId, MAX_AUTOCOMPLETE_RESULTS)
-      if (!recent.length) {
-        return _functions.safeAutocompleteRespond(interaction, [])
-      }
-
-      const choices = recent.map((track, index) => ({
-        name: `🕘 Recent ${index + 1}: ${truncate(String(track.title), MAX_TITLE_LENGTH)}`,
+async function processAutocomplete(
+  interaction: AutocompleteInteraction,
+  userId: string,
+  query: string
+): Promise<unknown> {
+  if (query.length < MIN_QUERY_LENGTH) {
+    const recent = recentTracks.getRecent(userId, MAX_AUTOCOMPLETE_RESULTS)
+    return respondToAutocomplete(
+      interaction,
+      recent.map((track, index) => ({
+        name: `🕘 Recent ${index + 1}: ${truncate(track.title, MAX_TITLE_LENGTH)}`,
         value: track.uri.slice(0, MAX_URI_LENGTH)
       }))
-      return _functions.safeAutocompleteRespond(interaction, choices)
-    }
-
-    if (_functions.isUrl(query)) {
-      return _functions.safeAutocompleteRespond(interaction, [])
-    }
-
-    const key = _functions.cacheKey(query)
-    let results = searchCache.get(key)
-
-    if (!results) {
-      const res = (await interaction.client.aqua.resolve({
-        query,
-        requester: interaction.user
-      })) as ResolveResponseLike
-      const resolved = res.tracks || []
-      results = resolved
-        .filter((track) => track.info?.uri || track.uri)
-        .slice(0, MAX_AUTOCOMPLETE_RESULTS)
-        .map((track) => ({
-          info: {
-            title: track.info?.title || track.title || 'Unknown',
-            author: track.info?.author || track.author || '',
-            uri: track.info?.uri || track.uri || ''
-          }
-        }))
-      if (results?.length) {
-        searchCache.set(key, results)
-      }
-    }
-
-    if (!results?.length) {
-      return _functions.safeAutocompleteRespond(interaction, [])
-    }
-
-    const choices: Array<{ name: string; value: string }> = []
-    for (
-      let i = 0;
-      i < results.length && choices.length < MAX_AUTOCOMPLETE_RESULTS;
-      i++
-    ) {
-      const item = results[i]
-      const info = item?.info || item
-      const uri = info?.uri
-      if (!uri) {
-        continue
-      }
-      choices.push({
-        name: _functions.formatChoice(info.title || 'Unknown', info.author),
-        value: String(uri).slice(0, MAX_URI_LENGTH)
-      })
-    }
-
-    return _functions.safeAutocompleteRespond(interaction, choices)
+    )
   }
+  if (/^https?:\/\//i.test(query)) {
+    return respondToAutocomplete(interaction, [])
+  }
+
+  const key = query.toLowerCase()
+  let results = searchCache.get(key)
+  if (!results) {
+    const response = await interaction.client.aqua.resolve({
+      query,
+      requester: interaction.user
+    })
+    results = response.tracks
+      .filter((track) => track.uri)
+      .slice(0, MAX_AUTOCOMPLETE_RESULTS)
+      .map((track) => ({
+        title: track.title || 'Unknown',
+        author: track.author || '',
+        uri: track.uri || ''
+      }))
+    if (results.length) {
+      searchCache.set(key, results)
+    }
+  }
+
+  const choices = results.map((track) => {
+    const title = truncate(track.title, MAX_TITLE_LENGTH)
+    const author = track.author
+      ? ` - ${truncate(track.author, MAX_AUTHOR_LENGTH)}`
+      : ''
+    return {
+      name: truncate(title + author, MAX_CHOICE_LENGTH),
+      value: track.uri.slice(0, MAX_URI_LENGTH)
+    }
+  })
+  return respondToAutocomplete(interaction, choices)
 }
 
 class RecentTracks {
   private userCaches = new Map<string, LRU<TrackInfo>>()
-  private readonly maxUsers: number
-  private readonly cacheSize: number
-
-  constructor(maxUsers = USER_CACHE_LIMIT, cacheSize = RECENT_CACHE_SIZE) {
-    this.maxUsers = maxUsers
-    this.cacheSize = cacheSize
-  }
 
   add(userId: string, title: string, uri: string): void {
     if (!uri) {
@@ -190,13 +130,13 @@ class RecentTracks {
 
     let userCache = this.userCaches.get(userId)
     if (!userCache) {
-      if (this.userCaches.size >= this.maxUsers) {
+      if (this.userCaches.size >= USER_CACHE_LIMIT) {
         const firstKey = this.userCaches.keys().next().value
         if (firstKey) {
           this.userCaches.delete(firstKey)
         }
       }
-      userCache = new LRU<TrackInfo>(this.cacheSize)
+      userCache = new LRU<TrackInfo>(RECENT_CACHE_SIZE)
       this.userCaches.set(userId, userCache)
     }
 
@@ -223,8 +163,6 @@ class RecentTracks {
 class ThrottleMap {
   private timestamps = new Map<string, number>()
   private cleanupCounter = 0
-  private readonly cleanupThreshold = 200
-  private readonly retentionMs = 45_000
 
   shouldThrottle(userId: string, intervalMs = THROTTLE_INTERVAL_MS): boolean {
     const now = Date.now()
@@ -234,9 +172,9 @@ class ThrottleMap {
     }
 
     this.timestamps.set(userId, now)
-    if (++this.cleanupCounter >= this.cleanupThreshold) {
+    if (++this.cleanupCounter >= THROTTLE_CLEANUP_EVERY) {
       this.cleanupCounter = 0
-      const threshold = now - this.retentionMs
+      const threshold = now - THROTTLE_RETENTION_MS
       for (const [key, ts] of this.timestamps) {
         if (ts < threshold) {
           this.timestamps.delete(key)
@@ -247,7 +185,10 @@ class ThrottleMap {
   }
 }
 
-const searchCache = new LRU<SearchResult[]>(SEARCH_CACHE_SIZE, SEARCH_TTL_MS)
+const searchCache = new LRU<AutocompleteTrack[]>(
+  SEARCH_CACHE_SIZE,
+  SEARCH_TTL_MS
+)
 const recentTracks = new RecentTracks()
 const throttleMap = new ThrottleMap()
 const debounceTimers = new Map<
@@ -255,22 +196,22 @@ const debounceTimers = new Map<
   { timer: NodeJS.Timeout; resolve: (value?: unknown) => void }
 >()
 
-const _cleanupTimers = (): void => {
+const cleanupAutocomplete = (): void => {
   for (const entry of debounceTimers.values()) {
     clearTimeout(entry.timer)
   }
   debounceTimers.clear()
   searchCache.clear()
 }
-process.once('exit', _cleanupTimers)
-process.once('SIGINT', _cleanupTimers)
-process.once('SIGTERM', _cleanupTimers)
+process.once('exit', cleanupAutocomplete)
+process.once('SIGINT', cleanupAutocomplete)
+process.once('SIGTERM', cleanupAutocomplete)
 
-const _handleAutocomplete = async (
-  interaction: PlayAutocompleteInteractionLike
+const handleAutocomplete = async (
+  interaction: AutocompleteInteraction
 ): Promise<unknown> => {
   const userId = interaction.user.id
-  const query = String(interaction.getInput?.() ?? '').trim()
+  const query = String(interaction.getInput() ?? '').trim()
 
   const prev = debounceTimers.get(userId)
   if (prev) {
@@ -280,18 +221,15 @@ const _handleAutocomplete = async (
   }
 
   if (throttleMap.shouldThrottle(userId)) {
-    return _functions.safeAutocompleteRespond(interaction, [])
+    return respondToAutocomplete(interaction, [])
   }
 
   return new Promise<unknown>((resolve) => {
     const timer = setTimeout(() => {
       debounceTimers.delete(userId)
-      _functions
-        .processAutocomplete(interaction, userId, query)
+      processAutocomplete(interaction, userId, query)
         .then(resolve)
-        .catch(() =>
-          resolve(_functions.safeAutocompleteRespond(interaction, []))
-        )
+        .catch(() => resolve(respondToAutocomplete(interaction, [])))
     }, AUTOCOMPLETE_DEBOUNCE_MS)
 
     timer.unref()
@@ -315,7 +253,7 @@ const options = {
   query: createStringOption({
     description: 'The song you want to search for',
     required: true,
-    autocomplete: _handleAutocomplete
+    autocomplete: handleAutocomplete
   })
 }
 
@@ -351,16 +289,16 @@ export default class Play extends Command {
         return
       }
       const state = getQueueLoadState(player)
-      const result = (await ctx.client.aqua.resolve({
+      const result = await ctx.client.aqua.resolve({
         query,
         requester: ctx.interaction.user
-      })) as ResolveResponseLike
+      })
       if (state.cancelled || player.destroyed) {
         await ctx.editResponse({ content: 'Playback loading was cancelled.' })
         return
       }
 
-      const tracks = Array.isArray(result?.tracks) ? result.tracks : []
+      const tracks = result.tracks
       if (!tracks.length) {
         await ctx.editResponse({
           content:
@@ -390,7 +328,7 @@ export default class Play extends Command {
           })
           return
         }
-        _functions.addRecentFromTrack(userId, track)
+        addRecentTrack(userId, track)
 
         const info = track?.info
         const title = truncate(String(info?.title || 'Track'), MAX_TITLE_LENGTH)
@@ -401,7 +339,7 @@ export default class Play extends Command {
             `Added [**${title}**](${info?.uri || '#'}) to the queue.`
         )
       } else if (loadType === 'playlist' && playlistInfo?.name) {
-        const added: SearchResult[] = []
+        const added: Track[] = []
         for (const track of tracks) {
           if (enqueueTrack(player, track, state)) {
             added.push(track)
@@ -413,11 +351,8 @@ export default class Play extends Command {
           })
           return
         }
-        for (let i = 0; i < tracks.length && i < 3; i++) {
-          const track = tracks[i]
-          if (track) {
-            _functions.addRecentFromTrack(userId, track)
-          }
+        for (const track of tracks.slice(0, 3)) {
+          addRecentTrack(userId, track)
         }
 
         const playlistName = truncate(

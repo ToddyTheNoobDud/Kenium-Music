@@ -4,7 +4,6 @@ import { cooldown } from '@slipher/cooldown'
 import { Aqua, type Player, type Track } from 'aqualink'
 import {
   Client,
-  type Container,
   definePlugins,
   LimitedMemoryAdapter,
   type Message,
@@ -43,10 +42,8 @@ import { isTwentyFourSevenEnabled } from './src/utils/db_helper.ts'
 
 const plugins = definePlugins(cooldown())
 
-// Constants
 const VOICE_STATUS_LENGTH = 30
 const VOICE_STATUS_THROTTLE = 5000
-const RESUMED_NOW_PLAYING_RESTORE_DELAY = 1500
 const NOW_PLAYING_DEDUPE_WINDOW_MS = 2500
 const SOCKET_CLOSE_LOG_WINDOW_MS = 30_000
 
@@ -106,19 +103,6 @@ const state = {
   socketCloseLogs: lru<number>(1000, SOCKET_CLOSE_LOG_WINDOW_MS)
 }
 
-const getTrackKey = (track: Track | null | undefined) => {
-  if (!track) {
-    return ''
-  }
-
-  const uri = track.info?.uri || track.uri || ''
-  const identifier = track.info?.identifier || track.identifier || ''
-  const title = track.info?.title || track.title || ''
-  const author = track.info?.author || track.author || ''
-
-  return [uri, identifier, title, author].filter(Boolean).join('|')
-}
-
 const getPlayerTextChannelId = (player: Player) =>
   player.textChannel ||
   (player.nowPlayingMessage as Message | null)?.channelId ||
@@ -143,35 +127,23 @@ const cleanupPlayer = (
   if (!guildId) {
     return
   }
-  const is247 = isTwentyFourSevenEnabled(guildId)
-  const isQueueEnd = reason === 'queueEnd'
-
-  // For 24/7 guilds on queueEnd: keep voice status + lastStart, only clean inflight/karaoke
-  if (is247 && isQueueEnd) {
-    state.nowPlayingInflight.delete(guildId)
-    if (hasKaraokeSession(guildId)) {
-      cleanupKaraokeSession(guildId)
-    }
-    if (!isPlayerRecovering(player)) {
-      void deleteNowPlayingMessage(player)
-    }
-    return
-  }
-
-  // Full cleanup for non-24/7 or playerDestroy
-  const voiceChannel = player.voiceChannel
-  if (voiceChannel) {
-    client.channels.setVoiceStatus(voiceChannel, null).catch(() => {})
-  }
-  state.voiceStatusUpdates.delete(player.guildId)
   state.nowPlayingInflight.delete(guildId)
-  state.nowPlayingLastStart.delete(player.guildId)
   if (hasKaraokeSession(guildId)) {
     cleanupKaraokeSession(guildId)
   }
   if (!isPlayerRecovering(player)) {
     void deleteNowPlayingMessage(player)
   }
+
+  // An idle 24/7 player keeps its voice status and last track.
+  if (isTwentyFourSevenEnabled(guildId) && reason === 'queueEnd') {
+    return
+  }
+  if (player.voiceChannel) {
+    client.channels.setVoiceStatus(player.voiceChannel, null).catch(() => {})
+  }
+  state.voiceStatusUpdates.delete(guildId)
+  state.nowPlayingLastStart.delete(guildId)
 }
 
 const shutdown = async () => {
@@ -213,116 +185,104 @@ client.setServices({
   }
 })
 
-aqua.on(
-  'trackStart',
-  async (
-    player: Player,
-    track: Track | null | undefined,
-    payload?: { resumed?: boolean }
-  ) => {
-    const guildId = player.guildId
-    if (!guildId) {
-      return
-    }
-    const activeTrack = player.current || track
-    if (!activeTrack) {
-      return
-    }
+aqua.on('trackStart', async (player: Player, track: Track | null) => {
+  const guildId = player.guildId
+  if (!guildId) {
+    return
+  }
+  const activeTrack = player.current || track
+  if (!activeTrack) {
+    return
+  }
 
-    const trackKey = getTrackKey(activeTrack)
-    const lastStart = state.nowPlayingLastStart.get(player.guildId)
-    const now = Date.now()
+  const trackKey = [
+    activeTrack.uri,
+    activeTrack.identifier,
+    activeTrack.title,
+    activeTrack.author
+  ]
+    .filter(Boolean)
+    .join('|')
+  const lastStart = state.nowPlayingLastStart.get(player.guildId)
+  const now = Date.now()
+  if (
+    trackKey &&
+    lastStart?.trackKey === trackKey &&
+    now - lastStart.at < NOW_PLAYING_DEDUPE_WINDOW_MS
+  ) {
+    return
+  }
+
+  // Wait for any in-flight handler for this guild, eliminating the has/get race window
+  const existingInflight = state.nowPlayingInflight.get(guildId)
+  if (existingInflight) {
+    await existingInflight.catch(() => null)
+
+    const lastAfterWait = state.nowPlayingLastStart.get(player.guildId)
     if (
       trackKey &&
-      lastStart?.trackKey === trackKey &&
-      now - lastStart.at < NOW_PLAYING_DEDUPE_WINDOW_MS
+      lastAfterWait?.trackKey === trackKey &&
+      Date.now() - lastAfterWait.at < NOW_PLAYING_DEDUPE_WINDOW_MS
     ) {
       return
     }
+  }
 
-    // Wait for any in-flight handler for this guild, eliminating the has/get race window
-    const existingInflight = state.nowPlayingInflight.get(guildId)
-    if (existingInflight) {
-      await existingInflight.catch(() => null)
-
-      const lastAfterWait = state.nowPlayingLastStart.get(player.guildId)
-      if (
-        trackKey &&
-        lastAfterWait?.trackKey === trackKey &&
-        Date.now() - lastAfterWait.at < NOW_PLAYING_DEDUPE_WINDOW_MS
-      ) {
-        return
-      }
-    }
-
-    const handleTrackStart = async () => {
-      state.nowPlayingLastStart.set(player.guildId, {
-        trackKey,
-        at: Date.now()
-      })
-
-      await syncKaraokeSessionTrack(guildId, activeTrack)
-
-      if (payload?.resumed && !player.nowPlayingMessage) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, RESUMED_NOW_PLAYING_RESTORE_DELAY)
-        )
-      }
-
-      const message = player.nowPlayingMessage as Message | null
-      const textChannelId = player.textChannel || message?.channelId
-
-      if (!textChannelId) {
-        return
-      }
-
-      const embed: Container = createNowPlayingEmbed(
-        player,
-        activeTrack,
-        client
-      )
-      const messageOptions = { components: [embed], flags: 4096 | 32768 }
-
-      const editedMessage = message
-        ? await message.edit(messageOptions).catch(() => null)
-        : null
-      player.nowPlayingMessage =
-        editedMessage ||
-        (await client.messages
-          .write(textChannelId, messageOptions)
-          .catch(() => null))
-
-      const lastVoiceStatusUpdate =
-        state.voiceStatusUpdates.get(player.guildId) ?? 0
-      const statusNow = Date.now()
-      if (statusNow - lastVoiceStatusUpdate > VOICE_STATUS_THROTTLE) {
-        state.voiceStatusUpdates.set(player.guildId, statusNow)
-        const title = activeTrack.info?.title || activeTrack.title
-        if (title && player.voiceChannel) {
-          const status = `⭐ ${truncateText(title, VOICE_STATUS_LENGTH)} - Kenium ${APP_VERSION}`
-          client.channels
-            .setVoiceStatus(player.voiceChannel, status)
-            .catch(() => {})
-        }
-      }
-    }
-
-    const inflight = handleTrackStart().finally(() => {
-      const current = state.nowPlayingInflight.get(guildId)
-      if (current === inflight) {
-        state.nowPlayingInflight.delete(guildId)
-      }
+  const handleTrackStart = async () => {
+    state.nowPlayingLastStart.set(player.guildId, {
+      trackKey,
+      at: Date.now()
     })
 
-    state.nowPlayingInflight.set(guildId, inflight)
-    await inflight
-  }
-)
+    await syncKaraokeSessionTrack(guildId, activeTrack)
 
-aqua.on('trackError', async (...args: unknown[]) => {
-  const player = args[0] as Player
-  const track = args[1] as Track | null | undefined
-  const payload = args[2] as { exception?: { message?: string } }
+    const message = player.nowPlayingMessage as Message | null
+    const textChannelId = player.textChannel || message?.channelId
+
+    if (!textChannelId) {
+      return
+    }
+
+    const embed = createNowPlayingEmbed(player, activeTrack, client)
+    const messageOptions = { components: [embed], flags: 4096 | 32768 }
+
+    const editedMessage = message
+      ? await message.edit(messageOptions).catch(() => null)
+      : null
+    player.nowPlayingMessage =
+      editedMessage ||
+      (await client.messages
+        .write(textChannelId, messageOptions)
+        .catch(() => null))
+
+    const lastVoiceStatusUpdate =
+      state.voiceStatusUpdates.get(player.guildId) ?? 0
+    const statusNow = Date.now()
+    if (statusNow - lastVoiceStatusUpdate > VOICE_STATUS_THROTTLE) {
+      state.voiceStatusUpdates.set(player.guildId, statusNow)
+      const title = activeTrack.info?.title || activeTrack.title
+      if (title && player.voiceChannel) {
+        const status = `⭐ ${truncateText(title, VOICE_STATUS_LENGTH)} - Kenium ${APP_VERSION}`
+        client.channels
+          .setVoiceStatus(player.voiceChannel, status)
+          .catch(() => {})
+      }
+    }
+  }
+
+  const inflight = handleTrackStart().finally(() => {
+    const current = state.nowPlayingInflight.get(guildId)
+    if (current === inflight) {
+      state.nowPlayingInflight.delete(guildId)
+    }
+  })
+
+  state.nowPlayingInflight.set(guildId, inflight)
+  await inflight
+})
+
+aqua.on('trackError', async (player, track, error) => {
+  const payload = error as { exception?: { message?: string } }
   const textChannelId = getPlayerTextChannelId(player)
   if (!textChannelId) {
     return
@@ -410,18 +370,15 @@ aqua.on('nodeDisconnect', (_, reason) => {
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
-initDatabase()
-  .then(() => client.start())
-  .then(async () => {
-    await client
-      .uploadCommands({ cachePath: './commands.json' })
-      .catch(() => {})
-    registerVoiceManager(musicClient)
-  })
-  .catch((error) => {
-    console.error('Startup failed:', error)
-    process.exit(1)
-  })
+try {
+  await initDatabase()
+  await client.start()
+  await client.uploadCommands({ cachePath: './commands.json' }).catch(() => {})
+  registerVoiceManager(musicClient)
+} catch (error) {
+  console.error('Startup failed:', error)
+  process.exit(1)
+}
 
 declare module 'seyfert' {
   interface SeyfertRegistry {

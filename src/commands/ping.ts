@@ -1,50 +1,6 @@
-import {
-  Command,
-  type CommandContext,
-  Declare,
-  Embed,
-  LocalesT,
-  type UsingClient
-} from 'seyfert'
+import { Command, type CommandContext, Declare, Embed, LocalesT } from 'seyfert'
 import { isExpiredInteraction } from '../shared/errorGuard.ts'
 import { getContextLanguage } from '../utils/i18n.ts'
-
-const _functions = {
-  createPingEmbed: (
-    // biome-ignore lint/suspicious/noExplicitAny: t is a dynamic translation object
-    t: any,
-    wsPing: number,
-    shardPing: number,
-    playerPing: number,
-    shardId: number,
-    avatarURL?: string
-  ): Embed => {
-    const description =
-      playerPing === 0
-        ? t.ping.descriptionNoPlayer
-            .replace('{wsPing}', wsPing.toString())
-            .replace('{shardPing}', shardPing.toString())
-        : t.ping.description
-            .replace('{wsPing}', wsPing.toString())
-            .replace('{shardPing}', shardPing.toString())
-            .replace('{playerPing}', playerPing.toString())
-
-    return new Embed()
-      .setColor(0x100e09)
-      .setTitle(t.ping.title)
-      .setDescription(description)
-      .setTimestamp()
-      .setFooter({
-        text: `Shard ${shardId}`,
-        ...(avatarURL ? { iconUrl: avatarURL } : {})
-      })
-  },
-
-  getPlayerPing: (client: UsingClient, guildId: string): number => {
-    const player = client.aqua.players.get(guildId || '')
-    return player ? Math.floor(player.ping) : 0
-  }
-}
 
 @Declare({
   name: 'ping',
@@ -59,23 +15,35 @@ export default class PingCommand extends Command {
 
     try {
       const lang = getContextLanguage(ctx)
-      const t = ctx.t.get(lang)
+      const translations = ctx.t.get(lang)
       const { client } = ctx
 
-      const wsPing = Math.floor(client.gateway.latency)
+      const gatewayPing = Math.floor(client.gateway.latency)
       const shardPing = Math.floor(
         (await client.gateway.get(ctx.shardId)?.ping()) ?? 0
       )
-      const playerPing = _functions.getPlayerPing(client, ctx.guildId || '')
+      const player = client.aqua.players.get(ctx.guildId)
+      const playerPing = player ? Math.floor(player.ping) : 0
+      const avatarUrl = client.me?.avatarURL()
+      const description =
+        playerPing === 0
+          ? translations.ping.descriptionNoPlayer
+              .replace('{wsPing}', gatewayPing.toString())
+              .replace('{shardPing}', shardPing.toString())
+          : translations.ping.description
+              .replace('{wsPing}', gatewayPing.toString())
+              .replace('{shardPing}', shardPing.toString())
+              .replace('{playerPing}', playerPing.toString())
 
-      const embed = _functions.createPingEmbed(
-        t,
-        wsPing,
-        shardPing,
-        playerPing,
-        ctx.shardId,
-        client.me?.avatarURL()
-      )
+      const embed = new Embed()
+        .setColor(0x100e09)
+        .setTitle(translations.ping.title)
+        .setDescription(description)
+        .setTimestamp()
+        .setFooter({
+          text: `Shard ${ctx.shardId}`,
+          ...(avatarUrl ? { iconUrl: avatarUrl } : {})
+        })
 
       await ctx.write({ embeds: [embed] })
     } catch (error) {

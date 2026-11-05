@@ -738,8 +738,8 @@ export class SimpleDB {
 
   private readonly checkpointStatement: Statement
 
-  private checkpointTimer: NodeJS.Timeout | null = null
-  private optimizeTimer: NodeJS.Timeout | null = null
+  private readonly checkpointTimer: ReturnType<typeof setInterval>
+  private readonly optimizeTimer: ReturnType<typeof setInterval>
   private static readonly CHECKPOINT_INTERVAL_MS = 120000 // 2 minutes
   private static readonly OPTIMIZE_INTERVAL_MS = 24 * 60 * 60 * 1000 // Daily
 
@@ -774,48 +774,15 @@ export class SimpleDB {
     } catch {}
 
     this.checkpointStatement = this.db.prepare('PRAGMA wal_checkpoint(PASSIVE)')
-    this.startCheckpointTimer()
-    this.startOptimizeTimer()
-  }
-
-  private startCheckpointTimer(): void {
-    if (this.checkpointTimer) {
-      return
-    }
-
     this.checkpointTimer = setInterval(() => {
       this.checkpointPassive()
-    }, SimpleDB.CHECKPOINT_INTERVAL_MS)
-
-    this.checkpointTimer.unref()
-  }
-
-  private stopCheckpointTimer(): void {
-    if (this.checkpointTimer) {
-      clearInterval(this.checkpointTimer)
-      this.checkpointTimer = null
-    }
-  }
-
-  private startOptimizeTimer(): void {
-    if (this.optimizeTimer) {
-      return
-    }
+    }, SimpleDB.CHECKPOINT_INTERVAL_MS).unref()
 
     this.optimizeTimer = setInterval(() => {
       try {
         this.db.prepare('PRAGMA optimize').run()
       } catch {}
-    }, SimpleDB.OPTIMIZE_INTERVAL_MS)
-
-    this.optimizeTimer.unref()
-  }
-
-  private stopOptimizeTimer(): void {
-    if (this.optimizeTimer) {
-      clearInterval(this.optimizeTimer)
-      this.optimizeTimer = null
-    }
+    }, SimpleDB.OPTIMIZE_INTERVAL_MS).unref()
   }
 
   collection<DocumentType extends Record<string, unknown>>(
@@ -858,8 +825,8 @@ export class SimpleDB {
   }
 
   close(): void {
-    this.stopCheckpointTimer()
-    this.stopOptimizeTimer()
+    clearInterval(this.checkpointTimer)
+    clearInterval(this.optimizeTimer)
 
     this.checkpoint()
 

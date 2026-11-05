@@ -1,10 +1,5 @@
 import type { AquaClientLike } from './helperTypes.ts'
 
-const DEFAULT_PLAYER_CONNECTION_OPTIONS = Object.freeze({
-  deaf: true,
-  defaultVolume: 65
-})
-
 type PlayerConnectionOptions = {
   guildId: string
   voiceChannel: string
@@ -18,7 +13,8 @@ export const createPlayerConnection = async (
   return client.aqua.createConnection({
     guildId,
     voiceChannel,
-    ...DEFAULT_PLAYER_CONNECTION_OPTIONS,
+    deaf: true,
+    defaultVolume: 65,
     ...(textChannel ? { textChannel } : {})
   })
 }

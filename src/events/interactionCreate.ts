@@ -57,19 +57,10 @@ type ActionResult = {
   shouldUpdate: boolean
 }
 
-type PlaylistButtonAction =
-  | 'play_playlist'
-  | 'shuffle_playlist'
-  | 'playlist_prev'
-  | 'playlist_next'
-
 type PlaylistSummary = Pick<
   Playlist,
   '_id' | 'name' | 'description' | 'totalDuration' | 'playCount' | 'trackCount'
 >
-
-const playlistsCol = getPlaylistsCollection
-const tracksCol = getTracksCollection
 
 const getSourceIcon = (uri: string | undefined) => {
   const source = uri?.toLowerCase() ?? ''
@@ -275,7 +266,7 @@ const displayPlaylistPage = async (
   query: { userId: string; _id?: string; name?: string },
   page = 1
 ): Promise<ActionResult> => {
-  const playlist = playlistsCol().findOne(query, {
+  const playlist = getPlaylistsCollection().findOne(query, {
     fields: [
       '_id',
       'name',
@@ -311,7 +302,7 @@ const playPlaylist = async (
   playlistName: string,
   shuffle = false
 ) => {
-  const playlist = playlistsCol().findOne(
+  const playlist = getPlaylistsCollection().findOne(
     {
       userId,
       name: playlistName
@@ -324,7 +315,7 @@ const playPlaylist = async (
     return { message: '❌ Playlist not found', shouldUpdate: false }
   }
 
-  const trackCount = tracksCol().count({ playlistId: playlist._id })
+  const trackCount = getTracksCollection().count({ playlistId: playlist._id })
   if (trackCount === 0) {
     return { message: '❌ Playlist is empty', shouldUpdate: false }
   }
@@ -386,7 +377,7 @@ const playPlaylist = async (
     return { message: 'No tracks could be loaded.', shouldUpdate: false }
   }
 
-  playlistsCol().updateAtomic(
+  getPlaylistsCollection().updateAtomic(
     { _id: playlist._id },
     {
       $inc: { playCount: 1 },
@@ -398,36 +389,6 @@ const playPlaylist = async (
     message: `${shuffle ? '🔀' : '▶️'} Queued playlist "${playlistName}" (${accepted} tracks; remaining tracks load during playback)`,
     shouldUpdate: false
   }
-}
-
-const playlistActionHandlers: Record<
-  PlaylistButtonAction,
-  (
-    interaction: MusicComponentInteraction,
-    client: UsingClient,
-    userId: string,
-    playlistName: string,
-    page?: number
-  ) => Promise<ActionResult>
-> = {
-  play_playlist: (interaction, client, userId, playlistName) =>
-    playPlaylist(interaction, client, userId, playlistName),
-  shuffle_playlist: (interaction, client, userId, playlistName) =>
-    playPlaylist(interaction, client, userId, playlistName, true),
-
-  playlist_prev: (interaction, _client, userId, playlistName, page) =>
-    displayPlaylistPage(
-      interaction,
-      { userId, name: playlistName },
-      Math.max(1, (page || 1) - 1)
-    ),
-
-  playlist_next: (interaction, _client, userId, playlistName, page) =>
-    displayPlaylistPage(
-      interaction,
-      { userId, name: playlistName },
-      (page || 1) + 1
-    )
 }
 
 export default createEvent({
@@ -500,24 +461,26 @@ export default createEvent({
             _id: classified.playlistId,
             userId: classified.userId
           })
-        } else {
-          const action =
-            classified.action === 'play'
-              ? 'play_playlist'
-              : classified.action === 'shuffle'
-                ? 'shuffle_playlist'
-                : classified.action === 'previous'
-                  ? 'playlist_prev'
-                  : 'playlist_next'
-          result = await playlistActionHandlers[action](
+        } else if (
+          classified.action === 'play' ||
+          classified.action === 'shuffle'
+        ) {
+          result = await playPlaylist(
             interaction,
             client,
             classified.userId,
             classified.playlistName,
-            'page' in classified ? classified.page : undefined
+            classified.action === 'shuffle'
+          )
+        } else {
+          const page = ('page' in classified ? classified.page : 1) || 1
+          result = await displayPlaylistPage(
+            interaction,
+            { userId: classified.userId, name: classified.playlistName },
+            classified.action === 'previous' ? Math.max(1, page - 1) : page + 1
           )
         }
-        if (result?.message) {
+        if (result.message) {
           await safeFollowup(interaction, result.message)
         }
       } catch (err) {

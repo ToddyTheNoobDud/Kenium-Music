@@ -24,9 +24,6 @@ const COLORS = {
   error: 0x100e09
 } as const
 
-const playlistsCol = () => getPlaylistsCollection()
-const tracksCol = () => getTracksCollection()
-
 type EmbedVariant = 'default' | 'success' | 'error'
 
 const options = {
@@ -34,7 +31,7 @@ const options = {
     description: 'Playlist name',
     required: true,
     autocomplete: async (interaction) =>
-      handlePlaylistAutocomplete(interaction, playlistsCol())
+      handlePlaylistAutocomplete(interaction, getPlaylistsCollection())
   })
 }
 
@@ -88,7 +85,7 @@ export class ExportCommand extends SubCommand {
     const userId = ctx.author.id
     const t = getContextTranslations(ctx).playlist.view
 
-    const playlist = playlistsCol().findOne({
+    const playlist = getPlaylistsCollection().findOne({
       userId,
       name: playlistName
     })
@@ -111,7 +108,7 @@ export class ExportCommand extends SubCommand {
       })
     }
 
-    const tracks = tracksCol().find(
+    const tracks = getTracksCollection().find(
       { playlistId: playlist._id },
       { sort: { addedAt: 1 } }
     )

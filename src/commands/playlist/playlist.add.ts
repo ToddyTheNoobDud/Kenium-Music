@@ -1,3 +1,4 @@
+import type { Track as ResolvedTrack } from 'aqualink'
 import {
   ButtonStyle,
   type CommandContext,
@@ -28,24 +29,6 @@ import { safeDefer } from '../../utils/interactions.ts'
 import { calculatePlaylistAggregate } from '../../utils/playlistMutations.ts'
 import { generateSortableId } from '../../utils/simpleDB.ts'
 
-const playlistsCol = () => getPlaylistsCollection()
-const tracksCol = () => getTracksCollection()
-
-type ResolvedTrackLike = {
-  info?: {
-    title?: string
-    uri?: string
-    author?: string
-    length?: number
-    identifier?: string
-    isStream?: boolean
-    isSeekable?: boolean
-    position?: number
-    artworkUrl?: string | null
-    isrc?: string | null
-  }
-}
-
 const TRACK_SEPARATOR_RE = /[,;\n]+/
 const YOUTUBE_PLAYLIST_RE =
   /(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/|music\.youtube\.com\/).*?[?&]list=([A-Za-z0-9_-]+)/i
@@ -57,7 +40,7 @@ const options = {
     description: 'Playlist name',
     required: true,
     autocomplete: async (interaction) =>
-      handlePlaylistAutocomplete(interaction, playlistsCol())
+      handlePlaylistAutocomplete(interaction, getPlaylistsCollection())
   }),
   tracks: createStringOption({
     description: 'Track names or URLs (comma/newline separated)',
@@ -66,30 +49,22 @@ const options = {
   })
 }
 
-export const _functions = {
-  splitInput: (input: string): string[] =>
-    input
-      .split(TRACK_SEPARATOR_RE)
-      .map((s) => s.trim())
-      .filter(Boolean),
-  canonicalizeUri: (uri: string): string => {
-    const ytId = extractYouTubeId(uri)
-    if (ytId) {
-      return `youtube:${ytId}`
-    }
-    const s = uri.match(SPOTIFY_TRACK_RE)
-    if (s) {
-      return `spotify:${s[1]}`
-    }
-    try {
-      const u = new URL(uri)
-      u.search = ''
-      return u.toString()
-    } catch {
-      return uri
-    }
-  },
-  normalizeLoadType: (t: unknown): string => String(t || '').toUpperCase()
+function canonicalizeUri(uri: string): string {
+  const videoId = extractYouTubeId(uri)
+  if (videoId) {
+    return `youtube:${videoId}`
+  }
+  const spotifyTrack = uri.match(SPOTIFY_TRACK_RE)
+  if (spotifyTrack) {
+    return `spotify:${spotifyTrack[1]}`
+  }
+  try {
+    const url = new URL(uri)
+    url.search = ''
+    return url.toString()
+  } catch {
+    return uri
+  }
 }
 
 @Declare({
@@ -101,9 +76,9 @@ export class AddCommand extends SubCommand {
   async run(ctx: CommandContext<typeof options>) {
     const { playlist: playlistName, tracks: rawQuery } = ctx.options
     const userId = ctx.author.id
-    const t = getContextTranslations(ctx).playlist.add
+    const translations = getContextTranslations(ctx).playlist.add
 
-    const playlistDb = playlistsCol().findOne(
+    const playlistDb = getPlaylistsCollection().findOne(
       {
         userId,
         name: playlistName
@@ -118,11 +93,10 @@ export class AddCommand extends SubCommand {
         embeds: [
           createEmbed(
             'error',
-            t?.notFound || 'Playlist Not Found',
-            (t?.notFoundDesc || 'No playlist named "{name}" exists!').replace(
-              '{name}',
-              playlistName
-            ),
+            translations?.notFound || 'Playlist Not Found',
+            (
+              translations?.notFoundDesc || 'No playlist named "{name}" exists!'
+            ).replace('{name}', playlistName),
             [],
             ctx.client.me?.avatarURL()
           )
@@ -139,19 +113,22 @@ export class AddCommand extends SubCommand {
 
     const timestamp = new Date().toISOString()
     const existingCanonical = new Set<string>()
-    const tokens = _functions.splitInput(rawQuery)
+    const tokens = rawQuery
+      .split(TRACK_SEPARATOR_RE)
+      .map((track) => track.trim())
+      .filter(Boolean)
     const isSingleYouTubePlaylist =
       tokens.length === 1 && YOUTUBE_PLAYLIST_RE.test(tokens[0] as string)
 
     const toAdd: Track[] = []
     const baseTime = Date.now()
 
-    const pushTrack = (track: ResolvedTrackLike) => {
-      const uri = track.info?.uri
+    const pushTrack = (track: ResolvedTrack) => {
+      const uri = track.info.uri
       if (!uri || toAdd.length >= availableSlots) {
         return
       }
-      const canonical = _functions.canonicalizeUri(uri)
+      const canonical = canonicalizeUri(uri)
       if (existingCanonical.has(canonical)) {
         return
       }
@@ -159,54 +136,48 @@ export class AddCommand extends SubCommand {
       const newTrack: Track = {
         _id: generateSortableId(),
         playlistId: playlistDb._id,
-        title: track.info?.title || 'Unknown',
+        title: track.info.title || 'Unknown',
         uri,
-        author: track.info?.author || 'Unknown',
-        duration: track.info?.length || 0,
+        author: track.info.author || 'Unknown',
+        duration: track.info.length || 0,
         addedAt: new Date(baseTime + toAdd.length).toISOString(),
         addedBy: userId,
         source: determineSource(uri),
-        identifier: track.info?.identifier || uri,
-        isStream: track.info?.isStream || false,
-        isSeekable: track.info?.isSeekable ?? true,
-        position: track.info?.position || 0,
-        artworkUrl: track.info?.artworkUrl || null,
-        isrc: track.info?.isrc || null
+        identifier: track.info.identifier || uri,
+        isStream: track.info.isStream || false,
+        isSeekable: track.info.isSeekable ?? true,
+        position: track.info.position || 0,
+        artworkUrl: track.info.artworkUrl || null,
+        isrc: track.info.isrc || null
       }
       toAdd.push(newTrack)
       existingCanonical.add(canonical)
     }
 
     const resolveOne = async (query: string) => {
-      const res = await ctx.client.aqua.resolve({
+      const response = await ctx.client.aqua.resolve({
         query,
         requester: ctx.author
       })
-      if (!res) {
-        return
-      }
-      const type = _functions.normalizeLoadType(res.loadType)
-      if (type === 'LOAD_FAILED' || type === 'NO_MATCHES') {
-        return
-      }
-      const tracks = Array.isArray(res.tracks) ? res.tracks : []
+      const tracks = response.tracks
       if (tracks.length === 0) {
         return
       }
-      const isPlaylist = type.includes('PLAYLIST') || !!res.playlistInfo
+      const isPlaylist =
+        response.loadType === 'playlist' || !!response.playlistInfo
       if (isPlaylist) {
-        for (const tr of tracks) {
+        for (const resolvedTrack of tracks) {
           if (toAdd.length >= availableSlots) {
             break
           }
-          if (tr) {
-            pushTrack(tr as ResolvedTrackLike)
+          if (resolvedTrack) {
+            pushTrack(resolvedTrack)
           }
         }
         return
       }
       if (tracks[0]) {
-        pushTrack(tracks[0] as ResolvedTrackLike)
+        pushTrack(tracks[0])
       }
     }
 
@@ -234,8 +205,8 @@ export class AddCommand extends SubCommand {
           embeds: [
             createEmbed(
               'warning',
-              t?.nothingAdded || 'Nothing Added',
-              t?.nothingAddedDesc ||
+              translations?.nothingAdded || 'Nothing Added',
+              translations?.nothingAddedDesc ||
                 'No new tracks were added. They may already exist in the playlist or no matches were found.',
               [],
               ctx.client.me?.avatarURL()
@@ -249,7 +220,7 @@ export class AddCommand extends SubCommand {
 
       try {
         const mutationResult = (() => {
-          const currentPlaylist = playlistsCol().findOne(
+          const currentPlaylist = getPlaylistsCollection().findOne(
             { userId, name: playlistName },
             { fields: ['_id'] }
           )
@@ -257,17 +228,17 @@ export class AddCommand extends SubCommand {
             return 'not-found' as const
           }
 
-          const existingRows = tracksCol().find(
+          const existingRows = getTracksCollection().find(
             { playlistId: currentPlaylist._id },
             { fields: ['uri'] }
           )
           const committedCanonical = new Set(
-            existingRows.map((track) => _functions.canonicalizeUri(track.uri))
+            existingRows.map((track) => canonicalizeUri(track.uri))
           )
           const slots = Math.max(0, LIMITS.MAX_TRACKS - existingRows.length)
           committedTracks = toAdd
             .filter((track) => {
-              const canonical = _functions.canonicalizeUri(track.uri)
+              const canonical = canonicalizeUri(track.uri)
               if (committedCanonical.has(canonical)) {
                 return false
               }
@@ -284,14 +255,14 @@ export class AddCommand extends SubCommand {
           }
 
           getDatabase().transaction(() => {
-            tracksCol().insert(committedTracks)
+            getTracksCollection().insert(committedTracks)
             aggregate = calculatePlaylistAggregate(
-              tracksCol().find(
+              getTracksCollection().find(
                 { playlistId: currentPlaylist._id },
                 { fields: ['duration'] }
               )
             )
-            playlistsCol().update(
+            getPlaylistsCollection().update(
               { _id: currentPlaylist._id },
               { lastModified: timestamp, ...aggregate }
             )
@@ -304,13 +275,14 @@ export class AddCommand extends SubCommand {
               createEmbed(
                 'warning',
                 mutationResult === 'not-found'
-                  ? t?.notFound || 'Playlist Not Found'
-                  : t?.nothingAdded || 'Nothing Added',
+                  ? translations?.notFound || 'Playlist Not Found'
+                  : translations?.nothingAdded || 'Nothing Added',
                 mutationResult === 'not-found'
                   ? (
-                      t?.notFoundDesc || 'No playlist named "{name}" exists!'
+                      translations?.notFoundDesc ||
+                      'No playlist named "{name}" exists!'
                     ).replace('{name}', playlistName)
-                  : t?.nothingAddedDesc ||
+                  : translations?.nothingAddedDesc ||
                       'No new tracks were added. They may already exist or the playlist may be full.',
                 [],
                 ctx.client.me?.avatarURL()
@@ -324,9 +296,10 @@ export class AddCommand extends SubCommand {
           embeds: [
             createEmbed(
               'error',
-              t?.addFailed || 'Add Failed',
+              translations?.addFailed || 'Add Failed',
               (
-                t?.addFailedDesc || 'Could not save playlist changes: {error}'
+                translations?.addFailedDesc ||
+                'Could not save playlist changes: {error}'
               ).replace(
                 '{error}',
                 dbError instanceof Error ? dbError.message : 'Unknown error'
@@ -344,7 +317,7 @@ export class AddCommand extends SubCommand {
           embeds: [
             createEmbed(
               'warning',
-              t?.nothingAdded || 'Nothing Added',
+              translations?.nothingAdded || 'Nothing Added',
               'No new tracks were added.',
               [],
               ctx.client.me?.avatarURL()
@@ -356,12 +329,12 @@ export class AddCommand extends SubCommand {
       const embed = createEmbed(
         'success',
         committedTracks.length > 1
-          ? t?.tracksAdded || 'Tracks Added'
-          : t?.trackAdded || 'Track Added',
+          ? translations?.tracksAdded || 'Tracks Added'
+          : translations?.trackAdded || 'Track Added',
         null,
         [
           {
-            name: `${ICONS.music} ${committedTracks.length > 1 ? t?.tracks || 'Tracks' : t?.track || 'Track'}`,
+            name: `${ICONS.music} ${committedTracks.length > 1 ? translations?.tracks || 'Tracks' : translations?.track || 'Track'}`,
             value:
               committedTracks.length > 1
                 ? `**${primary.title}** (+${committedTracks.length - 1} more)`
@@ -369,27 +342,27 @@ export class AddCommand extends SubCommand {
             inline: false
           },
           {
-            name: `${ICONS.artist} ${t?.artist || 'Artist'}`,
+            name: `${ICONS.artist} ${translations?.artist || 'Artist'}`,
             value: primary.author,
             inline: true
           },
           {
-            name: `${ICONS.source} ${t?.source || 'Source'}`,
+            name: `${ICONS.source} ${translations?.source || 'Source'}`,
             value: primary.source,
             inline: true
           },
           {
-            name: `${ICONS.tracks} ${t?.added || 'Added'}`,
+            name: `${ICONS.tracks} ${translations?.added || 'Added'}`,
             value: `${committedTracks.length} track${committedTracks.length !== 1 ? 's' : ''}`,
             inline: true
           },
           {
-            name: `${ICONS.playlist} ${t?.total || 'Total'}`,
+            name: `${ICONS.playlist} ${translations?.total || 'Total'}`,
             value: `${aggregate.trackCount}/${LIMITS.MAX_TRACKS} tracks`,
             inline: true
           },
           {
-            name: `${ICONS.duration} ${t?.duration || 'Duration'}`,
+            name: `${ICONS.duration} ${translations?.duration || 'Duration'}`,
             value: formatDuration(aggregate.totalDuration),
             inline: true
           }
@@ -400,7 +373,7 @@ export class AddCommand extends SubCommand {
       const buttons = createButtons([
         {
           id: `play_playlist_${playlistName}_${userId}`,
-          label: t?.playNow || 'Play Now',
+          label: translations?.playNow || 'Play Now',
           emoji: ICONS.play,
           style: ButtonStyle.Success
         }
@@ -412,8 +385,10 @@ export class AddCommand extends SubCommand {
         embeds: [
           createEmbed(
             'error',
-            t?.addFailed || 'Add Failed',
-            (t?.addFailedDesc || 'Could not add tracks: {error}').replace(
+            translations?.addFailed || 'Add Failed',
+            (
+              translations?.addFailedDesc || 'Could not add tracks: {error}'
+            ).replace(
               '{error}',
               err instanceof Error ? err.message : 'Unknown error'
             ),

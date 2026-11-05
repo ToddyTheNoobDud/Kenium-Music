@@ -54,10 +54,10 @@ interface KaraokeSession {
   trackKey: string
   stoppedByUser: boolean
   seekTimer?: NodeJS.Timeout | undefined
-  posBase: number
-  posBaseAt: number
-  lastRawPos?: number | undefined
-  editAvgMs?: number | undefined
+  positionAtLastUpdate: number
+  positionAtLastUpdateAt: number
+  lastPlayerPosition?: number | undefined
+  averageEditLatencyMs?: number | undefined
   client?: UsingClient | undefined
 }
 
@@ -72,121 +72,106 @@ const autoDelete = (
 
 const divider = () => new Separator().setDivider(true).setSpacing(Spacing.Small)
 
-const lineStart = (l: LyricLine) => l.range?.start ?? l.timestamp ?? 0
-const clean = (s: string) => s.replace(/\s+/g, ' ').trim()
+const lineStart = (line: LyricLine) => line.range?.start ?? line.timestamp ?? 0
+const cleanLyricText = (text: string) => text.replace(/\s+/g, ' ').trim()
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
 
-const gatewayLatencyOf = (session: KaraokeSession) => {
+const getGatewayLatency = (session: KaraokeSession) => {
   const latency = session.client?.gateway?.latency
   return Number.isFinite(latency) ? (latency ?? 0) : 0
 }
 
-const playerPingOf = (player: Player) => {
+const getPlayerPing = (player: Player) => {
   return Number.isFinite(player.ping) ? player.ping : 0
 }
 
 // Expected message.edit round-trip. Uses measured edits once available,
 // otherwise live gateway latency instead of a hardcoded guess.
-const editLeadMs = (session: KaraokeSession) => {
-  if (session.editAvgMs !== undefined) {
-    return clamp(Math.round(session.editAvgMs), 50, 600)
+const getEditLeadMs = (session: KaraokeSession) => {
+  if (session.averageEditLatencyMs !== undefined) {
+    return clamp(Math.round(session.averageEditLatencyMs), 50, 600)
   }
-  const gateway = gatewayLatencyOf(session)
+  const gateway = getGatewayLatency(session)
   if (gateway > 0) {
     return clamp(Math.round(gateway + 120), 100, 500)
   }
   return 220
 }
 
-const seekCheckMs = (session: KaraokeSession) =>
-  clamp(editLeadMs(session), 250, 600)
+const getSeekCheckInterval = (session: KaraokeSession) =>
+  clamp(getEditLeadMs(session), 250, 600)
 
-const seekThresholdMs = (session: KaraokeSession) =>
-  clamp(editLeadMs(session) + playerPingOf(session.player) + 300, 500, 2500)
+const getSeekThresholdMs = (session: KaraokeSession) =>
+  clamp(getEditLeadMs(session) + getPlayerPing(session.player) + 300, 500, 2500)
 
 const recordEditSample = (session: KaraokeSession, sample: number) => {
   if (!Number.isFinite(sample)) {
     return
   }
   const clamped = clamp(sample, 0, 5000)
-  session.editAvgMs =
-    session.editAvgMs !== undefined
-      ? Math.round(session.editAvgMs * 0.7 + clamped * 0.3)
+  session.averageEditLatencyMs =
+    session.averageEditLatencyMs !== undefined
+      ? Math.round(session.averageEditLatencyMs * 0.7 + clamped * 0.3)
       : Math.round(clamped)
 }
 
-const rawPlayerPos = (player: Player) =>
+const getPlayerPosition = (player: Player) =>
   Number.isFinite(player.position) ? player.position : 0
 
-const rebasePos = (session: KaraokeSession, pos: number) => {
-  session.posBase = pos
-  session.posBaseAt = Date.now()
-  session.lastRawPos = pos
+const updateSessionPosition = (session: KaraokeSession, pos: number) => {
+  session.positionAtLastUpdate = pos
+  session.positionAtLastUpdateAt = Date.now()
+  session.lastPlayerPosition = pos
 }
 
-const sessionPos = (session: KaraokeSession) => {
-  const raw = rawPlayerPos(session.player)
-  if (session.lastRawPos === undefined || raw !== session.lastRawPos) {
-    rebasePos(session, raw)
+const getSessionPosition = (session: KaraokeSession) => {
+  const raw = getPlayerPosition(session.player)
+  if (
+    session.lastPlayerPosition === undefined ||
+    raw !== session.lastPlayerPosition
+  ) {
+    updateSessionPosition(session, raw)
     return raw
   }
   if (isPaused(session.player)) {
-    return session.posBase
+    return session.positionAtLastUpdate
   }
-  return session.posBase + Math.max(0, Date.now() - session.posBaseAt)
+  return (
+    session.positionAtLastUpdate +
+    Math.max(0, Date.now() - session.positionAtLastUpdateAt)
+  )
 }
 
-const trackKey = (
-  t:
-    | {
-        uri?: string | null
-        identifier?: string
-        title?: string
-        author?: string
-        info?: {
-          uri?: string | null
-          identifier?: string
-          title?: string
-          author?: string
-        }
-      }
-    | null
-    | undefined
-) => {
-  if (!t) {
+const trackKey = (track: Track | null | undefined) => {
+  if (!track) {
     return ''
   }
-  return [
-    t.info?.uri ?? t.uri,
-    t.info?.identifier ?? t.identifier,
-    t.info?.title ?? t.title,
-    t.info?.author ?? t.author
-  ]
+  return [track.uri, track.identifier, track.title, track.author]
     .filter(Boolean)
     .join('|')
 }
 
-const findIdx = (lines: LyricLine[], ms: number) => {
-  let l = 0
-  let r = lines.length - 1
-  let res = -1
-  while (l <= r) {
-    const m = (l + r) >> 1
-    const line = lines[m]
+const findLyricIndex = (lines: LyricLine[], positionMs: number) => {
+  let leftIndex = 0
+  let rightIndex = lines.length - 1
+  let matchingIndex = -1
+  while (leftIndex <= rightIndex) {
+    const middleIndex = (leftIndex + rightIndex) >> 1
+    const line = lines[middleIndex]
     if (!line) {
       break
     }
-    const ts = lineStart(line)
-    if (ts <= ms) {
-      res = m
-      l = m + 1
+    const lineTime = lineStart(line)
+    if (lineTime <= positionMs) {
+      matchingIndex = middleIndex
+      leftIndex = middleIndex + 1
     } else {
-      r = m - 1
+      rightIndex = middleIndex - 1
     }
   }
-  return res
+  return matchingIndex
 }
 
 const errorContainer = (msg: string, lang: string, ctx: CommandContext) =>
@@ -213,14 +198,14 @@ const endedContainer = (reason: 'stopped' | 'finished' | 'error' | 'changed') =>
   )
 
 const viewportLine = (line: LyricLine, kind: 'past' | 'current' | 'next') => {
-  const t = clean(line.line) || '...'
+  const t = cleanLyricText(line.line) || '...'
   return kind === 'current' ? `## ${t}` : `-# ${t}`
 }
 
 const karaokeContainer = (
   details: { artist: string; artworkUrl?: string; title: string; uri?: string },
   lines: LyricLine[],
-  idx: number
+  lineIndex: number
 ) => {
   const stop = new Button()
     .setCustomId('ignore_karaoke-stop')
@@ -249,10 +234,10 @@ const karaokeContainer = (
       )
   }
 
-  if (idx < 0) {
+  if (lineIndex < 0) {
     const preview = lines
       .slice(0, 2)
-      .map((l) => viewportLine(l, 'next'))
+      .map((line) => viewportLine(line, 'next'))
       .join('\n')
     return new Container()
       .setColor(ACCENT_COLOR)
@@ -267,24 +252,24 @@ const karaokeContainer = (
       )
   }
 
-  const cur = lines[idx]
-  if (!cur) {
+  const currentLine = lines[lineIndex]
+  if (!currentLine) {
     return new Container()
       .setColor(ACCENT_COLOR)
       .addComponents(new TextDisplay().setContent('...'))
   }
 
-  const past = idx > 0 ? lines[idx - 1] : undefined
-  const next = lines[idx + 1]
+  const past = lineIndex > 0 ? lines[lineIndex - 1] : undefined
+  const next = lines[lineIndex + 1]
 
   const parts: string[] = []
   if (past) {
     parts.push(viewportLine(past, 'past'), '')
   }
-  parts.push(viewportLine(cur, 'current'))
+  parts.push(viewportLine(currentLine, 'current'))
   if (next) {
     parts.push('', '-# UP NEXT', viewportLine(next, 'next'))
-  } else if (idx === lines.length - 1) {
+  } else if (lineIndex === lines.length - 1) {
     parts.push('', '-# FINAL LINE  •  bring it home')
   }
 
@@ -309,7 +294,7 @@ const fetchLyrics = async (track: Track | null) => {
     const res = await findLyrics(q, hints, { requireSynced: true })
     const lines = ((res?.lines ?? []) as LyricLine[])
       .map((l) => ({ ...l, line: String(l.line ?? '') }))
-      .filter((l) => clean(l.line))
+      .filter((l) => cleanLyricText(l.line))
       .sort((a, b) => lineStart(a) - lineStart(b))
     if (!lines.length) {
       return null
@@ -320,77 +305,90 @@ const fetchLyrics = async (track: Track | null) => {
   }
 }
 
-const clearTimers = (s: KaraokeSession) => {
-  for (const t of s.timers) {
-    clearTimeout(t)
+const clearTimers = (session: KaraokeSession) => {
+  for (const timer of session.timers) {
+    clearTimeout(timer)
   }
-  s.timers = []
+  session.timers = []
 }
 
 const ensureSeekWatcher = (guildId: string) => {
-  const s = sessions.get(guildId)
-  if (!s) {
+  const session = sessions.get(guildId)
+  if (!session) {
     return
   }
-  if (s.seekTimer) {
-    clearTimeout(s.seekTimer)
+  if (session.seekTimer) {
+    clearTimeout(session.seekTimer)
   }
   const tick = () => {
-    const cur = sessions.get(guildId)
-    if (!cur) {
+    const currentSession = sessions.get(guildId)
+    if (!currentSession) {
       return
     }
-    if (cur.stoppedByUser || cur.player.destroyed) {
+    if (currentSession.stoppedByUser || currentSession.player.destroyed) {
       return
     }
 
-    if (isPaused(cur.player)) {
-      rebasePos(cur, rawPlayerPos(cur.player))
+    if (isPaused(currentSession.player)) {
+      updateSessionPosition(
+        currentSession,
+        getPlayerPosition(currentSession.player)
+      )
     } else {
       // Raw only changes on playerUpdate or seek: compare fresh state
       // against our extrapolation BEFORE adopting it, so real jumps
       // are detected and stale values can never false-trigger.
-      const raw = rawPlayerPos(cur.player)
-      if (cur.lastRawPos === undefined || raw !== cur.lastRawPos) {
-        const expected = cur.posBase + Math.max(0, Date.now() - cur.posBaseAt)
+      const raw = getPlayerPosition(currentSession.player)
+      if (
+        currentSession.lastPlayerPosition === undefined ||
+        raw !== currentSession.lastPlayerPosition
+      ) {
+        const expected =
+          currentSession.positionAtLastUpdate +
+          Math.max(0, Date.now() - currentSession.positionAtLastUpdateAt)
         const jumped =
-          cur.lastRawPos !== undefined &&
-          Math.abs(raw - expected) > seekThresholdMs(cur)
-        rebasePos(cur, raw)
+          currentSession.lastPlayerPosition !== undefined &&
+          Math.abs(raw - expected) > getSeekThresholdMs(currentSession)
+        updateSessionPosition(currentSession, raw)
         if (jumped) {
-          const idx = findIdx(cur.lines, raw)
-          renderIdx(guildId, idx).catch(() => {})
-          schedule(guildId, idx + 1)
+          const lineIndex = findLyricIndex(currentSession.lines, raw)
+          renderLyricLine(guildId, lineIndex).catch(() => {})
+          schedule(guildId, lineIndex + 1)
           return
         }
       }
     }
-    const t = setTimeout(tick, seekCheckMs(cur))
+    const t = setTimeout(tick, getSeekCheckInterval(currentSession))
     t.unref()
-    cur.seekTimer = t
+    currentSession.seekTimer = t
   }
-  const t = setTimeout(tick, seekCheckMs(s))
+  const t = setTimeout(tick, getSeekCheckInterval(session))
   t.unref()
-  s.seekTimer = t
+  session.seekTimer = t
 }
 
-const renderIdx = async (guildId: string, idx: number) => {
-  const s = sessions.get(guildId)
-  if (!s) {
+const renderLyricLine = async (guildId: string, lineIndex: number) => {
+  const session = sessions.get(guildId)
+  if (!session) {
     return
   }
-  const c = karaokeContainer(
-    { artist: s.artist, artworkUrl: s.artworkUrl, title: s.title, uri: s.uri },
-    s.lines,
-    idx
+  const container = karaokeContainer(
+    {
+      artist: session.artist,
+      artworkUrl: session.artworkUrl,
+      title: session.title,
+      uri: session.uri
+    },
+    session.lines,
+    lineIndex
   )
   const startedAt = Date.now()
   try {
-    await s.message.edit({
-      components: [c],
+    await session.message.edit({
+      components: [container],
       flags: MessageFlags.IsComponentsV2
     })
-    recordEditSample(s, Date.now() - startedAt)
+    recordEditSample(session, Date.now() - startedAt)
   } catch (e) {
     const code = (e as { code?: number }).code
     if (code === 10008 || code === 10065) {
@@ -401,7 +399,7 @@ const renderIdx = async (guildId: string, idx: number) => {
 
 const isPaused = (player: Player) => player.paused || !player.playing
 
-const nowPos = (player: Player) => {
+const getEstimatedPlayerPosition = (player: Player) => {
   if (!Number.isFinite(player.position)) {
     return 0
   }
@@ -411,46 +409,47 @@ const nowPos = (player: Player) => {
   return player.position + Math.max(0, Date.now() - player.timestamp)
 }
 
-const schedule = (guildId: string, nextIdx: number) => {
-  const s = sessions.get(guildId)
-  if (!s) {
+const schedule = (guildId: string, nextLineIndex: number) => {
+  const session = sessions.get(guildId)
+  if (!session) {
     return
   }
-  clearTimers(s)
-  rebasePos(s, rawPlayerPos(s.player))
+  clearTimers(session)
+  updateSessionPosition(session, getPlayerPosition(session.player))
   ensureSeekWatcher(guildId)
 
-  if (isPaused(s.player)) {
+  if (isPaused(session.player)) {
     const t = setTimeout(() => {
-      const cur = sessions.get(guildId)
-      if (!cur) {
+      const currentSession = sessions.get(guildId)
+      if (!currentSession) {
         return
       }
-      if (cur.stoppedByUser || cur.player.destroyed) {
-        cleanup(guildId, cur.stoppedByUser ? 'stopped' : 'error').catch(
-          () => {}
-        )
+      if (currentSession.stoppedByUser || currentSession.player.destroyed) {
+        cleanup(
+          guildId,
+          currentSession.stoppedByUser ? 'stopped' : 'error'
+        ).catch(() => {})
         return
       }
-      if (isPaused(cur.player)) {
-        return schedule(guildId, nextIdx)
+      if (isPaused(currentSession.player)) {
+        return schedule(guildId, nextLineIndex)
       }
-      const pos = sessionPos(cur)
-      const idx = findIdx(cur.lines, pos)
-      renderIdx(guildId, idx).catch(() => {})
-      schedule(guildId, idx + 1)
-    }, seekCheckMs(s))
+      const pos = getSessionPosition(currentSession)
+      const lineIndex = findLyricIndex(currentSession.lines, pos)
+      renderLyricLine(guildId, lineIndex).catch(() => {})
+      schedule(guildId, lineIndex + 1)
+    }, getSeekCheckInterval(session))
     t.unref()
-    s.timers.push(t)
+    session.timers.push(t)
     return
   }
 
-  const pos = sessionPos(s)
-  const lead = editLeadMs(s)
-  const overdueLimit = -seekThresholdMs(s)
+  const pos = getSessionPosition(session)
+  const lead = getEditLeadMs(session)
+  const overdueLimit = -getSeekThresholdMs(session)
 
-  if (nextIdx >= s.lines.length) {
-    const last = s.lines[s.lines.length - 1]
+  if (nextLineIndex >= session.lines.length) {
+    const last = session.lines[session.lines.length - 1]
     const delay = last
       ? Math.max(0, lineStart(last) - pos - lead + SONG_END_BUFFER_MS)
       : SONG_END_BUFFER_MS
@@ -459,7 +458,7 @@ const schedule = (guildId: string, nextIdx: number) => {
       delay
     )
     t.unref()
-    s.timers.push(t)
+    session.timers.push(t)
     return
   }
 
@@ -467,8 +466,8 @@ const schedule = (guildId: string, nextIdx: number) => {
   // Edits fire one measured round-trip early so visuals land on beat.
   // Lines only slightly overdue render immediately so we never lag behind.
   let scheduled = 0
-  for (let i = nextIdx; i < s.lines.length; i++) {
-    const line = s.lines[i]
+  for (let i = nextLineIndex; i < session.lines.length; i++) {
+    const line = session.lines[i]
     if (!line) {
       continue
     }
@@ -477,24 +476,31 @@ const schedule = (guildId: string, nextIdx: number) => {
       continue
     }
     const delay = Math.max(0, rawDelay)
-    const idx = i
+    const lineIndex = i
     const t = setTimeout(async () => {
-      const cur = sessions.get(guildId)
-      if (!cur || cur.stoppedByUser || cur.player.destroyed) {
-        await cleanup(guildId, cur?.stoppedByUser ? 'stopped' : 'error')
+      const currentSession = sessions.get(guildId)
+      if (
+        !currentSession ||
+        currentSession.stoppedByUser ||
+        currentSession.player.destroyed
+      ) {
+        await cleanup(
+          guildId,
+          currentSession?.stoppedByUser ? 'stopped' : 'error'
+        )
         return
       }
-      if (trackKey(cur.player.current) !== cur.trackKey) {
+      if (trackKey(currentSession.player.current) !== currentSession.trackKey) {
         await cleanup(guildId, 'changed')
         return
       }
-      if (isPaused(cur.player)) {
-        return schedule(guildId, idx)
+      if (isPaused(currentSession.player)) {
+        return schedule(guildId, lineIndex)
       }
-      await renderIdx(guildId, idx)
+      await renderLyricLine(guildId, lineIndex)
     }, delay)
     t.unref()
-    s.timers.push(t)
+    session.timers.push(t)
     scheduled++
   }
 
@@ -504,7 +510,7 @@ const schedule = (guildId: string, nextIdx: number) => {
       SONG_END_BUFFER_MS
     )
     t.unref()
-    s.timers.push(t)
+    session.timers.push(t)
   }
 }
 
@@ -512,25 +518,23 @@ const cleanup = async (
   guildId: string,
   reason: 'stopped' | 'finished' | 'error' | 'changed' = 'error'
 ) => {
-  const s = sessions.get(guildId)
-  if (!s) {
+  const session = sessions.get(guildId)
+  if (!session) {
     return
   }
-  clearTimers(s)
-  if (s.seekTimer) {
-    clearTimeout(s.seekTimer)
+  clearTimers(session)
+  if (session.seekTimer) {
+    clearTimeout(session.seekTimer)
   }
-  clearTimeout(s.timeout)
-  s.collector?.stop?.('cleanup')
-  if (s.message?.edit) {
-    await s.message
-      .edit({
-        components: [endedContainer(reason)],
-        flags: MessageFlags.IsComponentsV2
-      })
-      .catch(() => null)
-    autoDelete(s.message)
-  }
+  clearTimeout(session.timeout)
+  session.collector.stop('cleanup')
+  await session.message
+    .edit({
+      components: [endedContainer(reason)],
+      flags: MessageFlags.IsComponentsV2
+    })
+    .catch(() => null)
+  autoDelete(session.message)
   sessions.delete(guildId)
 }
 
@@ -541,12 +545,12 @@ const cleanup = async (
 })
 @Middlewares(['cooldown', 'checkPlayer', 'checkVoice', 'checkTrack'])
 export default class KaraokeCommand extends Command {
-  private async sendError(ctx: CommandContext, c: Container) {
-    const m = await ctx.editOrReply(
-      { components: [c], flags: MessageFlags.IsComponentsV2 },
+  private async sendError(ctx: CommandContext, container: Container) {
+    const message = await ctx.editOrReply(
+      { components: [container], flags: MessageFlags.IsComponentsV2 },
       true
     )
-    autoDelete(m)
+    autoDelete(message)
   }
 
   public override async run(ctx: CommandContext): Promise<void> {
@@ -605,14 +609,18 @@ export default class KaraokeCommand extends Command {
       player.current?.thumbnail ||
       undefined
     const uri = player.current?.info?.uri || player.current?.uri || undefined
-    const pos = nowPos(player)
-    const idx = findIdx(res.lines, pos)
+    const pos = getEstimatedPlayerPosition(player)
+    const lineIndex = findLyricIndex(res.lines, pos)
 
     const sendStartedAt = Date.now()
     const msg = await ctx.editOrReply(
       {
         components: [
-          karaokeContainer({ artist, artworkUrl, title, uri }, res.lines, idx)
+          karaokeContainer(
+            { artist, artworkUrl, title, uri },
+            res.lines,
+            lineIndex
+          )
         ],
         flags: MessageFlags.IsComponentsV2
       },
@@ -625,45 +633,44 @@ export default class KaraokeCommand extends Command {
     const collector = msg.createComponentCollector({
       filter: (i: { isButton: () => boolean; customId: string }) =>
         i.isButton() && i.customId === 'ignore_karaoke-stop',
-      onStop() {},
       idle: SESSION_TIMEOUT_MS
     })
 
     collector.run(
       'ignore_karaoke-stop',
-      async (i: {
+      async (interaction: {
         guildId?: string | null
         member?: import('../shared/helperTypes.ts').MemberLike | null
         user: { id: string }
         client?: unknown
         write: (opts: { content: string; flags: number }) => Promise<void>
       }) => {
-        const s = sessions.get(guildId)
-        const cur = ctx.client.aqua.players.get(guildId)
+        const session = sessions.get(guildId)
+        const currentPlayer = ctx.client.aqua.players.get(guildId)
         const voice = await getMemberVoiceState({
-          ...i,
+          ...interaction,
           guildId,
           client: ctx.client
         })
         const auth = authorizeVoiceControl({
           guildId,
           memberChannelId: voice?.channelId ?? null,
-          playerChannelId: cur?.voiceChannel ?? null,
-          hasPlayer: Boolean(cur),
+          playerChannelId: currentPlayer?.voiceChannel ?? null,
+          hasPlayer: Boolean(currentPlayer),
           requirePlayer: true,
-          playerDestroyed: cur?.destroyed === true
+          playerDestroyed: currentPlayer?.destroyed === true
         })
-        if (!auth.ok || !s || s.player !== cur) {
-          await i.write({
+        if (!auth.ok || !session || session.player !== currentPlayer) {
+          await interaction.write({
             content: 'You must be in the voice channel to stop karaoke.',
             flags: 64
           })
           return
         }
-        s.stoppedByUser = true
+        session.stoppedByUser = true
         await cleanup(guildId, 'stopped')
-        await i.write({
-          content: `Karaoke session stopped by <@${i.user.id}>.`,
+        await interaction.write({
+          content: `Karaoke session stopped by <@${interaction.user.id}>.`,
           flags: 64
         })
       }
@@ -681,7 +688,7 @@ export default class KaraokeCommand extends Command {
         await cleanup(first, 'error')
       }
     }
-    const startRaw = rawPlayerPos(player)
+    const startRaw = getPlayerPosition(player)
     sessions.set(guildId, {
       message: msg,
       lines: res.lines,
@@ -695,9 +702,9 @@ export default class KaraokeCommand extends Command {
       uri,
       trackKey: trackKey(player.current),
       stoppedByUser: false,
-      posBase: startRaw,
-      posBaseAt: Date.now(),
-      lastRawPos: startRaw,
+      positionAtLastUpdate: startRaw,
+      positionAtLastUpdateAt: Date.now(),
+      lastPlayerPosition: startRaw,
       client: ctx.client
     })
 
@@ -706,8 +713,8 @@ export default class KaraokeCommand extends Command {
       recordEditSample(created, Date.now() - sendStartedAt)
     }
 
-    schedule(guildId, idx + 1)
-    if (idx >= res.lines.length - 1) {
+    schedule(guildId, lineIndex + 1)
+    if (lineIndex >= res.lines.length - 1) {
       schedule(guildId, res.lines.length)
     }
   }
@@ -721,48 +728,34 @@ export const hasKaraokeSession = (guildId: string) =>
   Boolean(sessions.get(guildId)?.player?.connected)
 
 export const resyncKaraokeSession = (guildId: string, position: unknown) => {
-  const s = sessions.get(guildId)
-  if (!s || s.stoppedByUser || s.player.destroyed) {
+  const session = sessions.get(guildId)
+  if (!session || session.stoppedByUser || session.player.destroyed) {
     return
   }
   if (typeof position !== 'number' || !Number.isFinite(position)) {
     return
   }
-  rebasePos(s, position)
-  const idx = findIdx(s.lines, position)
-  renderIdx(guildId, idx).catch(() => {})
-  schedule(guildId, idx + 1)
+  updateSessionPosition(session, position)
+  const lineIndex = findLyricIndex(session.lines, position)
+  renderLyricLine(guildId, lineIndex).catch(() => {})
+  schedule(guildId, lineIndex + 1)
 }
 
 export const syncKaraokeSessionTrack = async (
   guildId: string,
-  track:
-    | {
-        uri?: string | null
-        identifier?: string
-        title?: string
-        author?: string
-        info?: {
-          uri?: string | null
-          identifier?: string
-          title?: string
-          author?: string
-        }
-      }
-    | null
-    | undefined
+  track: Track | null | undefined
 ) => {
-  const s = sessions.get(guildId)
-  if (!s) {
+  const session = sessions.get(guildId)
+  if (!session) {
     return
   }
-  const k = trackKey(track)
-  if (!k || k !== s.trackKey) {
+  const currentTrackKey = trackKey(track)
+  if (!currentTrackKey || currentTrackKey !== session.trackKey) {
     await cleanup(guildId, 'changed')
   }
 }
 export const cleanupAllKaraokeSessions = async () => {
-  for (const k of [...sessions.keys()]) {
-    await cleanup(k, 'error')
+  for (const guildId of [...sessions.keys()]) {
+    await cleanup(guildId, 'error')
   }
 }

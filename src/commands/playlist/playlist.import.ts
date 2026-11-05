@@ -48,8 +48,6 @@ const COLORS = {
   error: 0x100e09
 } as const
 
-const playlistsCol = () => getPlaylistsCollection()
-const tracksCol = () => getTracksCollection()
 const DEFAULT_IMPORTED_PLAYLIST_NAME = 'Imported Playlist'
 
 type EmbedVariant = 'default' | 'success' | 'error'
@@ -203,43 +201,16 @@ export class ImportCommand extends SubCommand {
       }))
 
       let aggregate = calculatePlaylistAggregate(tracksToInsert)
-      const importResult = (() => {
-        if (playlistsCol().findOne({ userId, name: playlistName })) {
-          return 'exists' as const
-        }
-        const validation = validatePlaylistCreation(
-          playlistName,
-          playlistsCol().count({ userId })
-        )
-        if (validation) {
-          return validation
-        }
-
-        getDatabase().transaction(() => {
-          const playlistId = generateSortableId()
-          for (const track of tracksToInsert) {
-            track.playlistId = playlistId
-          }
-          const insertedPlaylist: Playlist = {
-            _id: playlistId,
-            userId,
-            name: playlistName,
-            description: data.description || 'Imported playlist',
-            createdAt: timestamp,
-            lastModified: timestamp,
-            playCount: 0,
-            totalDuration: 0,
-            trackCount: 0
-          }
-          playlistsCol().insert(insertedPlaylist)
-          tracksCol().insert(tracksToInsert)
-          aggregate = calculatePlaylistAggregate(
-            tracksCol().find({ playlistId }, { fields: ['duration'] })
+      const existing = getPlaylistsCollection().findOne({
+        userId,
+        name: playlistName
+      })
+      const importResult = existing
+        ? 'exists'
+        : validatePlaylistCreation(
+            playlistName,
+            getPlaylistsCollection().count({ userId })
           )
-          playlistsCol().update({ _id: playlistId }, aggregate)
-        })
-        return null
-      })()
 
       if (importResult === 'exists') {
         return ctx.editOrReply({
@@ -275,6 +246,30 @@ export class ImportCommand extends SubCommand {
           flags: 64
         })
       }
+      getDatabase().transaction(() => {
+        const playlistId = generateSortableId()
+        for (const track of tracksToInsert) {
+          track.playlistId = playlistId
+        }
+        const insertedPlaylist: Playlist = {
+          _id: playlistId,
+          userId,
+          name: playlistName,
+          description: data.description || 'Imported playlist',
+          createdAt: timestamp,
+          lastModified: timestamp,
+          playCount: 0,
+          totalDuration: 0,
+          trackCount: 0
+        }
+        getPlaylistsCollection().insert(insertedPlaylist)
+        getTracksCollection().insert(tracksToInsert)
+        aggregate = calculatePlaylistAggregate(
+          getTracksCollection().find({ playlistId }, { fields: ['duration'] })
+        )
+        getPlaylistsCollection().update({ _id: playlistId }, aggregate)
+      })
+
       invalidatePlaylistNameCache(userId)
 
       const embed = createEmbed(

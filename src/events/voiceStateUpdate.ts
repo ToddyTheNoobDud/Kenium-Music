@@ -27,8 +27,26 @@ import {
   updateGuildSettingsSync
 } from '../utils/db_helper.ts'
 
+export default createEvent({
+  data: { name: 'voiceStateUpdate', once: false },
+  run: async ([newState, oldState], client) => {
+    const guildId = newState?.guildId ?? oldState?.guildId
+    if (!guildId) {
+      return
+    }
+    if (oldState?.channelId === newState?.channelId) {
+      return
+    }
+
+    manager.register(client)
+    manager.handleUpdate({ newState, oldState, guildId }, client)
+  }
+})
+
 const NO_SONG_TIMEOUT = 600000
 const REJOIN_DELAY = 5000
+const BACKOFF_AFTER_FAILURES = 15
+const BACKOFF_BASE_DELAY = 30000
 const BULK_REJOIN_STAGGER = 2500
 const BULK_REJOIN_DEDUPE_WINDOW = 15000
 const CONFIRM_ATTEMPTS = 10
@@ -56,17 +74,6 @@ type VoiceStateUpdatePayload = {
 type VoiceGuild = Pick<GuildStructure, 'channels'>
 type VoiceChannel = VoiceChannelStructure | StageChannelStructure
 type GuildCache = ReturnType<typeof lru<VoiceGuild>>
-const STATE_IDLE = 1
-const STATE_PLAYING = 2
-const STATE_REJOINING = 4
-const STATE_DESTROYING = 8
-
-const TRANSITIONS = new Uint8Array(16)
-TRANSITIONS[STATE_IDLE] = STATE_PLAYING | STATE_DESTROYING | STATE_REJOINING
-TRANSITIONS[STATE_PLAYING] = STATE_IDLE | STATE_DESTROYING | STATE_REJOINING
-TRANSITIONS[STATE_REJOINING] = STATE_PLAYING | STATE_IDLE
-TRANSITIONS[STATE_DESTROYING] = STATE_REJOINING
-
 // Cache human counts per channel (60s TTL)
 const humanCountCache = lru<number>(CACHE_SIZE, 60000)
 
@@ -74,13 +81,6 @@ function unrefTimeout(callback: () => void, delay: number) {
   const timer = setTimeout(callback, delay)
   timer.unref()
   return timer
-}
-
-function clearTimer(timer: TimerLike | null | undefined) {
-  if (timer) {
-    clearTimeout(timer)
-  }
-  return null
 }
 
 function deleteIdleMessage(message: MessageStructure, guildId: string) {
@@ -147,31 +147,25 @@ async function getVoiceChannel(
   return channel.isVoice() || channel.isStage() ? channel : null
 }
 
-class CircuitBreaker {
+class RejoinBackoff {
   failures = new Map<string, { count: number; lastAttempt: number }>()
-  maxFailures = 15
-  baseResetTime = 30000
 
   getDelay(guildId: string): number {
     const entry = this.failures.get(guildId)
     if (!entry) {
       return REJOIN_DELAY
     }
-    if (entry.count < this.maxFailures) {
+    if (entry.count < BACKOFF_AFTER_FAILURES) {
       return REJOIN_DELAY
     }
-    const backoffLevel = Math.max(0, entry.count - this.maxFailures)
-    const resetTime = this.baseResetTime * 2 ** Math.min(backoffLevel, 5)
+    const backoffLevel = Math.max(0, entry.count - BACKOFF_AFTER_FAILURES)
+    const resetTime = BACKOFF_BASE_DELAY * 2 ** Math.min(backoffLevel, 5)
     const elapsed = Date.now() - entry.lastAttempt
     const remaining = resetTime - elapsed
     return Math.max(REJOIN_DELAY, remaining)
   }
 
-  recordResult(guildId: string, success: boolean) {
-    if (success) {
-      this.failures.delete(guildId)
-      return
-    }
+  recordFailure(guildId: string) {
     const entry = this.failures.get(guildId)
     this.failures.set(guildId, {
       count: (entry?.count ?? 0) + 1,
@@ -189,7 +183,7 @@ class CircuitBreaker {
     for (const [guildId, entry] of this.failures) {
       // Entries in exponential backoff never expire: retries continue at
       // capped backoff forever and user settings are never deleted.
-      if (entry.count >= this.maxFailures) {
+      if (entry.count >= BACKOFF_AFTER_FAILURES) {
         continue
       }
       if (now - entry.lastAttempt > expireTime) {
@@ -212,57 +206,20 @@ class VoiceManager {
   timeouts = new Map<string, TimerLike>()
   recoveryJobs = new Map<string, RecoveryJob>()
   blockedVoiceChannels = new Map<string, string>()
-  states = new Map<string, number>()
-  pending = new Map<
-    string,
-    { timer: TimerLike | null; event: VoiceStateUpdatePayload }
-  >()
-  breaker = new CircuitBreaker()
+  rejoiningGuilds = new Set<string>()
+  pendingVoiceUpdates = new Map<string, TimerLike>()
+  retryBackoff = new RejoinBackoff()
 
   guildCache = lru<VoiceGuild>(CACHE_SIZE, 60000)
   registered = new WeakSet<UsingClient>()
-  cleanupTimer: TimerLike | null = null
+  cleanupTimer: ReturnType<typeof setInterval>
   lastBulkRecoveryAt = 0
-  stopped = false
 
   constructor() {
-    this.setupCleanup()
-  }
-
-  setupCleanup() {
-    if (this.stopped) {
-      return
-    }
-    this.cleanupTimer = unrefTimeout(() => {
-      if (this.stopped) {
-        return
-      }
-      this.breaker.cleanup()
-      // Cap states map: remove IDLE entries when map exceeds 2000 guilds
-      // (prevents unbounded growth for long-lived 24/7 guilds)
-      const MAX_STATES_ENTRIES = 2000
-      if (this.states.size > MAX_STATES_ENTRIES) {
-        for (const [guildId, state] of this.states) {
-          if (state === STATE_IDLE) {
-            this.states.delete(guildId)
-          }
-          if (this.states.size <= Math.floor(MAX_STATES_ENTRIES * 0.8)) {
-            break
-          }
-        }
-      }
-      this.setupCleanup()
-    }, CLEANUP_INTERVAL)
-  }
-
-  setState(guildId: string, newState: number): boolean {
-    const current = this.states.get(guildId) ?? STATE_IDLE
-    const allowed = TRANSITIONS[current] ?? 0
-    if (!(allowed & newState)) {
-      return false
-    }
-    this.states.set(guildId, newState)
-    return true
+    this.cleanupTimer = setInterval(
+      () => this.retryBackoff.cleanup(),
+      CLEANUP_INTERVAL
+    ).unref()
   }
 
   clearTimeout(key: string) {
@@ -270,7 +227,7 @@ class VoiceManager {
     if (!timer) {
       return
     }
-    clearTimer(timer)
+    clearTimeout(timer)
     this.timeouts.delete(key)
   }
 
@@ -290,20 +247,20 @@ class VoiceManager {
     if (!job) {
       return
     }
-    clearTimer(job.timer)
+    clearTimeout(job.timer)
     this.recoveryJobs.delete(guildId)
   }
 
   cancelAllRecovery() {
     this.lastBulkRecoveryAt = 0
     for (const job of this.recoveryJobs.values()) {
-      clearTimer(job.timer)
+      clearTimeout(job.timer)
     }
     this.recoveryJobs.clear()
-    for (const pending of this.pending.values()) {
-      clearTimer(pending.timer)
+    for (const timer of this.pendingVoiceUpdates.values()) {
+      clearTimeout(timer)
     }
-    this.pending.clear()
+    this.pendingVoiceUpdates.clear()
   }
 
   register(client: UsingClient) {
@@ -319,7 +276,7 @@ class VoiceManager {
         if (!player.guildId) {
           return
         }
-        this.setState(player.guildId, STATE_PLAYING)
+        this.rejoiningGuilds.delete(player.guildId)
         this.clearTimeout(player.guildId)
         this.cancelRecovery(player.guildId)
       },
@@ -328,7 +285,7 @@ class VoiceManager {
         if (!player.guildId) {
           return
         }
-        this.setState(player.guildId, STATE_IDLE)
+        this.rejoiningGuilds.delete(player.guildId)
         if (!isTwentyFourSevenEnabled(player.guildId)) {
           this.scheduleDestroy(client, player)
         }
@@ -341,7 +298,6 @@ class VoiceManager {
         if (isPlayerRecovering(player)) {
           return
         }
-        this.setState(player.guildId, STATE_DESTROYING)
         this.clearTimeout(player.guildId)
 
         if (isTwentyFourSevenEnabled(player.guildId)) {
@@ -352,8 +308,6 @@ class VoiceManager {
             player.textChannel ?? undefined,
             'playerDestroy'
           )
-        } else {
-          this.states.delete(player.guildId)
         }
       },
 
@@ -402,18 +356,18 @@ class VoiceManager {
       return
     }
 
-    const existing = this.pending.get(guildId)
+    const existing = this.pendingVoiceUpdates.get(guildId)
     if (existing) {
-      existing.timer = clearTimer(existing.timer)
+      clearTimeout(existing)
     }
 
-    this.pending.set(guildId, {
-      event,
-      timer: unrefTimeout(() => {
-        this.pending.delete(guildId)
+    this.pendingVoiceUpdates.set(
+      guildId,
+      unrefTimeout(() => {
+        this.pendingVoiceUpdates.delete(guildId)
         this.processUpdate(event, client)
       }, DEBOUNCE_DELAY)
-    })
+    )
   }
 
   processUpdate(event: VoiceStateUpdatePayload, client: UsingClient) {
@@ -496,10 +450,10 @@ class VoiceManager {
       }
       this.blockedVoiceChannels.delete(guildId)
     }
-    const breakerDelay = this.breaker.getDelay(guildId)
+    const retryDelay = this.retryBackoff.getDelay(guildId)
 
     this.clearTimeout(guildId)
-    const delay = Math.max(breakerDelay, minimumDelay)
+    const delay = Math.max(retryDelay, minimumDelay)
     const dueAt = Date.now() + delay
     const existingJob = this.recoveryJobs.get(guildId)
 
@@ -515,77 +469,76 @@ class VoiceManager {
       if (existingJob.dueAt <= dueAt) {
         return
       }
-      clearTimer(existingJob.timer)
+      clearTimeout(existingJob.timer)
     }
 
-    const timer = unrefTimeout(() => {
+    const timer = unrefTimeout(async () => {
       const job = this.recoveryJobs.get(guildId)
       if (!job || job.timer !== timer) {
         return
       }
       this.recoveryJobs.delete(guildId)
       if (!gatewayHealthy) {
-        this.setState(guildId, STATE_IDLE)
+        this.rejoiningGuilds.delete(guildId)
         return
       }
 
-      void (async () => {
-        if (!this.setState(guildId, STATE_REJOINING)) {
-          this.scheduleRejoin(
-            job.client,
-            guildId,
-            job.voiceId,
-            job.textId,
-            job.source,
-            REJOIN_DELAY
-          )
-          return
-        }
+      if (this.rejoiningGuilds.has(guildId)) {
+        this.scheduleRejoin(
+          job.client,
+          guildId,
+          job.voiceId,
+          job.textId,
+          job.source,
+          REJOIN_DELAY
+        )
+        return
+      }
 
-        let outcome: RejoinOutcome = 'retry'
-        try {
-          outcome = await this.rejoinChannel(
-            job.client,
-            guildId,
-            job.voiceId,
-            job.textId
-          )
-        } catch (error) {
-          job.client.logger.warn(
-            `[VoiceManager] Unexpected recovery error for ${guildId}:`,
-            error
-          )
-          outcome = 'retry'
-        }
+      this.rejoiningGuilds.add(guildId)
+      let outcome: RejoinOutcome = 'retry'
+      try {
+        outcome = await this.rejoinChannel(
+          job.client,
+          guildId,
+          job.voiceId,
+          job.textId
+        )
+      } catch (error) {
+        job.client.logger.warn(
+          `[VoiceManager] Unexpected recovery error for ${guildId}:`,
+          error
+        )
+        outcome = 'retry'
+      }
 
-        const attempt = (this.breaker.failures.get(guildId)?.count ?? 0) + 1
-        // Skip the boring case (first-try success) to keep logs readable
-        // at scale; retries and recovered guilds are always logged.
-        if (outcome === 'retry' || attempt > 1) {
-          job.client.logger.info(
-            `[VoiceManager] rejoin ${job.source} ${guildId}: ${outcome} (attempt ${attempt})`
-          )
-        }
+      const attempt = (this.retryBackoff.failures.get(guildId)?.count ?? 0) + 1
+      // Skip the boring case (first-try success) to keep logs readable
+      // at scale; retries and recovered guilds are always logged.
+      if (outcome === 'retry' || attempt > 1) {
+        job.client.logger.info(
+          `[VoiceManager] rejoin ${job.source} ${guildId}: ${outcome} (attempt ${attempt})`
+        )
+      }
 
-        if (outcome === 'connected') {
-          this.breaker.recordResult(guildId, true)
-          this.setState(guildId, STATE_IDLE)
-          return
-        }
+      if (outcome === 'connected') {
+        this.retryBackoff.reset(guildId)
+        this.rejoiningGuilds.delete(guildId)
+        return
+      }
 
-        this.setState(guildId, STATE_IDLE)
-        if (outcome === 'retry') {
-          this.cancelRecovery(guildId)
-          this.breaker.recordResult(guildId, false)
-          this.scheduleRejoin(
-            job.client,
-            guildId,
-            job.voiceId,
-            job.textId,
-            'retry'
-          )
-        }
-      })()
+      this.rejoiningGuilds.delete(guildId)
+      if (outcome === 'retry') {
+        this.cancelRecovery(guildId)
+        this.retryBackoff.recordFailure(guildId)
+        this.scheduleRejoin(
+          job.client,
+          guildId,
+          job.voiceId,
+          job.textId,
+          'retry'
+        )
+      }
     }, delay)
 
     this.recoveryJobs.set(guildId, {
@@ -593,8 +546,8 @@ class VoiceManager {
       dueAt,
       source,
       timer,
-      ...(textId !== undefined ? { textId } : {}),
-      ...(voiceId !== undefined ? { voiceId } : {})
+      textId,
+      voiceId
     })
   }
 
@@ -629,7 +582,7 @@ class VoiceManager {
     if (!guild) {
       if (!isTwentyFourSevenEnabled(guildId)) {
         this.cancelRecovery(guildId)
-        this.breaker.reset(guildId)
+        this.retryBackoff.reset(guildId)
         return 'noop'
       }
       client.logger.warn(
@@ -777,42 +730,36 @@ class VoiceManager {
     this.cancelRecovery(guildId)
     this.setTimeout(
       guildId,
-      () => {
-        void (async () => {
-          const players = client.aqua.players
-          const current = players.get(guildId)
-          if (
-            !current ||
-            current.playing ||
-            isTwentyFourSevenEnabled(guildId)
-          ) {
-            return
-          }
+      async () => {
+        const players = client.aqua.players
+        const current = players.get(guildId)
+        if (!current || current.playing || isTwentyFourSevenEnabled(guildId)) {
+          return
+        }
 
-          if (current.textChannel) {
-            const embed = new Embed()
-              .setColor(0x100e09)
-              .setDescription(
-                'No song added in 10 minutes, disconnecting...\nUse `/247` to keep the bot in VC.'
+        if (current.textChannel) {
+          const embed = new Embed()
+            .setColor(0x100e09)
+            .setDescription(
+              'No song added in 10 minutes, disconnecting...\nUse `/247` to keep the bot in VC.'
+            )
+            .setFooter({ text: 'Automatically destroying player' })
+
+          try {
+            const msg = await client.messages.write(current.textChannel, {
+              embeds: [embed]
+            })
+            if (msg?.id) {
+              this.setTimeout(
+                `msg_${msg.id}`,
+                () => deleteIdleMessage(msg, guildId),
+                10000
               )
-              .setFooter({ text: 'Automatically destroying player' })
+            }
+          } catch {}
+        }
 
-            try {
-              const msg = await client.messages.write(current.textChannel, {
-                embeds: [embed]
-              })
-              if (msg?.id) {
-                this.setTimeout(
-                  `msg_${msg.id}`,
-                  () => deleteIdleMessage(msg, guildId),
-                  10000
-                )
-              }
-            } catch {}
-          }
-
-          void current.destroy()
-        })()
+        void current.destroy()
       },
       NO_SONG_TIMEOUT
     )
@@ -888,7 +835,7 @@ class VoiceManager {
 
       if (isPlayerConnectedToChannel(player, settings.voiceChannelId)) {
         this.cancelRecovery(settings.guildId)
-        this.breaker.recordResult(settings.guildId, true)
+        this.retryBackoff.reset(settings.guildId)
         alreadyConnected++
         continue
       }
@@ -916,26 +863,16 @@ class VoiceManager {
   }
 
   cleanup() {
-    this.stopped = true
     for (const timer of this.timeouts.values()) {
-      clearTimer(timer)
+      clearTimeout(timer)
     }
-    for (const job of this.recoveryJobs.values()) {
-      clearTimer(job.timer)
-    }
-    for (const pending of this.pending.values()) {
-      clearTimer(pending.timer)
-    }
-    clearTimer(this.cleanupTimer)
-
+    this.cancelAllRecovery()
+    clearInterval(this.cleanupTimer)
     this.timeouts.clear()
-    this.recoveryJobs.clear()
     this.blockedVoiceChannels.clear()
-    this.pending.clear()
-    this.states.clear()
+    this.rejoiningGuilds.clear()
     this.guildCache.clear()
-    this.breaker.cleanup()
-    this.cleanupTimer = null
+    this.retryBackoff.cleanup()
   }
 }
 
@@ -963,25 +900,9 @@ export const setAutoJoinRunning = (running: boolean) => {
   }
 }
 
-export default createEvent({
-  data: { name: 'voiceStateUpdate', once: false },
-  run: async ([newState, oldState], client) => {
-    const guildId = newState?.guildId ?? oldState?.guildId
-    if (!guildId) {
-      return
-    }
-    if (oldState?.channelId === newState?.channelId) {
-      return
-    }
-
-    manager.register(client)
-    manager.handleUpdate({ newState, oldState, guildId }, client)
-  }
-})
-
 /** Reset the rejoin circuit breaker for a guild. Call when 24/7 is re-enabled. */
 export const resetRejoinBreaker = (guildId: string) => {
-  manager.breaker.reset(guildId)
+  manager.retryBackoff.reset(guildId)
   manager.blockedVoiceChannels.delete(guildId)
 }
 

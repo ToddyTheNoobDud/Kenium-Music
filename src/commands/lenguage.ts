@@ -22,37 +22,6 @@ const options = {
   })
 }
 
-const _functions = {
-  handleLanguageSet: async (
-    ctx: CommandContext,
-    lang: string
-  ): Promise<void> => {
-    const currentLang = getContextLanguage(ctx)
-    const currentTranslations = ctx.t.get(currentLang)
-
-    if (getGuildLang(ctx.guildId || '') === lang) {
-      await ctx.editOrReply({
-        content:
-          currentTranslations.success?.settingAlradySet ||
-          'The language is already set to that option.',
-        flags: 64
-      })
-      return
-    }
-
-    const success = setGuildLang(ctx.guildId || '', lang)
-    const t = ctx.t.get(lang)
-    const displayName = getLanguageDisplayName(lang)
-    const successBool = success !== undefined && success !== null
-    const content = successBool
-      ? t.success?.languageSet?.replace('{lang}', displayName) ||
-        `Language set to ${displayName}`
-      : t.errors?.databaseError || 'Failed to save settings'
-
-    await ctx.editOrReply({ content, flags: 64 })
-  }
-}
-
 @Declare({
   name: 'language',
   description: 'Set the language of the bot',
@@ -78,7 +47,30 @@ export default class LanguageCommand extends Command {
 
     try {
       const { language } = ctx.options
-      await _functions.handleLanguageSet(ctx, language)
+      const currentLang = getContextLanguage(ctx)
+      const currentTranslations = ctx.t.get(currentLang)
+
+      if (getGuildLang(ctx.guildId) === language) {
+        await ctx.editOrReply({
+          content:
+            currentTranslations.success?.settingAlradySet ||
+            'The language is already set to that option.',
+          flags: 64
+        })
+        return
+      }
+
+      const success = setGuildLang(ctx.guildId, language)
+      const translations = ctx.t.get(language)
+      const displayName = getLanguageDisplayName(language)
+      const content = success
+        ? translations.success?.languageSet?.replace(
+            '{language}',
+            displayName
+          ) || `Language set to ${displayName}`
+        : translations.errors?.databaseError || 'Failed to save settings'
+
+      await ctx.editOrReply({ content, flags: 64 })
     } catch (error) {
       console.error('Error in language command:', error)
       const currentLang = getContextLanguage(ctx)

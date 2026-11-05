@@ -22,15 +22,12 @@ import {
 import { getContextTranslations } from '../../utils/i18n.ts'
 import { calculatePlaylistAggregate } from '../../utils/playlistMutations.ts'
 
-const playlistsCol = () => getPlaylistsCollection()
-const tracksCol = () => getTracksCollection()
-
 const options = {
   playlist: createStringOption({
     description: 'Playlist name',
     required: true,
     autocomplete: async (interaction) => {
-      return handlePlaylistAutocomplete(interaction, playlistsCol())
+      return handlePlaylistAutocomplete(interaction, getPlaylistsCollection())
     }
   }),
   index: createIntegerOption({
@@ -38,7 +35,7 @@ const options = {
     required: true,
     min_value: 1,
     autocomplete: async (interaction) => {
-      return handleTrackIndexAutocomplete(interaction, playlistsCol())
+      return handleTrackIndexAutocomplete(interaction, getPlaylistsCollection())
     }
   })
 }
@@ -54,7 +51,7 @@ export class RemoveCommand extends SubCommand {
     const userId = ctx.author.id
     const t = getContextTranslations(ctx).playlist.remove
 
-    const playlist = playlistsCol().findOne(
+    const playlist = getPlaylistsCollection().findOne(
       {
         userId,
         name: playlistName
@@ -84,59 +81,57 @@ export class RemoveCommand extends SubCommand {
 
     let totalTracks = 0
     let removedTrack: ReturnType<typeof getPlaylistTracks>[number] | undefined
-    let mutationResult: 'removed' | 'invalid-index' | 'not-found' = 'not-found'
-
     try {
-      mutationResult = (() => {
-        const currentPlaylist = playlistsCol().findOne(
-          { userId, name: playlistName },
-          { fields: ['_id'] }
-        )
-        if (!currentPlaylist) {
-          return 'not-found' as const
-        }
-
-        totalTracks = tracksCol().count({ playlistId: currentPlaylist._id })
-        if (index < 1 || index > totalTracks) {
-          return 'invalid-index' as const
-        }
-
-        removedTrack = getPlaylistTracks(currentPlaylist._id, {
-          limit: 1,
-          skip: index - 1,
-          fields: ['title', 'author', 'source', 'uri', 'duration']
-        })[0]
-        if (!removedTrack) {
-          return 'invalid-index' as const
-        }
-
-        getDatabase().transaction(() => {
-          const deleted = tracksCol().delete({ _id: removedTrack?._id })
-          if (deleted !== 1) {
-            throw new Error(
-              'Track was not deleted; playlist metadata unchanged'
+      totalTracks = getTracksCollection().count({ playlistId: playlist._id })
+      removedTrack =
+        index >= 1 && index <= totalTracks
+          ? getPlaylistTracks(playlist._id, {
+              limit: 1,
+              skip: index - 1,
+              fields: ['title', 'author', 'source', 'uri', 'duration']
+            })[0]
+          : undefined
+      if (index < 1 || index > totalTracks || !removedTrack) {
+        return ctx.write({
+          embeds: [
+            createEmbed(
+              'error',
+              t?.invalidIndex || 'Invalid Index',
+              (
+                t?.invalidIndexDesc || 'Track index must be between 1 and {max}'
+              ).replace('{max}', String(totalTracks)),
+              [],
+              ctx.client.me?.avatarURL()
             )
-          }
-          const aggregate = calculatePlaylistAggregate(
-            tracksCol().find(
-              { playlistId: currentPlaylist._id },
-              { fields: ['duration'] }
-            )
-          )
-          const updated = playlistsCol().update(
-            { _id: currentPlaylist._id },
-            {
-              lastModified: new Date().toISOString(),
-              ...aggregate
-            }
-          )
-          if (updated !== 1) {
-            throw new Error('Playlist metadata was not updated')
-          }
-          totalTracks = aggregate.trackCount
+          ],
+          flags: 64
         })
-        return 'removed' as const
-      })()
+      }
+
+      const trackId = removedTrack._id
+      getDatabase().transaction(() => {
+        const deleted = getTracksCollection().delete({ _id: trackId })
+        if (deleted !== 1) {
+          throw new Error('Track was not deleted; playlist metadata unchanged')
+        }
+        const aggregate = calculatePlaylistAggregate(
+          getTracksCollection().find(
+            { playlistId: playlist._id },
+            { fields: ['duration'] }
+          )
+        )
+        const updated = getPlaylistsCollection().update(
+          { _id: playlist._id },
+          {
+            lastModified: new Date().toISOString(),
+            ...aggregate
+          }
+        )
+        if (updated !== 1) {
+          throw new Error('Playlist metadata was not updated')
+        }
+        totalTracks = aggregate.trackCount
+      })
     } catch (dbError) {
       console.error('Failed to update playlist after track removal:', dbError)
       return ctx.write({
@@ -148,56 +143,6 @@ export class RemoveCommand extends SubCommand {
               '{error}',
               dbError instanceof Error ? dbError.message : 'Unknown error'
             ),
-            [],
-            ctx.client.me?.avatarURL()
-          )
-        ],
-        flags: 64
-      })
-    }
-
-    if (mutationResult === 'not-found') {
-      return ctx.write({
-        embeds: [
-          createEmbed(
-            'error',
-            t?.notFound || 'Playlist Not Found',
-            (t?.notFoundDesc || 'No playlist named "{name}" exists!').replace(
-              '{name}',
-              playlistName
-            ),
-            [],
-            ctx.client.me?.avatarURL()
-          )
-        ],
-        flags: 64
-      })
-    }
-
-    if (mutationResult === 'invalid-index') {
-      return ctx.write({
-        embeds: [
-          createEmbed(
-            'error',
-            t?.invalidIndex || 'Invalid Index',
-            (
-              t?.invalidIndexDesc || 'Track index must be between 1 and {max}'
-            ).replace('{max}', String(totalTracks)),
-            [],
-            ctx.client.me?.avatarURL()
-          )
-        ],
-        flags: 64
-      })
-    }
-
-    if (!removedTrack) {
-      return ctx.write({
-        embeds: [
-          createEmbed(
-            'error',
-            t?.notFound || 'Track Not Found',
-            'Could not find the track at that index.',
             [],
             ctx.client.me?.avatarURL()
           )
