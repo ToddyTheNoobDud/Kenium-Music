@@ -36,7 +36,6 @@ import {
   deleteNowPlayingMessage,
   truncateText
 } from './src/shared/nowPlaying.ts'
-import { isPlayerRecovering } from './src/shared/voiceLifecycle.ts'
 import { closeDatabase, initDatabase } from './src/utils/db.ts'
 import { isTwentyFourSevenEnabled } from './src/utils/db_helper.ts'
 
@@ -131,9 +130,7 @@ const cleanupPlayer = (
   if (hasKaraokeSession(guildId)) {
     cleanupKaraokeSession(guildId)
   }
-  if (!isPlayerRecovering(player)) {
-    void deleteNowPlayingMessage(player)
-  }
+  void deleteNowPlayingMessage(player)
 
   // An idle 24/7 player keeps its voice status and last track.
   if (isTwentyFourSevenEnabled(guildId) && reason === 'queueEnd') {

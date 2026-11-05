@@ -18,7 +18,8 @@ import { extractDiscordApiCode } from '../shared/errorGuard.ts'
 import { createPlayerConnection } from '../shared/player.ts'
 import {
   isPlayerConnectedToChannel,
-  isPlayerRecovering
+  isPlayerRecovering,
+  playersRestoring
 } from '../shared/voiceLifecycle.ts'
 import {
   get247ChannelIds,
@@ -57,10 +58,13 @@ const DEBOUNCE_DELAY = 50
 
 type RejoinOutcome = 'connected' | 'retry' | 'noop'
 type TimerLike = ReturnType<typeof setTimeout>
-type RecoverySource =
+type RecoverySweepSource =
   | 'startup'
   | 'gatewayReconnect'
   | 'gatewayResumed'
+  | 'nodeReady'
+type RecoverySource =
+  | RecoverySweepSource
   | 'playerDestroy'
   | 'socketClosed'
   | 'voiceStateUpdate'
@@ -90,21 +94,35 @@ function deleteIdleMessage(message: MessageStructure, guildId: string) {
   void message.delete().catch(() => {})
 }
 
-function getChannelPair(
+function clearInvalidTextChannel(
+  client: UsingClient,
   guildId: string,
-  voiceId?: string | null,
-  textId?: string | null
+  channelId: string
 ) {
-  const ids = get247ChannelIds(guildId)
-  const voiceChannelId = voiceId ?? ids?.voiceChannelId ?? null
-  if (!voiceChannelId) {
-    return null
+  if (get247ChannelIds(guildId)?.textChannelId !== channelId) {
+    return
   }
+  try {
+    updateGuildSettingsSync(guildId, { textChannelId: null })
+    client.logger.info(
+      `[24/7] Cleared invalid text channel ${channelId} for guild ${guildId}.`
+    )
+  } catch (error) {
+    client.logger.warn(
+      `[24/7] Failed to clear text channel ${channelId} for ${guildId}:`,
+      error
+    )
+  }
+}
 
-  return {
-    voiceChannelId,
-    textChannelId: textId ?? ids?.textChannelId ?? null
-  }
+async function update247Nickname(client: UsingClient, guildId: string) {
+  try {
+    const member = await client.members.fetch(guildId, client.botId)
+    const nickname = member.nick || member.user.username
+    if (!nickname.includes(' [24/7]')) {
+      await member.edit({ nick: `${nickname} [24/7]` })
+    }
+  } catch {}
 }
 
 async function fetchGuild(
@@ -197,9 +215,7 @@ type RecoveryJob = {
   client: UsingClient
   dueAt: number
   source: RecoverySource
-  textId?: string
   timer: TimerLike
-  voiceId?: string
 }
 
 class VoiceManager {
@@ -271,6 +287,48 @@ class VoiceManager {
     const aqua = client.aqua
     this.registered.add(client)
 
+    aqua.on('nodeDisconnect', (node) => {
+      if (node.autoResume) {
+        for (const player of node.players) {
+          playersRestoring.add(player)
+        }
+      }
+    })
+    aqua.on('nodeReady', (node, payload) => {
+      for (const player of node.players) {
+        if (node.autoResume && !payload.resumed) {
+          playersRestoring.add(player)
+        } else {
+          playersRestoring.delete(player)
+        }
+      }
+      requestTwentyFourSevenRecovery(client, 'nodeReady')
+    })
+    aqua.on('playerReconnected', (player) => {
+      playersRestoring.delete(player)
+      if (
+        player.guildId &&
+        !player.destroyed &&
+        aqua.players.get(player.guildId) === player
+      ) {
+        this.cancelRecovery(player.guildId)
+        this.retryBackoff.reset(player.guildId)
+      }
+    })
+    aqua.on('reconnectionFailed', (player) => {
+      playersRestoring.delete(player)
+      if (
+        player.guildId &&
+        !player.destroyed &&
+        aqua.players.get(player.guildId) === player
+      ) {
+        player.connected = false
+        if (isTwentyFourSevenEnabled(player.guildId)) {
+          this.scheduleRejoin(client, player.guildId, 'nodeReady')
+        }
+      }
+    })
+
     const handlers = {
       trackStart: (player: Player) => {
         if (!player.guildId) {
@@ -295,19 +353,11 @@ class VoiceManager {
         if (!player.guildId) {
           return
         }
-        if (isPlayerRecovering(player)) {
-          return
-        }
+        playersRestoring.delete(player)
         this.clearTimeout(player.guildId)
 
         if (isTwentyFourSevenEnabled(player.guildId)) {
-          this.scheduleRejoin(
-            client,
-            player.guildId,
-            player.voiceChannel ?? undefined,
-            player.textChannel ?? undefined,
-            'playerDestroy'
-          )
+          this.scheduleRejoin(client, player.guildId, 'playerDestroy')
         }
       },
 
@@ -334,13 +384,7 @@ class VoiceManager {
           return
         }
 
-        this.scheduleRejoin(
-          client,
-          guildId,
-          player.voiceChannel,
-          player.textChannel,
-          'socketClosed'
-        )
+        this.scheduleRejoin(client, guildId, 'socketClosed')
       }
     }
 
@@ -398,26 +442,14 @@ class VoiceManager {
         if (isPlayerRecovering(player)) {
           return
         }
-        this.scheduleRejoin(
-          client,
-          guildId,
-          player?.voiceChannel ?? oldState.channelId ?? undefined,
-          player?.textChannel ?? undefined,
-          'voiceStateUpdate'
-        )
+        this.scheduleRejoin(client, guildId, 'voiceStateUpdate')
         return
       }
 
       if (!player) {
-        const pair = getChannelPair(guildId, null, null)
+        const pair = get247ChannelIds(guildId)
         if (pair) {
-          this.scheduleRejoin(
-            client,
-            guildId,
-            pair.voiceChannelId,
-            pair.textChannelId || undefined,
-            'voiceStateUpdate'
-          )
+          this.scheduleRejoin(client, guildId, 'voiceStateUpdate')
         }
         return
       }
@@ -433,18 +465,15 @@ class VoiceManager {
   scheduleRejoin(
     client: UsingClient,
     guildId: string,
-    voiceId?: string,
-    textId?: string,
     source: RecoverySource = 'retry',
     minimumDelay = 0
   ) {
-    if (!gatewayHealthy || autoJoinRunning) {
+    if (!gatewayHealthy || startupRecoveryPending) {
       return
     }
     const blockedChannelId = this.blockedVoiceChannels.get(guildId)
     if (blockedChannelId) {
-      const voiceChannelId =
-        voiceId ?? get247ChannelIds(guildId)?.voiceChannelId
+      const voiceChannelId = get247ChannelIds(guildId)?.voiceChannelId
       if (voiceChannelId === blockedChannelId) {
         return
       }
@@ -460,12 +489,6 @@ class VoiceManager {
     if (existingJob) {
       existingJob.client = client
       existingJob.source = source
-      if (voiceId !== undefined) {
-        existingJob.voiceId = voiceId
-      }
-      if (textId !== undefined) {
-        existingJob.textId = textId
-      }
       if (existingJob.dueAt <= dueAt) {
         return
       }
@@ -484,26 +507,14 @@ class VoiceManager {
       }
 
       if (this.rejoiningGuilds.has(guildId)) {
-        this.scheduleRejoin(
-          job.client,
-          guildId,
-          job.voiceId,
-          job.textId,
-          job.source,
-          REJOIN_DELAY
-        )
+        this.scheduleRejoin(job.client, guildId, job.source, REJOIN_DELAY)
         return
       }
 
       this.rejoiningGuilds.add(guildId)
       let outcome: RejoinOutcome = 'retry'
       try {
-        outcome = await this.rejoinChannel(
-          job.client,
-          guildId,
-          job.voiceId,
-          job.textId
-        )
+        outcome = await this.rejoinChannel(job.client, guildId)
       } catch (error) {
         job.client.logger.warn(
           `[VoiceManager] Unexpected recovery error for ${guildId}:`,
@@ -531,13 +542,7 @@ class VoiceManager {
       if (outcome === 'retry') {
         this.cancelRecovery(guildId)
         this.retryBackoff.recordFailure(guildId)
-        this.scheduleRejoin(
-          job.client,
-          guildId,
-          job.voiceId,
-          job.textId,
-          'retry'
-        )
+        this.scheduleRejoin(job.client, guildId, 'retry')
       }
     }, delay)
 
@@ -545,22 +550,18 @@ class VoiceManager {
       client,
       dueAt,
       source,
-      timer,
-      textId,
-      voiceId
+      timer
     })
   }
 
   async rejoinChannel(
     client: UsingClient,
-    guildId: string,
-    voiceId?: string,
-    textId?: string
+    guildId: string
   ): Promise<RejoinOutcome> {
     if (!isTwentyFourSevenEnabled(guildId)) {
       return 'noop'
     }
-    const pair = getChannelPair(guildId, voiceId, textId)
+    const pair = get247ChannelIds(guildId)
     if (!pair) {
       return 'noop'
     }
@@ -602,7 +603,7 @@ class VoiceManager {
           guildId,
           pair.voiceChannelId
         )
-        return 'noop'
+        return get247ChannelIds(guildId) ? 'retry' : 'noop'
       }
       const outcome = code === 50001 || code === 50013 ? 'noop' : 'retry'
       if (outcome === 'noop') {
@@ -629,21 +630,41 @@ class VoiceManager {
       return 'noop'
     }
 
+    const textChannelId = pair.textChannelId
+    let canUseTextChannel = false
+    if (textChannelId) {
+      try {
+        const textChannel = await guild.channels.fetch(textChannelId)
+        canUseTextChannel = [0, 5, 10, 11, 12].includes(textChannel.type)
+        if (!canUseTextChannel) {
+          clearInvalidTextChannel(client, guildId, textChannelId)
+        }
+      } catch (error) {
+        if (extractDiscordApiCode(error) === 10003) {
+          clearInvalidTextChannel(client, guildId, textChannelId)
+        } else {
+          client.logger.warn(
+            `[24/7] Failed to fetch text channel ${textChannelId} for ${guildId}; keeping its saved ID:`,
+            error
+          )
+        }
+      }
+    }
+
+    // Channel lookups yield; another task may have restored or replaced the player.
+    const savedChannels = get247ChannelIds(guildId)
+    if (!savedChannels) {
+      return 'noop'
+    }
+    if (savedChannels.voiceChannelId !== pair.voiceChannelId) {
+      return 'retry'
+    }
     existing = players.get(guildId)
     if (isPlayerConnectedToChannel(existing, pair.voiceChannelId)) {
       return 'connected'
     }
     if (isPlayerRecovering(existing)) {
-      client.logger.warn(
-        `[VoiceManager] recovery blocked ${guildId}: Aqualink started recovering during channel lookup`
-      )
       return 'retry'
-    }
-
-    const connectionOptions = {
-      guildId,
-      voiceChannel: pair.voiceChannelId,
-      ...(pair.textChannelId ? { textChannel: pair.textChannelId } : {})
     }
 
     try {
@@ -654,6 +675,9 @@ class VoiceManager {
           deaf: existing.deaf,
           mute: existing.mute
         })
+        if (isPlayerRecovering(existing)) {
+          return 'retry'
+        }
         // Unchanged Gateway data can be deduplicated before reaching the node.
         if (
           !existing.connected &&
@@ -662,10 +686,11 @@ class VoiceManager {
           await existing.connection.resendVoiceUpdate(true)
         }
       } else {
-        const connection = await createPlayerConnection(
-          client,
-          connectionOptions
-        )
+        const connection = await createPlayerConnection(client, {
+          guildId,
+          voiceChannel: pair.voiceChannelId,
+          textChannel: canUseTextChannel ? textChannelId : null
+        })
         if (connection.destroyed) {
           client.logger.warn(
             `[VoiceManager] Created player was destroyed before voice confirmation for ${guildId} in ${pair.voiceChannelId}. Will retry.`
@@ -689,6 +714,9 @@ class VoiceManager {
       client.logger.warn(
         `[VoiceManager] Voice connection not confirmed for ${guildId} in ${pair.voiceChannelId}. Will retry.`
       )
+    }
+    if (confirmed) {
+      await update247Nickname(client, guildId)
     }
     return confirmed ? 'connected' : 'retry'
   }
@@ -797,13 +825,10 @@ class VoiceManager {
     }
   }
 
-  requestBulkRecovery(
-    client: UsingClient,
-    source: 'startup' | 'gatewayReconnect' | 'gatewayResumed'
-  ) {
-    if (autoJoinRunning) {
+  requestBulkRecovery(client: UsingClient, source: RecoverySweepSource) {
+    if (startupRecoveryPending) {
       client.logger.info(
-        '[VoiceManager] bulk recovery skipped: 24/7 auto-join running.'
+        '[VoiceManager] recovery waits for saved playback to load.'
       )
       return
     }
@@ -836,6 +861,9 @@ class VoiceManager {
       if (isPlayerConnectedToChannel(player, settings.voiceChannelId)) {
         this.cancelRecovery(settings.guildId)
         this.retryBackoff.reset(settings.guildId)
+        if (source === 'startup') {
+          void update247Nickname(client, settings.guildId)
+        }
         alreadyConnected++
         continue
       }
@@ -847,8 +875,6 @@ class VoiceManager {
       this.scheduleRejoin(
         client,
         settings.guildId,
-        settings.voiceChannelId,
-        settings.textChannelId || undefined,
         source,
         REJOIN_DELAY +
           scheduled * BULK_REJOIN_STAGGER +
@@ -879,8 +905,8 @@ class VoiceManager {
 export const manager = new VoiceManager()
 
 let gatewayHealthy = false
-// Startup owns voice joins until its final recovery sweep.
-let autoJoinRunning = true
+// Saved playback is restored before any 24/7 rejoin is queued.
+let startupRecoveryPending = true
 
 export const isVoiceGatewayHealthy = () => gatewayHealthy
 
@@ -891,10 +917,9 @@ export const setVoiceGatewayHealthy = (healthy: boolean) => {
   }
 }
 
-export const setAutoJoinRunning = (running: boolean) => {
-  autoJoinRunning = running
-  // Auto-join covers every 24/7 guild itself: drop any recovery jobs
-  // queued earlier (e.g. by a reconnect sweep) so guilds aren't joined twice.
+export const setStartupRecoveryPending = (running: boolean) => {
+  startupRecoveryPending = running
+  // Keep queued joins from racing saved-player restoration.
   if (running) {
     manager.cancelAllRecovery()
   }
@@ -946,7 +971,7 @@ export const refresh247Cache = () => {
 /** Request one deduplicated, globally staggered 24/7 recovery sweep. */
 export const requestTwentyFourSevenRecovery = (
   client: UsingClient,
-  source: 'startup' | 'gatewayReconnect' | 'gatewayResumed'
+  source: RecoverySweepSource
 ) => {
   const gateway = client.gateway
   if (

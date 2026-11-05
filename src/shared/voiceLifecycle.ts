@@ -5,9 +5,9 @@ type ConnectedPlayerLike = {
   connected?: boolean
   destroyed?: boolean
   voiceChannel?: string | null
-  _reconnecting?: boolean
-  _voiceRecovering?: boolean
 }
+
+export const playersRestoring = new WeakSet<ConnectedPlayerLike>()
 
 export const isPlayerConnectedToChannel = (
   player: ConnectedPlayerLike | null | undefined,
@@ -15,11 +15,10 @@ export const isPlayerConnectedToChannel = (
 ): boolean =>
   !!player &&
   !player.destroyed &&
+  !playersRestoring.has(player) &&
   player.connected === true &&
   player.voiceChannel === channelId
 
 export const isPlayerRecovering = (
   player: ConnectedPlayerLike | null | undefined
-): boolean =>
-  !!player &&
-  (player._reconnecting === true || player._voiceRecovering === true)
+): boolean => !!player && playersRestoring.has(player)

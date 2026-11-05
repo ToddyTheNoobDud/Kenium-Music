@@ -68,8 +68,6 @@ export interface PlayerLike<TTrack = TrackLike> {
   destroy(): unknown
   deaf?: boolean
   mute?: boolean
-  _reconnecting?: boolean
-  _voiceRecovering?: boolean
   connect(options?: ConnectionOptions): unknown
   connection?: {
     voiceChannel?: string | null
